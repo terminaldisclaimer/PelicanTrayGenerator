@@ -1,0 +1,22 @@
+# Build artefacts
+output/
+*.stl
+*.3mf
+*.obj
+*.ply
+
+# Keep example inputs, ignore generated previews at the repo root
+/layout_preview.png
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/

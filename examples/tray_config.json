@@ -1,0 +1,17 @@
+{
+  "params": {
+    "tray_wall": 4.0,
+    "pocket_clearance": 0.15,
+    "over_lip": true,
+    "chamfer": 0.8
+  },
+  "pelican": { "width": 330, "height": 230 },
+  "pieces": [
+    { "name": "round_lens", "demo": true, "diameter": 80, "height": 4.0,
+      "params": { "rib_count": 6 } },
+    { "name": "rounded_plate", "file": "rounded_plate.svg", "height": 5.0,
+      "params": { "rib_count": 5 } },
+    { "name": "oval_neck", "file": "oval_neck.dxf", "height": 6.0,
+      "params": { "rib_count": 5, "rib_min_width": 10.0 } }
+  ]
+}
