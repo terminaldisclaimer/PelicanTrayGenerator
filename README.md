@@ -183,6 +183,94 @@ Two **separate** prints, press-fit assembled — *not* multi-material.
 - All meshes are validated watertight before export; the run prints a warning
   if any part isn't.
 
+## Stackable modular trays (`traygen-stack`)
+
+A second generator in this repo: a **size-modular, stackable box system** for a
+Pelican case pocket — think *gridfinity, but stackable boxes on a 1.5-inch
+grid*. The pocket (default **9 x 6 in**, adjustable) holds a **baseplate** with
+one socket per grid cell; every **tray** is an integer number of grid units in
+each direction and stacks on the baseplate *or on any other tray*.
+
+With the default 1.5 in unit, the 9 x 6 pocket is a 6 x 4 cell grid, and valid
+tray sizes include 9x6, 6x3, 6x1.5, 3x3, 3x1.5, 1.5x1.5 … any `WxL` where both
+are multiples of 1.5 in.
+
+```
+        side view (stacked)                    tray anatomy
+  ┌──────────────────────────┐          ___________________________
+  │  ┌─────┐┌─────┐          │         |  ← stacking lip (top rim)  \
+  │  │ 3x3 ││ 3x3 │  trays   │         |----------------------------|
+  │  └──┬──┘└──┬──┘          │         |  open box (W x L x H)      |
+  │  ┌──┴──────┴──────────┐  │         |____________________________|
+  │  │       6x3          │  │            \_/    \_/    \_/
+  │  └─┬────┬────┬────┬───┘  │          one chamfered foot per cell
+  │ ▓▓▓▓▓▓▓▓ baseplate ▓▓▓▓▓ │
+  └───── Pelican pocket ─────┘
+```
+
+**How stacking works.** Each tray has one chamfered foot per grid cell
+underneath and a gridfinity-style lip around its top rim. The lip's inner
+profile is identical to a baseplate socket, so the tray above drops in with
+0.25 mm of play per side and its flat underside rests on the lip's top ring.
+Because feet repeat at grid pitch, smaller trays register onto bigger ones
+(e.g. two 3x3s on a 6x3) as long as they share an edge of the tray below. By
+default the lip height equals the foot height, so stacked feet end up flush
+with the rim below — nothing pokes into the contents.
+
+### Usage
+
+```bash
+# Demo set: a full one-layer tiling of the 9x6 pocket
+# (6x3 + 9x1.5 + 3x3 + two 3x1.5 + two 1.5x1.5) + the 6x4 baseplate
+traygen-stack --out output_stack
+
+# Pick your own sizes (inches; W/L must be multiples of the unit).
+# Optional xH = height in inches, optional :N = quantity.
+traygen-stack --tray 9x6 --tray 3x3x0.75:2 --tray 3x1.5:4
+
+# Different pocket or grid unit (still inches)
+traygen-stack --pocket 12x9 --unit 1.5 --tray 6x6
+
+# Metric mode: all sizes in mm
+traygen-stack --mm --pocket 228.6x152.4 --unit 38.1 --tray 76.2x38.1
+
+# Just the baseplate
+traygen-stack --baseplate-only
+```
+
+Outputs (to `--out`, default `output_stack/`): one `tray_WxL_hH.stl` per
+*unique* size (quantities are reported, print multiples), `baseplate_NxM.stl`,
+and `stack_layout_preview.png` showing the set packed into the pocket grid.
+The build warns if the requested set doesn't fit in one layer.
+
+### Stacking-system parameters
+
+Sizes on the CLI are inches (or mm with `--mm`); fine-fit parameters are
+always millimetres.
+
+| Parameter | Flag | Default | Meaning |
+|-----------|------|---------|---------|
+| unit | `--unit` | 1.5 in | Grid pitch; all tray sizes are multiples of this |
+| pocket | `--pocket WxL` | 9x6 in | Pelican pocket interior |
+| height | `--height` | 1.5 in | Default tray body height (`xH` in a spec overrides) |
+| `tray_gap` | `--tray-gap` | 0.25 | Tray outer inset from the nominal grid, per side |
+| `stack_clearance` | `--stack-clearance` | 0.25 | Play per side: foot → lip/socket |
+| `wall` | `--wall` | 2.0 | Tray wall thickness |
+| `floor` | `--floor` | 2.0 | Tray floor thickness |
+| `foot_height` | `--foot-height` | 4.0 | Foot height under the tray |
+| `foot_inset` | `--foot-inset` | 3.0 | Foot face inset from the cell edge |
+| `foot_chamfer` | `--foot-chamfer` | 2.0 | 45° lead-in at the foot tip |
+| `lip_height` | `--lip-height` | 4.0 | Stacking-lip height above the rim |
+| `lip_lead` | `--lip-lead` | 0.8 | Flared lead-in at the lip top |
+| `plate_floor` | `--plate-floor` | 2.0 | Baseplate floor under the sockets |
+| `plate_clearance` | `--plate-clearance` | 0.4 | Baseplate inset from the pocket, per side |
+
+Fit iteration is one number here too: looser stacking → raise
+`--stack-clearance`; trays binding side-by-side → raise `--tray-gap`.
+
+**Printing:** PETG or PLA, no supports needed — feet chamfers are 45° and the
+lip's inward step is a small 45° under-chamfer. Print trays open-side-up.
+
 ## Repository layout
 
 ```
@@ -197,6 +285,13 @@ traygen/
   preview.py    # matplotlib layout PNG
   pipeline.py   # end-to-end orchestration + config assembly
   cli.py        # argparse CLI
+  stacking/     # stackable modular tray system (traygen-stack)
+    params.py   #   grid + fit parameters, tray-spec parsing
+    builder.py  #   tray (feet + box + lip) and baseplate meshes
+    layout.py   #   first-fit packing into the pocket grid
+    preview.py  #   layout PNG
+    pipeline.py #   build + export orchestration
+    cli.py      #   argparse CLI
 examples/
   rounded_plate.svg, oval_neck.dxf, tray_config.json
 ```

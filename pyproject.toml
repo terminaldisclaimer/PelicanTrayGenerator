@@ -23,6 +23,7 @@ dependencies = [
 
 [project.scripts]
 traygen = "traygen.cli:main"
+traygen-stack = "traygen.stacking.cli:main"
 
 [tool.setuptools]
-packages = ["traygen"]
+packages = ["traygen", "traygen.stacking"]

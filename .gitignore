@@ -1,5 +1,6 @@
 # Build artefacts
 output/
+output_stack/
 *.stl
 *.3mf
 *.obj
