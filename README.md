@@ -105,11 +105,12 @@ all - plus the Docker template in `unraid/`.
 
 ### Free public hosting
 
-**GitHub Pages.** `.github/workflows/deploy.yml` builds and
-publishes on every push to `main`. Enable it once under
-*Settings -> Pages -> Build and deployment -> Source: GitHub Actions*. The
-workflow sets `BASE_PATH` from the repository name so assets resolve under
-`https://<user>.github.io/<repo>/`.
+**GitHub Pages.** `.github/workflows/deploy.yml` is manual: enable Pages under
+*Settings -> Pages -> Build and deployment -> Source: GitHub Actions*, then run
+the workflow from the Actions tab. It sets `BASE_PATH` from the repository name
+so assets resolve under `https://<user>.github.io/<repo>/`. It is manual rather
+than automatic because this project self-hosts by default - see
+[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md).
 
 **Cloudflare Workers.** `wrangler.jsonc` is set up for Workers Static Assets,
 which is what Cloudflare recommends for new static sites rather than Pages.
@@ -120,7 +121,7 @@ npx wrangler login     # or export CLOUDFLARE_API_TOKEN=...
 npm run deploy         # builds, then uploads dist/
 ```
 
-`.github/workflows/deploy-cloudflare.yml` does the same on every push to `main`
+`.github/workflows/deploy-cloudflare.yml` does the same from the Actions tab,
 once two repository secrets are set under *Settings -> Secrets and variables ->
 Actions*:
 

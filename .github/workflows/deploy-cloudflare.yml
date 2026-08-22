@@ -1,8 +1,8 @@
 name: Deploy to Cloudflare Workers
 
+# Manual only: this repository self-hosts, so a Cloudflare deploy is something
+# you ask for. Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets.
 on:
-  push:
-    branches: ['**']
   workflow_dispatch:
 
 jobs:
@@ -24,7 +24,14 @@ jobs:
       - run: npm test
       # No BASE_PATH: the Worker serves the site from the domain root.
       - run: npm run build
-      - uses: cloudflare/wrangler-action@v3
+
+      - name: Warn when Cloudflare is not configured
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        run: |
+          echo "::warning::CLOUDFLARE_API_TOKEN is not set - skipping the deploy."
+      - name: Deploy
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
