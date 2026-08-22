@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="70mm" height="60mm" viewBox="0 0 70 60">
+  <!-- Triangular prism footprint, 60 mm base -->
+  <path d="M5 55 L65 55 L35 5 Z" fill="none" stroke="#000" stroke-width="0.2"/>
+</svg>

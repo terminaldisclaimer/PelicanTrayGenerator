@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="90mm" height="90mm" viewBox="0 0 90 90">
+  <!-- Annular mount: outer 80 mm, 30 mm bore. Tick "holes" to leave the bore
+       as a raised island in the pocket. -->
+  <circle cx="45" cy="45" r="40" fill="none" stroke="#000" stroke-width="0.2"/>
+  <circle cx="45" cy="45" r="15" fill="none" stroke="#000" stroke-width="0.2"/>
+</svg>

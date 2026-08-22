@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="30mm" height="30mm" viewBox="0 0 30 30">
+  <!-- Small sample vial, 22 mm diameter -->
+  <circle cx="15" cy="15" r="11" fill="none" stroke="#000" stroke-width="0.2"/>
+</svg>

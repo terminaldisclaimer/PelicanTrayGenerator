@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="130mm" height="90mm" viewBox="0 0 130 90">
+  <!-- Rectangular glass plate, 120 x 80 mm, 4 mm corner radius -->
+  <rect x="5" y="5" width="120" height="80" rx="4" ry="4" fill="none" stroke="#000" stroke-width="0.2"/>
+</svg>
