@@ -2,14 +2,17 @@ name: Deploy to Cloudflare Workers
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Skip cleanly on forks and on repos that have not set the secret yet.
-    if: github.event_name == 'workflow_dispatch' || github.repository_owner != ''
+    # This repository's default branch is not called "main", so the branch is
+    # resolved at run time rather than hard-coded.
+    if: >
+      github.ref_name == github.event.repository.default_branch ||
+      github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

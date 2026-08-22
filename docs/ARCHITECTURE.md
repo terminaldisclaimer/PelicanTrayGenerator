@@ -143,6 +143,14 @@ for one says so instead of quietly compromising a pocket wall.
 WASM objects are freed explicitly as each tray is built, so a large case does not
 accumulate garbage in the kernel's heap.
 
+## Containerised deployment
+
+`Dockerfile` builds the site with Node and serves it from nginx. The runtime
+stage asserts, at image build time, that the base image still provides the
+`application/wasm` MIME type and `gzip_static`, and runs `nginx -t`. Both are
+assumptions that would otherwise fail silently in someone's browser, so they
+fail the build instead. See `docs/SELF-HOSTING.md`.
+
 ## Testing
 
 `npm test` covers the parts that are easy to get subtly wrong:

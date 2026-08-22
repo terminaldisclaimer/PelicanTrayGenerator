@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<!--
+  Unraid Docker template. Copy to:
+    /boot/config/plugins/dockerMan/templates-user/my-PelicanTrayGenerator.xml
+  then Docker tab -> Add Container -> pick "PelicanTrayGenerator" from the
+  template dropdown.
+-->
+<Container version="2">
+  <Name>PelicanTrayGenerator</Name>
+  <Repository>ghcr.io/terminaldisclaimer/pelicantraygenerator:latest</Repository>
+  <Registry>https://github.com/terminaldisclaimer/PelicanTrayGenerator/pkgs/container/pelicantraygenerator</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/terminaldisclaimer/PelicanTrayGenerator/issues</Support>
+  <Project>https://github.com/terminaldisclaimer/PelicanTrayGenerator</Project>
+  <Overview>
+    Designs 3D-printable stackable trays that fill a Pelican case cutout.
+    Upload SVG part outlines, enter the cutout size and per-part depths, and it
+    packs the parts onto trays snapped to a 25 mm grid, stacks them in the case,
+    previews the result in 3D and exports 3MF and STL.
+
+    Everything runs in the browser. The container is a static web server, holds
+    no state and needs no volumes; projects are saved as .json files by the
+    browser.
+  </Overview>
+  <Category>Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:80]/</WebUI>
+  <TemplateURL/>
+  <!-- Unraid only accepts an icon URL, and this repository is private, so
+       there is nothing to point at. Add one here if you make it public. -->
+  <Icon/>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config
+    Name="WebUI Port"
+    Target="80"
+    Default="8420"
+    Mode="tcp"
+    Description="Host port for the web interface."
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">8420</Config>
+</Container>

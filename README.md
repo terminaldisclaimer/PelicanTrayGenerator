@@ -89,9 +89,23 @@ npm run build      # static site in dist/
 ## Hosting
 
 The app is fully static - HTML, JS, a WASM geometry kernel, and nothing else -
-so any free static host works.
+so it runs anywhere that serves files.
 
-**Recommended: GitHub Pages.** `.github/workflows/deploy.yml` builds and
+### Self-hosting (Unraid, Docker)
+
+There is a container: nginx plus the built assets, no state and no volumes.
+
+```bash
+docker compose up -d          # pulls the published image, serves on :8420
+```
+
+`docs/SELF-HOSTING.md` covers the Unraid routes end to end - the GHCR image with
+automatic updates, Compose Manager, or building on the box with no registry at
+all - plus the Docker template in `unraid/`.
+
+### Free public hosting
+
+**GitHub Pages.** `.github/workflows/deploy.yml` builds and
 publishes on every push to `main`. Enable it once under
 *Settings -> Pages -> Build and deployment -> Source: GitHub Actions*. The
 workflow sets `BASE_PATH` from the repository name so assets resolve under

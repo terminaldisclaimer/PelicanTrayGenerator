@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   workflow_dispatch:
 
 permissions:
@@ -16,6 +16,11 @@ concurrency:
 
 jobs:
   build:
+    # This repository's default branch is not called "main", so the branch is
+    # resolved at run time rather than hard-coded.
+    if: >
+      github.ref_name == github.event.repository.default_branch ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -1,0 +1,22 @@
+# Pulls the image built by GitHub Actions. Use this on Unraid via the
+# Compose Manager plugin, or anywhere else with Docker.
+#
+#   docker compose pull && docker compose up -d
+#
+services:
+  pelican-tray-generator:
+    image: ghcr.io/terminaldisclaimer/pelicantraygenerator:latest
+    container_name: pelican-tray-generator
+    restart: unless-stopped
+    ports:
+      - "8420:80"
+    labels:
+      # Opt this container in to Watchtower without letting Watchtower touch
+      # everything else on the box (run Watchtower with --label-enable).
+      - "com.centurylinklabs.watchtower.enable=true"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

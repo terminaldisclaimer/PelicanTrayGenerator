@@ -1,0 +1,22 @@
+# Builds the image on the machine that runs it, straight from a git checkout.
+# Use this instead of docker-compose.yml if you would rather not depend on a
+# container registry at all.
+#
+#   git pull && docker compose -f docker-compose.build.yml up -d --build
+#
+services:
+  pelican-tray-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pelican-tray-generator:local
+    container_name: pelican-tray-generator
+    restart: unless-stopped
+    ports:
+      - "8420:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
