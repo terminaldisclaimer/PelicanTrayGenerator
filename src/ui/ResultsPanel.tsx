@@ -1,11 +1,13 @@
 import type { SolveResult, Tray } from '../types';
+import type { TriMesh } from '../lib/cad/manifold';
 import { Panel } from './Field';
 
-export function ResultsPanel({ result, selected, onSelect, onExport, exportAll, busy }: {
+export function ResultsPanel({ result, selected, onSelect, onExport, inserts, exportAll, busy }: {
   result: SolveResult | null;
   selected: string | null;
   onSelect: (id: string | null) => void;
-  onExport: (tray: Tray, format: 'stl' | '3mf') => void;
+  onExport: (tray: Tray, format: 'stl' | '3mf' | 'liners') => void;
+  inserts: Map<string, { name: string; mesh: TriMesh }[]>;
   exportAll: () => void;
   busy: boolean;
 }) {
@@ -70,8 +72,22 @@ export function ResultsPanel({ result, selected, onSelect, onExport, exportAll, 
             </div>
             {t.warnings.map((w, i) => <div className="warn small" key={i}>{w}</div>)}
             <div className="tray-actions">
+              <span className="mat">PETG</span>
               <button className="ghost small" onClick={(e) => { e.stopPropagation(); onExport(t, '3mf'); }} disabled={busy}>3MF</button>
               <button className="ghost small" onClick={(e) => { e.stopPropagation(); onExport(t, 'stl'); }} disabled={busy}>STL</button>
+              {(inserts.get(t.id)?.length ?? 0) > 0 && (
+                <>
+                  <span className="mat tpu">TPU</span>
+                  <button
+                    className="ghost small"
+                    title={`${inserts.get(t.id)!.length} liner${inserts.get(t.id)!.length > 1 ? 's' : ''} as one 3MF`}
+                    onClick={(e) => { e.stopPropagation(); onExport(t, 'liners'); }}
+                    disabled={busy}
+                  >
+                    {inserts.get(t.id)!.length} liner{inserts.get(t.id)!.length > 1 ? 's' : ''}
+                  </button>
+                </>
+              )}
             </div>
           </li>
         ))}

@@ -67,13 +67,17 @@ src/
                             recess solids
       tray.ts               One tray solid: body, feet, recesses, pockets,
                             thumb notches
+      insert.ts             One TPU liner per pocket: floor pad, backing shell
+                            and crush ribs, with the fit maths and the checks
+                            that refuse a liner the clearance cannot hold
     solver/
       maxrects.ts           Maximal-rectangles packer
       solve.ts              Parts -> pockets -> clusters -> depth buckets ->
                             trays -> layers
     export/
       stl.ts                Binary STL
-      threemf.ts            3MF package, zipping, downloads
+      threemf.ts            3MF package (multiple named objects), zipping,
+                            downloads
     project.ts              Project JSON load/save and best-effort autosave
   three/Preview.tsx         Interactive 3D preview
   ui/                       Panels
@@ -104,7 +108,15 @@ src/
    until the parts run out.
 7. **Padding.** Only trays that carry a tray above them are padded to their
    layer's height.
-8. **Geometry.** Each tray becomes a solid and then a triangle mesh.
+8. **Geometry.** Each tray becomes a solid and then a triangle mesh, and each
+   pocket gets a liner built in the same frame.
+
+Throughout, each part carries **two** outlines: the pocket outline (offset by
+the clearance) and the part's own outline. Every rotation and placement applies
+the identical rigid motion to both, which is what keeps a liner concentric with
+the pocket it has to drop into. A test asserts this holds after the solver has
+rotated a part to its minimum-area orientation and then turned its whole tray a
+quarter turn to fit the layer.
 
 ## Geometry construction
 

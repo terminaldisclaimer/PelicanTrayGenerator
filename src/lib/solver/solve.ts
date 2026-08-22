@@ -3,7 +3,7 @@ import { MaxRects } from './maxrects';
 import { offsetPoly } from '../cad/manifold';
 import { LIP_BASE, REG, stackPitch, trayFootprint, trayHeight } from '../cad/profile';
 import {
-  bboxH, bboxW, minAreaRotation, normalisePoly, polyArea, polyBBox, rotatePoly, translatePoly,
+  bboxH, bboxW, minAreaRotation, polyArea, polyBBox, rotatePoly, translatePoly,
 } from '../geom2d';
 
 const NOTCH_RADIUS = 9;
@@ -18,6 +18,8 @@ interface Item {
   instance: number;
   /** Pocket outline: silhouette offset by the global clearance, normalised. */
   poly: Poly;
+  /** The part's own outline, kept concentric with `poly` through every move. */
+  raw: Poly;
   w: number;
   h: number;
   depth: number;
@@ -36,9 +38,24 @@ interface Cluster {
   area: number;
 }
 
-/** Rotate a pocket outline by 90 degrees CCW and re-normalise to the origin. */
-function rotate90(poly: Poly): Poly {
-  return normalisePoly(rotatePoly(poly, Math.PI / 2));
+/**
+ * Rotate a pocket outline and its part outline together by whole quarter
+ * turns, then place the pair so the pocket's lower-left corner lands on
+ * (x, y). Both receive the identical rigid motion, which is what keeps the
+ * liner concentric with the pocket it has to sit inside.
+ */
+function placePair(poly: Poly, raw: Poly, quarters: number, x: number, y: number): { poly: Poly; raw: Poly } {
+  let p = poly;
+  let r = raw;
+  for (let q = 0; q < quarters % 4; q++) {
+    p = rotatePoly(p, Math.PI / 2);
+    r = rotatePoly(r, Math.PI / 2);
+  }
+  const bb = polyBBox(p);
+  return {
+    poly: translatePoly(p, x - bb.minX, y - bb.minY),
+    raw: translatePoly(r, x - bb.minX, y - bb.minY),
+  };
 }
 
 function buildItems(parts: PartInput[], s: Settings): { items: Item[]; problems: SolveResult['unplaced'] } {
@@ -61,13 +78,19 @@ function buildItems(parts: PartInput[], s: Settings): { items: Item[]; problems:
     offset.sort((a, b) => Math.abs(polyArea([b])) - Math.abs(polyArea([a])));
 
     let oriented = offset;
+    let rawOriented = source;
     let rotationDeg = 0;
     if (s.allowRotation) {
       const { rad } = minAreaRotation(offset[0]);
       oriented = rotatePoly(offset, rad);
+      rawOriented = rotatePoly(source, rad);
       rotationDeg = (rad * 180) / Math.PI;
     }
-    oriented = normalisePoly(oriented);
+    // Normalise against the pocket outline and shift the part outline by the
+    // same delta, so the two stay concentric.
+    const pre = polyBBox(oriented);
+    oriented = translatePoly(oriented, -pre.minX, -pre.minY);
+    rawOriented = translatePoly(rawOriented, -pre.minX, -pre.minY);
     const bb = polyBBox(oriented);
     const w = bboxW(bb);
     const h = bboxH(bb);
@@ -82,6 +105,7 @@ function buildItems(parts: PartInput[], s: Settings): { items: Item[]; problems:
         name: p.name,
         instance: i,
         poly: oriented,
+        raw: rawOriented,
         w,
         h,
         depth: p.depth,
@@ -370,16 +394,15 @@ export function solve(parts: PartInput[], s: Settings): SolveResult {
           ih = liw;
           quarters += 1;
         }
-        let poly = l.item.poly;
-        for (let q = 0; q < quarters; q++) poly = rotate90(poly);
-        const bb = polyBBox(poly);
         const x = margin + pl.x + lx;
         const y = margin + pl.y + ly;
+        const moved = placePair(l.item.poly, l.item.raw, quarters, x, y);
         placed.push({
           partId: l.item.partId,
           name: l.item.name,
           instance: l.item.instance,
-          poly: translatePoly(poly, x - bb.minX, y - bb.minY),
+          poly: moved.poly,
+          rawPoly: moved.raw,
           depth: l.item.depth,
           rotationDeg: l.item.rotationDeg + quarters * 90,
           bbox: { x, y, w: iw, h: ih },
@@ -437,11 +460,11 @@ export function solve(parts: PartInput[], s: Settings): SolveResult {
         t.sizeY = t.sizeX;
         t.sizeX = oldSizeY;
         for (const part of t.parts) {
-          const poly = rotate90(part.poly);
-          const bb = polyBBox(poly);
           const nx = oldSizeY - (part.bbox.y + part.bbox.h);
           const ny = part.bbox.x;
-          part.poly = translatePoly(poly, nx - bb.minX, ny - bb.minY);
+          const moved = placePair(part.poly, part.rawPoly, 1, nx, ny);
+          part.poly = moved.poly;
+          part.rawPoly = moved.raw;
           part.bbox = { x: nx, y: ny, w: part.bbox.h, h: part.bbox.w };
           part.rotationDeg += 90;
         }

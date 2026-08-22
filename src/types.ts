@@ -54,6 +54,23 @@ export interface Settings {
   thumbNotches: boolean;
   /** Allow parts to be rotated to their minimum-area orientation. */
   allowRotation: boolean;
+
+  /* --- TPU liner inserts ------------------------------------------------ */
+
+  /** Generate a printable TPU liner for every pocket. */
+  generateInserts: boolean;
+  /** Gap per side between the insert's outer wall and the pocket wall. */
+  insertFit: number;
+  /** Backing wall thickness of the insert. */
+  insertWall: number;
+  /** Floor pad the part rests on. */
+  insertPad: number;
+  /** How far a rib overlaps the part outline, i.e. how much it is squeezed. */
+  insertSqueeze: number;
+  /** Spacing of crush ribs measured along the pocket perimeter. */
+  insertRibSpacing: number;
+  /** Fraction of the pocket depth the insert walls rise to. */
+  insertCoverage: number;
 }
 
 export interface Project {
@@ -74,6 +91,10 @@ export interface PlacedPart {
   instance: number;
   /** Pocket outline (already offset by clearance) in tray-local mm. */
   poly: Poly;
+  /** The part's own outline, concentric with `poly`, for liner generation. */
+  rawPoly: Poly;
+  /** Set when the clearance is too small to fit a liner in this pocket. */
+  insertProblem?: string;
   /** Depth of this pocket below the tray's stacking-recess floor. */
   depth: number;
   /** Rotation applied to the source silhouette, degrees CCW. */

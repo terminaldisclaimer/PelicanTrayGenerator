@@ -1,5 +1,6 @@
 import type { Settings } from '../types';
 import { REG, LIP_BASE } from '../lib/cad/profile';
+import { insertProblem } from '../lib/cad/insert';
 import { CheckField, NumberField, Panel } from './Field';
 
 export function CasePanel({ s, set }: { s: Settings; set: (patch: Partial<Settings>) => void }) {
@@ -91,6 +92,89 @@ export function SettingsPanel({ s, set }: { s: Settings; set: (patch: Partial<Se
           perimeter stacking lip keeps its full profile.
         </p>
       )}
+    </Panel>
+  );
+}
+
+export function InsertPanel({ s, set }: { s: Settings; set: (patch: Partial<Settings>) => void }) {
+  const problem = s.generateInserts ? insertProblem(s) : null;
+  return (
+    <Panel title="TPU liners">
+      <CheckField
+        label="Generate a printable liner for every pocket"
+        value={s.generateInserts}
+        onChange={(v) => set({ generateInserts: v })}
+        hint="Exported separately from the trays, since TPU runs from the external spool."
+      />
+      {s.generateInserts && (
+        <>
+          <div className="grid3">
+            <NumberField
+              label="Floor pad"
+              value={s.insertPad}
+              onChange={(v) => set({ insertPad: v })}
+              min={0.4}
+              max={20}
+              step={0.2}
+              hint="Cushion the part sits on."
+            />
+            <NumberField
+              label="Backing wall"
+              value={s.insertWall}
+              onChange={(v) => set({ insertWall: v })}
+              min={0.4}
+              max={5}
+              step={0.1}
+              hint="Thin shell that hugs the pocket wall and carries the ribs."
+            />
+            <NumberField
+              label="Pocket fit"
+              value={s.insertFit}
+              onChange={(v) => set({ insertFit: v })}
+              min={0}
+              max={1}
+              step={0.05}
+              hint="Gap per side so the liner drops into the pocket."
+            />
+          </div>
+          <div className="grid3">
+            <NumberField
+              label="Rib squeeze"
+              value={s.insertSqueeze}
+              onChange={(v) => set({ insertSqueeze: v })}
+              min={0}
+              max={2}
+              step={0.05}
+              hint="How far the ribs overlap the part, i.e. how hard they grip. Raise it if parts rattle."
+            />
+            <NumberField
+              label="Rib spacing"
+              value={s.insertRibSpacing}
+              onChange={(v) => set({ insertRibSpacing: v })}
+              min={4}
+              max={60}
+              step={1}
+              hint="Distance between ribs around the pocket perimeter."
+            />
+            <NumberField
+              label="Coverage"
+              value={s.insertCoverage}
+              onChange={(v) => set({ insertCoverage: v })}
+              min={0.1}
+              max={1}
+              step={0.05}
+              suffix=""
+              hint="Fraction of the pocket depth the liner walls rise to. 1 is full depth."
+            />
+          </div>
+          <p className="muted small">
+            Crush ribs rather than a solid sleeve: TPU is not dimensionally predictable enough for a
+            press fit, but a rib squashes by whatever it needs to. Print in TPU from an external
+            spool, 0.2 mm layers, slow, no supports.
+          </p>
+        </>
+      )}
+      {problem && <p className="warn small">{problem}</p>}
     </Panel>
   );
 }

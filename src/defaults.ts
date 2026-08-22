@@ -20,6 +20,14 @@ export const DEFAULT_SETTINGS: Settings = {
 
   thumbNotches: true,
   allowRotation: true,
+
+  generateInserts: true,
+  insertFit: 0.15,
+  insertWall: 0.8,
+  insertPad: 2,
+  insertSqueeze: 0.35,
+  insertRibSpacing: 12,
+  insertCoverage: 1,
 };
 
 export const emptyProject = (): Project => ({

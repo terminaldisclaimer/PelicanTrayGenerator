@@ -26,8 +26,9 @@ Everything runs in the browser. No server, no uploads, no account.
    per-part clearance to manage.
 5. **Generate** - the preview shows the trays in the case. Drag to orbit, use
    **Explode** to separate the layers, and click a tray to highlight it.
-6. **Export** - 3MF or STL per tray, or **Download all** for a zip containing
-   both formats, printing notes, and the project file.
+6. **Export** - per tray: the PETG body as 3MF or STL, plus its TPU liners as a
+   single 3MF. **Download all** gives a zip split into `petg-trays/` and
+   `tpu-liners/`, with printing notes and the project file.
 
 **Save project** writes a `.traygen.json` file holding everything: dimensions,
 outlines, depths and groups. Keep it next to your case. The app also autosaves
@@ -68,10 +69,16 @@ shallow instead of carrying tens of millimetres of solid filler.
 - **Trays:** PETG. Heat tolerance for a case left in a vehicle, and tough enough
   to take a drop. Print flat, feet down, no supports. 0.2 mm layers, 3 walls,
   15 % infill.
-- **Liners:** self-adhesive foam or felt cut to the pocket, or printed TPU
-  inserts. TPU runs from an external spool on the X1C rather than through the
-  AMS. Foaming TPU is worth an experiment but is not the baseline - it is not
-  dimensionally predictable enough to design around.
+- **Liners:** the app generates a TPU liner for every pocket. Print from an
+  external spool rather than through the AMS, 0.2 mm layers, slow, no supports.
+  Self-adhesive foam or felt still works if you would rather not print them -
+  turn liner generation off and the pocket clearance is unchanged.
+
+  Liners grip on **crush ribs**, not a solid sleeve. TPU is not dimensionally
+  predictable enough for a press fit: a 2 mm wall that comes out 0.3 mm over
+  will not go in, and 0.3 mm under will rattle. A rib squashes by whatever it
+  needs to. If parts rattle, raise **Rib squeeze**; if they fight going in,
+  lower it. Foaming TPU is worth an experiment but is not the baseline.
 - **Oversized trays** are flagged rather than auto-split. The solver caps tray
   size at the bed limit, so this only comes up if you force a group that cannot
   fit; split the group and regenerate.

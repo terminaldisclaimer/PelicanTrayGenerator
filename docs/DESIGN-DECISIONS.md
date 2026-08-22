@@ -76,6 +76,22 @@ file.
 **10. Liner accommodation.** Confirmed: the single global offset covers both
 clearance and liner. One number to tune after a test print.
 
+The app also *generates* the liner, which the original spec did not ask for -
+it listed TPU inserts as a material option and only required export "per tray".
+That left the app recommending a printed TPU insert in its own print notes
+while giving no way to produce one, which is not a defensible place to stop.
+A liner is now built for every pocket and exported separately from the tray,
+since TPU runs from the external spool and PETG through the AMS.
+
+Liners use **crush ribs** rather than a solid sleeve, which is also what the
+earlier Python version did. TPU's dimensional spread is wider than a press fit
+tolerates; ribs deform to suit. Radially, from the liner's outer face inwards:
+the pocket fit gap (0.15 mm), the backing shell (0.8 mm), then ribs whose tips
+overshoot the part outline by the squeeze allowance (0.35 mm) so they are
+compressed on assembly. Rib radius is derived so a rib never breaks through the
+outer face and never floats free of the backing. Ribs are capped with a cone so
+a part drops in rather than catching on a square top. Every number is editable.
+
 ## Where this design departs from Gridfinity, and why
 
 The chamfer profile, its heights and the 0.5 mm cell clearance are Gridfinity's,

@@ -172,3 +172,10 @@ ul.trays li.sel { border-color: var(--accent); }
 
 .viewport-bar label.disabled { opacity: 0.45; }
 
+
+.mat {
+  font-size: 10px; letter-spacing: 0.6px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px;
+}
+.mat.tpu { color: var(--warn); border-color: rgba(240, 160, 43, 0.4); margin-left: 6px; }
+.tray-actions { align-items: center; }

@@ -3,11 +3,12 @@ import type { Project, Settings, SolveResult, Tray } from './types';
 import { emptyProject } from './defaults';
 import { initCad, type TriMesh } from './lib/cad/manifold';
 import { buildTrayMesh } from './lib/cad/tray';
+import { buildInsertMesh, insertProblem } from './lib/cad/insert';
 import { solve } from './lib/solver/solve';
 import { meshToStl } from './lib/export/stl';
-import { download, meshTo3mf, zipFiles } from './lib/export/threemf';
+import { download, meshTo3mf, meshesTo3mf, zipFiles } from './lib/export/threemf';
 import { autosave, loadAutosave, loadProjectFile, saveProjectFile } from './lib/project';
-import { CasePanel, SettingsPanel } from './ui/SettingsPanel';
+import { CasePanel, SettingsPanel, InsertPanel } from './ui/SettingsPanel';
 import { PartsPanel } from './ui/PartsPanel';
 import { ResultsPanel } from './ui/ResultsPanel';
 import { Preview } from './three/Preview';
@@ -19,6 +20,8 @@ export default function App() {
   const [project, setProjectState] = useState<Project>(() => loadAutosave() ?? emptyProject());
   const [result, setResult] = useState<SolveResult | null>(null);
   const [meshes, setMeshes] = useState<Map<string, TriMesh>>(new Map());
+  // Liners, keyed by tray id. One entry per pocket, in tray-local coordinates.
+  const [inserts, setInserts] = useState<Map<string, { name: string; mesh: TriMesh }[]>>(new Map());
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,12 +60,31 @@ export default function App() {
       const res = solve(project.parts, project.settings);
       setResult(res);
       setMeshes(new Map());
+      setInserts(new Map());
       const built = new Map<string, TriMesh>();
+      const liners = new Map<string, { name: string; mesh: TriMesh }[]>();
+      const linerIssue = project.settings.generateInserts ? insertProblem(project.settings) : null;
+      if (linerIssue) res.warnings.push(linerIssue);
+
       for (let i = 0; i < res.trays.length; i++) {
+        const tray = res.trays[i];
         setBusy(`Building geometry ${i + 1} of ${res.trays.length}...`);
         await yieldToUi();
-        built.set(res.trays[i].id, buildTrayMesh(res.trays[i], project.settings));
+        built.set(tray.id, buildTrayMesh(tray, project.settings));
         setMeshes(new Map(built));
+
+        if (project.settings.generateInserts && !linerIssue) {
+          setBusy(`Building liners ${i + 1} of ${res.trays.length}...`);
+          await yieldToUi();
+          const forTray: { name: string; mesh: TriMesh }[] = [];
+          for (const part of tray.parts) {
+            const ins = buildInsertMesh(part, project.settings);
+            if (ins) forTray.push({ name: linerName(part.name, part.instance), mesh: ins.mesh });
+            else part.insertProblem = 'This pocket is too small for a liner.';
+          }
+          if (forTray.length) liners.set(tray.id, forTray);
+          setInserts(new Map(liners));
+        }
       }
       setStale(false);
     } catch (e) {
@@ -77,13 +99,20 @@ export default function App() {
     [project.name],
   );
 
-  const exportTray = useCallback((tray: Tray, format: 'stl' | '3mf') => {
+  const exportTray = useCallback((tray: Tray, format: 'stl' | '3mf' | 'liners') => {
+    const name = `${fileBase}-${tray.name.replace(/\s+/g, '')}`;
+    if (format === 'liners') {
+      const set = inserts.get(tray.id);
+      if (!set?.length) return;
+      // One 3MF holding every liner for this tray: they are a single TPU job.
+      download(meshesTo3mf(set, `${tray.name} liners`), `${name}-liners.3mf`, 'model/3mf');
+      return;
+    }
     const mesh = meshes.get(tray.id);
     if (!mesh) return;
-    const name = `${fileBase}-${tray.name.replace(/\s+/g, '')}`;
     if (format === 'stl') download(meshToStl(mesh), `${name}.stl`, 'model/stl');
     else download(meshTo3mf(mesh, tray.name), `${name}.3mf`, 'model/3mf');
-  }, [meshes, fileBase]);
+  }, [meshes, inserts, fileBase]);
 
   const exportAll = useCallback(() => {
     if (!result) return;
@@ -92,13 +121,21 @@ export default function App() {
       const mesh = meshes.get(tray.id);
       if (!mesh) continue;
       const name = tray.name.replace(/\s+/g, '');
-      files[`3mf/${name}.3mf`] = meshTo3mf(mesh, tray.name);
-      files[`stl/${name}.stl`] = meshToStl(mesh);
+      files[`petg-trays/3mf/${name}.3mf`] = meshTo3mf(mesh, tray.name);
+      files[`petg-trays/stl/${name}.stl`] = meshToStl(mesh);
+
+      const set = inserts.get(tray.id);
+      if (set?.length) {
+        files[`tpu-liners/3mf/${name}-liners.3mf`] = meshesTo3mf(set, `${tray.name} liners`);
+        for (const liner of set) {
+          files[`tpu-liners/stl/${name}-${liner.name}.stl`] = meshToStl(liner.mesh);
+        }
+      }
     }
     files['print-notes.txt'] = new TextEncoder().encode(printNotes(project, result));
     files['project.traygen.json'] = new TextEncoder().encode(JSON.stringify(project, null, 2));
     download(zipFiles(files), `${fileBase}.zip`, 'application/zip');
-  }, [result, meshes, project, fileBase]);
+  }, [result, meshes, inserts, project, fileBase]);
 
   return (
     <div className="app">
@@ -150,11 +187,13 @@ export default function App() {
           <CasePanel s={project.settings} set={setSettings} />
           <PartsPanel project={project} setProject={setProject} />
           <SettingsPanel s={project.settings} set={setSettings} />
+          <InsertPanel s={project.settings} set={setSettings} />
           <ResultsPanel
             result={result}
             selected={selected}
             onSelect={setSelected}
             onExport={exportTray}
+            inserts={inserts}
             exportAll={exportAll}
             busy={busy !== null}
           />
@@ -209,13 +248,23 @@ function printNotes(project: Project, result: SolveResult): string {
     `Pocket clearance  ${s.clearance} mm (single global offset, covers the liner)`,
     `Wall / floor      ${s.wall} / ${s.floor} mm`,
     `Stack tolerance   ${s.stackTolerance} mm per side`,
+    s.generateInserts
+      ? `Liners            pad ${s.insertPad} mm, wall ${s.insertWall} mm, squeeze ${s.insertSqueeze} mm, ribs every ${s.insertRibSpacing} mm`
+      : 'Liners            not generated (use adhesive foam or felt)',
     `Stack height      ${result.stats.stackHeight.toFixed(1)} mm of ${s.cutoutDepth} mm`,
     '',
-    'Suggested printing:',
-    '  Material   PETG for tray bodies (heat tolerance in a vehicle, tough).',
-    '  Liner      Adhesive foam or felt in each pocket, or a printed TPU insert',
-    '             (TPU runs from an external spool, not through the AMS).',
-    '  Layer      0.2 mm, 3 walls, 15% infill. Trays print flat, feet down, no supports.',
+    'Printing:',
+    '  petg-trays/  Tray bodies. PETG: heat tolerance in a vehicle, and tough.',
+    '               0.2 mm layers, 3 walls, 15% infill, flat with the feet down,',
+    '               no supports.',
+    '  tpu-liners/  One liner per pocket, if liners were generated. Print in TPU',
+    '               from an external spool, not through the AMS. 0.2 mm layers,',
+    '               slow, no supports. Each tray\'s liners are also bundled as a',
+    '               single 3MF so they print as one job.',
+    '',
+    '  The liners hold parts on crush ribs rather than a solid sleeve, because',
+    '  TPU is not dimensionally predictable enough for a press fit. If parts',
+    '  rattle, raise the rib squeeze; if they are too tight, lower it.',
     '',
     'Trays:',
   ];
@@ -235,4 +284,10 @@ function printNotes(project: Project, result: SolveResult): string {
     for (const u of result.unplaced) lines.push(`  ! ${u.name} - ${u.reason}`);
   }
   return lines.join('\n') + '\n';
+}
+
+/** File-safe name for one pocket's liner. */
+function linerName(part: string, instance: number): string {
+  const base = part.replace(/[^\w.-]+/g, '_');
+  return instance ? `${base}-${instance + 1}` : base;
 }
