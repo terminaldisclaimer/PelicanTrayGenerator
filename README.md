@@ -97,9 +97,29 @@ publishes on every push to `main`. Enable it once under
 workflow sets `BASE_PATH` from the repository name so assets resolve under
 `https://<user>.github.io/<repo>/`.
 
-**Cloudflare Pages / Netlify / Vercel** work with no config change: build
-command `npm run build`, output directory `dist`, and leave `BASE_PATH` unset so
-the site is served from the domain root.
+**Cloudflare Workers.** `wrangler.jsonc` is set up for Workers Static Assets,
+which is what Cloudflare recommends for new static sites rather than Pages.
+Deploy from a machine with credentials:
+
+```bash
+npx wrangler login     # or export CLOUDFLARE_API_TOKEN=...
+npm run deploy         # builds, then uploads dist/
+```
+
+`.github/workflows/deploy-cloudflare.yml` does the same on every push to `main`
+once two repository secrets are set under *Settings -> Secrets and variables ->
+Actions*:
+
+| Secret | Where to get it |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard -> My Profile -> API Tokens -> Create Token -> **Edit Cloudflare Workers** template |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard -> Workers & Pages, in the right-hand sidebar |
+
+`npm run deploy:dry` validates the config and the upload without publishing.
+
+**Netlify / Vercel** work with no config change: build command `npm run build`,
+output directory `dist`, and leave `BASE_PATH` unset so the site is served from
+the domain root.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for why this is a client-side
 app and how the pieces fit together, and

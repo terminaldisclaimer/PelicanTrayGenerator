@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pelican-tray-generator",
+  "compatibility_date": "2026-08-22",
+
+  // A purely static site: no Worker script, just the Vite build output.
+  // Unmatched paths return 404 rather than index.html - the app is a single
+  // page with no client-side routing, so there is nothing to fall back for.
+  "assets": {
+    "directory": "./dist"
+  }
+}
