@@ -145,6 +145,17 @@ export function buildInsertMesh(part: PlacedPart, s: Settings): InsertResult | n
       body = S(body.add(trimmed));
     }
 
+    // Open the liner where a finger notch is, or the notch would end at a
+    // TPU wall. Slightly oversize so the openings line up despite fit gaps.
+    const notchCuts = (part.fingerNotches ?? []).filter((n) => n.valid);
+    if (notchCuts.length) {
+      const cuts = notchCuts.map((n) =>
+        S(S(Manifold.cylinder(height + 2, s.fingerNotchRadius + 0.4, s.fingerNotchRadius + 0.4, 40))
+          .translate(n.x, n.y, -1)),
+      );
+      body = S(body.subtract(S(Manifold.union(cuts))));
+    }
+
     return { mesh: toTriMesh(body), ribs: centres.length, height };
   } finally {
     for (const x of solids) { try { x.delete(); } catch { /* already freed */ } }

@@ -26,6 +26,14 @@ Everything runs in the browser. No server, no uploads, no account.
    per-part clearance to manage.
 5. **Generate** - the preview shows the trays in the case. Drag to orbit, use
    **Explode** to separate the layers, and click a tray to highlight it.
+   The **2D** toggle opens a top-down editor for one tray at a time: click a
+   pocket, **Add finger notches**, and a pair of scallops is auto-placed
+   opposite each other where fingers naturally pinch. Drag either notch around
+   the outline; **Align opposite** brings its partner across the shape. Invalid
+   spots (colliding with a neighbouring pocket or a thumb notch) show red, and
+   a tray with an invalid notch withholds its geometry until you fix it -
+   hand-placed notches are never moved for you. Notches cut to the pocket
+   floor and open the TPU liner too, so a finger actually reaches the part.
 6. **Export** - per tray: the PETG body as 3MF or STL, plus its TPU liners as a
    single 3MF. **Download all** gives a zip split into `petg-trays/` and
    `tpu-liners/`, with printing notes and the project file.

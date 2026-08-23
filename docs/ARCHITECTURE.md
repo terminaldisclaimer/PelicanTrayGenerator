@@ -72,6 +72,8 @@ src/
                             that refuse a liner the clearance cannot hold
     solver/
       maxrects.ts           Maximal-rectangles packer
+      notches.ts            Finger notches: arc-length parameterization along
+                            an outline, validity, opposite-pair auto-placement
       solve.ts              Parts -> pockets -> clusters -> depth buckets ->
                             trays -> layers
     export/
@@ -80,6 +82,8 @@ src/
                             downloads
     project.ts              Project JSON load/save and best-effort autosave
   three/Preview.tsx         Interactive 3D preview
+  ui/TrayView2D.tsx         Top-down SVG editor: drag finger notches around a
+                            pocket outline with live validity
   ui/                       Panels
   App.tsx                   State, the generate pipeline, exports
 ```

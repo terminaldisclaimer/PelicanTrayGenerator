@@ -21,7 +21,8 @@ const ellipse = (rx: number, ry: number): Poly => [
 let seq = 0;
 const part = (over: Partial<PartInput> = {}): PartInput => ({
   id: `p${seq++}`, name: `P${seq}`, poly: rect(40, 30), keepHoles: false, depth: 20,
-  qty: 1, groupId: null, sourceFile: '', notes: [], ...over,
+  qty: 1, groupId: null, sourceFile: '', notes: [], sourceUnitMm: 1, unitOverrideMm: null,
+  unitsAmbiguous: false, fingerNotches: [], ...over,
 });
 const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, ...over });
 

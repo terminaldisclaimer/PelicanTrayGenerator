@@ -22,6 +22,13 @@ export interface PartInput {
   groupId: string | null;
   sourceFile: string;
   notes: string[];
+  /**
+   * Finger-notch pairs, one entry per placed copy that has notches. Positions
+   * a/b are normalized arc-length along the pocket outline (0..1 from a
+   * rotation-invariant canonical start), so they survive the solver moving or
+   * rotating that copy.
+   */
+  fingerNotches: FingerNotchPair[];
 
   /** Millimetres per SVG user unit that the parser applied to `poly`. */
   sourceUnitMm: number;
@@ -59,6 +66,8 @@ export interface Settings {
   stackTolerance: number;
 
   thumbNotches: boolean;
+  /** Radius of the per-pocket finger notches placed in the 2D editor. */
+  fingerNotchRadius: number;
   /** Allow parts to be rotated to their minimum-area orientation. */
   allowRotation: boolean;
 
@@ -88,6 +97,14 @@ export interface Project {
   groups: { id: string; name: string }[];
 }
 
+export interface FingerNotchPair {
+  /** Which placed copy of the part this pair belongs to. */
+  instance: number;
+  /** Arc positions of the two notches, 0..1 around the pocket outline. */
+  a: number;
+  b: number;
+}
+
 /* ------------------------------------------------------------------ */
 /* Solver output                                                       */
 /* ------------------------------------------------------------------ */
@@ -102,11 +119,24 @@ export interface PlacedPart {
   rawPoly: Poly;
   /** Set when the clearance is too small to fit a liner in this pocket. */
   insertProblem?: string;
+  /** Finger notches resolved to tray coordinates, with validity. */
+  fingerNotches?: ResolvedNotch[];
   /** Depth of this pocket below the tray's stacking-recess floor. */
   depth: number;
   /** Rotation applied to the source silhouette, degrees CCW. */
   rotationDeg: number;
   bbox: { x: number; y: number; w: number; h: number };
+}
+
+export interface ResolvedNotch {
+  key: 'a' | 'b';
+  /** Arc position along the pocket outline. */
+  t: number;
+  /** Centre in tray-local mm, on the pocket outline. */
+  x: number;
+  y: number;
+  valid: boolean;
+  reason?: string;
 }
 
 export interface TrayNotch {
@@ -140,6 +170,8 @@ export interface Tray {
   cellY: number;
   z: number;
   oversize: boolean;
+  /** A hand-placed finger notch collides; geometry and export are withheld. */
+  blocked: boolean;
   warnings: string[];
 }
 

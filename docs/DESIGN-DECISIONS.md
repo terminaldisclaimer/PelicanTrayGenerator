@@ -56,9 +56,18 @@ against `cutout - 2 x fit`.
 **6. Finger access.** Thumb notches on tray edges, on. A 9 mm scallop is cut at
 the middle of an edge wherever it clears every pocket by 0.5 mm, short sides
 tried first, up to two per tray. A tray with no room says so rather than cutting
-into a pocket wall. Per-pocket finger scallops were considered and left out: they
-add a contour to the pocket wall, which pulls against decision 10, and a pocket
-that is 2 mm deeper than its part already leaves a fingertip's worth of room.
+into a pocket wall.
+
+Per-pocket finger notches were initially left out, then added as a hand-placed
+feature in the 2D editor (they stay vertical extrusions, so decision 10 holds).
+Each pocket can carry a pair of scallops cut to its floor; positions are stored
+as arc-length along the outline from a rotation-invariant start, so they follow
+the part through any re-pack. Auto-placement picks the best opposing pair; the
+user drags from there. There is deliberately no tray-edge keep-out: trays are
+snug, so an edge rule would outlaw half of every outline, and a notch reaching
+the edge just opens through the side wall exactly as thumb notches do. Invalid
+positions (into a neighbouring pocket or a thumb notch) are kept but block the
+tray's geometry until fixed - a hand-placed notch is never silently moved.
 
 **7. Labels.** Not generated. They cost print time on every tray and go stale
 whenever the packing changes; the exported `print-notes.txt` lists which parts

@@ -62,6 +62,20 @@ export function buildTrayMesh(tray: Tray, s: Settings): TriMesh {
       body = S(body.subtract(S(Manifold.union(pockets))));
     }
 
+    // Finger notches: scallops on the pocket wall, cut from above the ridges
+    // down to each pocket's own floor so a finger reaches under the part.
+    const fingerCuts: Solid[] = [];
+    for (const p of tray.parts) {
+      for (const n of p.fingerNotches ?? []) {
+        if (!n.valid) continue;
+        fingerCuts.push(
+          S(S(Manifold.cylinder(REG.height + p.depth + 2, s.fingerNotchRadius, s.fingerNotchRadius, 40))
+            .translate(n.x, n.y, topRef - p.depth)),
+        );
+      }
+    }
+    if (fingerCuts.length) body = S(body.subtract(S(Manifold.union(fingerCuts))));
+
     // Thumb notches, cut down to the top of the floor.
     if (tray.notches.length) {
       const depth = REG.height + tray.pocketZone + 2;

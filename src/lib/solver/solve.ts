@@ -2,6 +2,13 @@ import type { Layer, PartInput, PlacedPart, Poly, Settings, SolveResult, Tray, T
 import { MaxRects } from './maxrects';
 import { offsetPoly } from '../cad/manifold';
 import { partPoly } from '../part';
+import { resolveTrayNotches } from './notches';
+
+/** Every tray that made it into a layer (identical sets today; kept honest). */
+function placedOrAll(layers: Layer[], trays: Tray[]): Tray[] {
+  const placed = layers.flatMap((l) => l.trays);
+  return placed.length ? placed : trays;
+}
 import { LIP_BASE, REG, stackPitch, trayFootprint, trayHeight } from '../cad/profile';
 import {
   bboxH, bboxW, minAreaRotation, polyArea, polyBBox, rotatePoly, translatePoly,
@@ -456,6 +463,7 @@ export function solve(parts: PartInput[], s: Settings): SolveResult {
       cellY: 0,
       z: 0,
       oversize: sizeX > s.maxBed || sizeY > s.maxBed,
+      blocked: false,
       warnings: [],
     };
   });
@@ -539,6 +547,15 @@ export function solve(parts: PartInput[], s: Settings): SolveResult {
     const n = notchesFor(t, s);
     t.notches = n.notches;
     if (n.warning) t.warnings.push(n.warning);
+  }
+  // Finger notches last: their validity depends on final placement and on the
+  // thumb notches chosen above.
+  for (const t of placedOrAll(layers, trays)) {
+    const problems = resolveTrayNotches(t, parts, s);
+    for (const msg of problems) {
+      t.warnings.push(msg);
+      warnings.push(`${t.name}: ${msg}`);
+    }
   }
 
   const stackHeight = layers.length ? z + REG.height : 0;

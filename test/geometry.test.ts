@@ -22,7 +22,8 @@ const rect = (w: number, h: number): Poly => [[[0, 0], [w, 0], [w, h], [0, h]]];
 
 const part = (over: Partial<PartInput> = {}): PartInput => ({
   id: 'a', name: 'A', poly: rect(60, 40), keepHoles: false, depth: 18, qty: 1,
-  groupId: null, sourceFile: 'a.svg', notes: [], ...over,
+  groupId: null, sourceFile: 'a.svg', notes: [], sourceUnitMm: 1, unitOverrideMm: null,
+  unitsAmbiguous: false, fingerNotches: [], ...over,
 });
 
 const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, ...over });

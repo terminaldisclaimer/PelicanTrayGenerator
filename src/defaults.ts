@@ -19,6 +19,7 @@ export const DEFAULT_SETTINGS: Settings = {
   stackTolerance: 0.25,
 
   thumbNotches: true,
+  fingerNotchRadius: 9,
   allowRotation: true,
 
   generateInserts: true,

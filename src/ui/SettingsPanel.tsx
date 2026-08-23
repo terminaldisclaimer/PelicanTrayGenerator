@@ -71,6 +71,15 @@ export function SettingsPanel({ s, set }: { s: Settings; set: (patch: Partial<Se
           step={0.05}
           hint="Per-side clearance of the stacking recess over the foot. 0.25 mm matches Gridfinity."
         />
+        <NumberField
+          label="Finger notch"
+          value={s.fingerNotchRadius}
+          onChange={(v) => set({ fingerNotchRadius: v })}
+          min={3}
+          max={20}
+          step={0.5}
+          hint="Radius of the per-pocket finger notches placed in the 2D view. 9 mm is a fingertip."
+        />
       </div>
       <div className="checks">
         <CheckField

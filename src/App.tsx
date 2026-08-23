@@ -12,6 +12,8 @@ import { CasePanel, SettingsPanel, InsertPanel } from './ui/SettingsPanel';
 import { PartsPanel } from './ui/PartsPanel';
 import { ResultsPanel } from './ui/ResultsPanel';
 import { Preview } from './three/Preview';
+import { TrayView2D } from './ui/TrayView2D';
+import { autoPlacePair, alignOppositeT, resolveTrayNotches } from './lib/solver/notches';
 import { REG } from './lib/cad/profile';
 
 const yieldToUi = () => new Promise((r) => setTimeout(r, 0));
@@ -29,6 +31,8 @@ export default function App() {
   const [exploded, setExploded] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [frameRequest, setFrameRequest] = useState<{ n: number; mode: 'iso' | 'top' }>({ n: 0, mode: 'iso' });
+  const [view, setView] = useState<'3d' | '2d'>('3d');
+  const [notchMessage, setNotchMessage] = useState<string | null>(null);
   const reframe = (mode: 'iso' | 'top') => setFrameRequest((f) => ({ n: f.n + 1, mode }));
   const loadRef = useRef<HTMLInputElement>(null);
 
@@ -68,6 +72,7 @@ export default function App() {
 
       for (let i = 0; i < res.trays.length; i++) {
         const tray = res.trays[i];
+        if (tray.blocked) continue; // invalid finger notch: withhold geometry
         setBusy(`Building geometry ${i + 1} of ${res.trays.length}...`);
         await yieldToUi();
         built.set(tray.id, buildTrayMesh(tray, project.settings));
@@ -137,6 +142,106 @@ export default function App() {
     download(zipFiles(files), `${fileBase}.zip`, 'application/zip');
   }, [result, meshes, inserts, project, fileBase]);
 
+  /** Rebuild one tray's mesh and liners after a notch edit. */
+  const rebuildTray = useCallback(async (tray: Tray, parts: Project['parts'], s: Settings) => {
+    setBusy(`Rebuilding ${tray.name}...`);
+    await yieldToUi();
+    try {
+      setMeshes((prev) => {
+        const next = new Map(prev);
+        if (tray.blocked) next.delete(tray.id);
+        else next.set(tray.id, buildTrayMesh(tray, s));
+        return next;
+      });
+      setInserts((prev) => {
+        const next = new Map(prev);
+        next.delete(tray.id);
+        if (!tray.blocked && s.generateInserts && !insertProblem(s)) {
+          const forTray: { name: string; mesh: TriMesh }[] = [];
+          for (const part of tray.parts) {
+            const ins = buildInsertMesh(part, s);
+            if (ins) forTray.push({ name: linerName(part.name, part.instance), mesh: ins.mesh });
+          }
+          if (forTray.length) next.set(tray.id, forTray);
+        }
+        return next;
+      });
+    } catch (e) {
+      setError((e as Error).message || String(e));
+    } finally {
+      setBusy(null);
+    }
+    void parts; // placement is unchanged by a notch edit; parts kept for clarity
+  }, []);
+
+  /**
+   * Apply a change to one copy's notch pair: persist it on the part, re-check
+   * validity on the tray that holds the copy, and rebuild that tray.
+   */
+  const editNotches = useCallback((
+    partId: string,
+    instance: number,
+    change: (current: { a: number; b: number } | undefined) => { a: number; b: number } | null | undefined,
+  ) => {
+    if (!result || busy) return;
+    setNotchMessage(null);
+
+    const tray = result.trays.find((t) => t.parts.some((p) => p.partId === partId && p.instance === instance));
+    if (!tray) return;
+
+    const parts = project.parts.map((p) => {
+      if (p.id !== partId) return p;
+      const current = p.fingerNotches.find((n) => n.instance === instance);
+      const next = change(current ? { a: current.a, b: current.b } : undefined);
+      if (next === undefined) return p;
+      const rest = p.fingerNotches.filter((n) => n.instance !== instance);
+      return { ...p, fingerNotches: next === null ? rest : [...rest, { instance, ...next }] };
+    });
+    const nextProject = { ...project, parts };
+    setProjectState(nextProject);
+    autosave(nextProject);
+
+    // Placement is untouched, so re-resolving this tray in place is exact.
+    tray.warnings = tray.warnings.filter((w) => !w.includes('finger notch'));
+    const problems = resolveTrayNotches(tray, parts, nextProject.settings);
+    for (const msg of problems) tray.warnings.push(msg);
+    setResult({ ...result, warnings: result.warnings.filter((w) => !w.includes('finger notch')) });
+    void rebuildTray(tray, parts, nextProject.settings);
+  }, [result, busy, project, rebuildTray]);
+
+  const notchHandlers = useMemo(() => ({
+    add: (partId: string, instance: number) => {
+      const tray = result?.trays.find((t) => t.parts.some((p) => p.partId === partId && p.instance === instance));
+      const part = tray?.parts.find((p) => p.partId === partId && p.instance === instance);
+      if (!tray || !part) return;
+      const pair = autoPlacePair({ tray, part, settings: project.settings });
+      if (!pair) {
+        setNotchMessage('No room for a notch pair around this pocket - try a smaller notch radius.');
+        return;
+      }
+      editNotches(partId, instance, () => pair);
+    },
+    remove: (partId: string, instance: number) => editNotches(partId, instance, () => null),
+    move: (partId: string, instance: number, key: 'a' | 'b', t: number) =>
+      editNotches(partId, instance, (cur) => (cur ? { ...cur, [key]: t } : undefined)),
+    align: (partId: string, instance: number, dragged: 'a' | 'b') => {
+      const tray = result?.trays.find((t) => t.parts.some((p) => p.partId === partId && p.instance === instance));
+      const part = tray?.parts.find((p) => p.partId === partId && p.instance === instance);
+      if (!tray || !part) return;
+      editNotches(partId, instance, (cur) => {
+        if (!cur) return undefined;
+        const t = alignOppositeT({ tray, part, settings: project.settings }, cur[dragged]);
+        if (t === null) {
+          setNotchMessage('Nowhere valid directly across the shape - drag the other notch instead.');
+          return undefined;
+        }
+        return dragged === 'a' ? { a: cur.a, b: t } : { a: t, b: cur.b };
+      });
+    },
+  }), [result, project.settings, editNotches]);
+
+  const tray2d = result?.trays.find((t) => t.id === selected) ?? result?.trays[0] ?? null;
+
   return (
     <div className="app">
       <header className="topbar">
@@ -205,7 +310,27 @@ export default function App() {
 
         <div className="viewport">
           <div className="viewport-bar">
-            <label className={(result?.stats.layerCount ?? 0) < 2 ? 'disabled' : undefined}>
+            <div className="seg">
+              <button className={view === '3d' ? 'on' : ''} onClick={() => setView('3d')}>3D</button>
+              <button
+                className={view === '2d' ? 'on' : ''}
+                disabled={!result || result.trays.length === 0}
+                title={result?.trays.length ? 'Edit finger notches on a tray' : 'Generate first'}
+                onClick={() => setView('2d')}
+              >
+                2D
+              </button>
+            </div>
+            {view === '2d' && tray2d && (
+              <select
+                className="tray-pick"
+                value={tray2d.id}
+                onChange={(e) => setSelected(e.target.value)}
+              >
+                {result!.trays.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            )}
+            {view === '3d' && <label className={(result?.stats.layerCount ?? 0) < 2 ? 'disabled' : undefined}>
               Explode
               <input
                 type="range"
@@ -217,21 +342,33 @@ export default function App() {
                 title={(result?.stats.layerCount ?? 0) < 2 ? 'Everything fits in one layer, so there is nothing to explode.' : 'Separate the layers'}
                 onChange={(e) => setExploded(parseFloat(e.target.value))}
               />
-            </label>
-            <button className="ghost small" onClick={() => reframe('iso')}>Iso</button>
-            <button className="ghost small" onClick={() => reframe('top')}>Top</button>
+            </label>}
+            {view === '3d' && <button className="ghost small" onClick={() => reframe('iso')}>Iso</button>}
+            {view === '3d' && <button className="ghost small" onClick={() => reframe('top')}>Top</button>}
             {stale && result && <span className="badge warnbadge">Inputs changed - regenerate</span>}
             {selected && <span className="badge">{result?.trays.find((t) => t.id === selected)?.name}</span>}
           </div>
-          <Preview
-            result={result}
-            settings={project.settings}
-            meshes={meshes}
-            exploded={exploded}
-            selected={selected}
-            onSelect={setSelected}
-            frameRequest={frameRequest}
-          />
+          {view === '2d' && tray2d ? (
+            <TrayView2D
+              tray={tray2d}
+              settings={project.settings}
+              message={notchMessage}
+              onAddPair={notchHandlers.add}
+              onRemovePair={notchHandlers.remove}
+              onMoveNotch={notchHandlers.move}
+              onAlignOpposite={notchHandlers.align}
+            />
+          ) : (
+            <Preview
+              result={result}
+              settings={project.settings}
+              meshes={meshes}
+              exploded={exploded}
+              selected={selected}
+              onSelect={setSelected}
+              frameRequest={frameRequest}
+            />
+          )}
         </div>
       </main>
     </div>

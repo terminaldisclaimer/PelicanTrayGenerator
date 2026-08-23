@@ -22,7 +22,8 @@ const disc = (r: number): Poly => [
 
 const part = (over: Partial<PartInput> = {}): PartInput => ({
   id: 'a', name: 'A', poly: rect(60, 40), keepHoles: false, depth: 20, qty: 1,
-  groupId: null, sourceFile: '', notes: [], ...over,
+  groupId: null, sourceFile: '', notes: [], sourceUnitMm: 1, unitOverrideMm: null,
+  unitsAmbiguous: false, fingerNotches: [], ...over,
 });
 const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, ...over });
 
