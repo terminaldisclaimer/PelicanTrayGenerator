@@ -74,6 +74,8 @@ src/
       maxrects.ts           Maximal-rectangles packer
       notches.ts            Finger notches: arc-length parameterization along
                             an outline, validity, opposite-pair auto-placement
+      placement.ts          Manual pocket moves: per-copy position overrides,
+                            validated with the packer's own spacing rules
       solve.ts              Parts -> pockets -> clusters -> depth buckets ->
                             trays -> layers
     export/

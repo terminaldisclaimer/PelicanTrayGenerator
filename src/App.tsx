@@ -14,6 +14,8 @@ import { ResultsPanel } from './ui/ResultsPanel';
 import { Preview } from './three/Preview';
 import { TrayView2D } from './ui/TrayView2D';
 import { autoPlacePair, alignOppositeT, resolveTrayNotches } from './lib/solver/notches';
+import { movePlacedPart, placementProblemAt, updateTrayBlocked } from './lib/solver/placement';
+import { computeThumbNotches } from './lib/solver/solve';
 import { REG } from './lib/cad/profile';
 
 const yieldToUi = () => new Promise((r) => setTimeout(r, 0));
@@ -175,6 +177,36 @@ export default function App() {
   }, []);
 
   /**
+   * Re-derive everything on a tray that depends on pocket positions - thumb
+   * notches, finger notches, blocked state - then publish and rebuild.
+   */
+  const refreshTray = useCallback((tray: Tray, parts: Project['parts'], s: Settings) => {
+    if (!result) return;
+    tray.warnings = tray.warnings.filter(
+      (w) => !w.includes('finger notch') && !w.includes('moved position') && !w.includes('thumb notch'),
+    );
+    const thumbs = computeThumbNotches(tray, s);
+    tray.notches = thumbs.notches;
+    if (thumbs.warning) tray.warnings.push(thumbs.warning);
+    for (const placed of tray.parts) {
+      placed.placementProblem = placed.moved
+        ? placementProblemAt(tray, placed, s, placed.bbox.x, placed.bbox.y) ?? undefined
+        : undefined;
+      if (placed.placementProblem) {
+        tray.warnings.push(
+          `${placed.name}${placed.instance ? ` #${placed.instance + 1}` : ''}: moved position is ` +
+          `${placed.placementProblem}. Fix or reset it in the 2D view - geometry for this tray is withheld until then.`,
+        );
+      }
+    }
+    const notchProblems = resolveTrayNotches(tray, parts, s);
+    for (const msg of notchProblems) tray.warnings.push(msg);
+    updateTrayBlocked(tray);
+    setResult({ ...result, warnings: result.warnings.filter((w) => !w.includes('finger notch') && !w.includes('moved position')) });
+    void rebuildTray(tray, parts, s);
+  }, [result, rebuildTray]);
+
+  /**
    * Apply a change to one copy's notch pair: persist it on the part, re-check
    * validity on the tray that holds the copy, and rebuild that tray.
    */
@@ -201,13 +233,31 @@ export default function App() {
     setProjectState(nextProject);
     autosave(nextProject);
 
-    // Placement is untouched, so re-resolving this tray in place is exact.
-    tray.warnings = tray.warnings.filter((w) => !w.includes('finger notch'));
-    const problems = resolveTrayNotches(tray, parts, nextProject.settings);
-    for (const msg of problems) tray.warnings.push(msg);
-    setResult({ ...result, warnings: result.warnings.filter((w) => !w.includes('finger notch')) });
-    void rebuildTray(tray, parts, nextProject.settings);
-  }, [result, busy, project, rebuildTray]);
+    refreshTray(tray, parts, nextProject.settings);
+  }, [result, busy, project, refreshTray]);
+
+  /** Move one copy to (x, y), or reset it to the packed position on null. */
+  const editPlacement = useCallback((partId: string, instance: number, pos: { x: number; y: number } | null) => {
+    if (!result || busy) return;
+    setNotchMessage(null);
+    const tray = result.trays.find((t) => t.parts.some((p) => p.partId === partId && p.instance === instance));
+    const placed = tray?.parts.find((p) => p.partId === partId && p.instance === instance);
+    if (!tray || !placed) return;
+
+    const parts = project.parts.map((p) => {
+      if (p.id !== partId) return p;
+      const rest = (p.placements ?? []).filter((o) => o.instance !== instance);
+      return { ...p, placements: pos === null ? rest : [...rest, { instance, ...pos }] };
+    });
+    const nextProject = { ...project, parts };
+    setProjectState(nextProject);
+    autosave(nextProject);
+
+    const target = pos ?? placed.packed ?? { x: placed.bbox.x, y: placed.bbox.y };
+    movePlacedPart(placed, target.x, target.y);
+    placed.moved = pos !== null;
+    refreshTray(tray, parts, nextProject.settings);
+  }, [result, busy, project, refreshTray]);
 
   const notchHandlers = useMemo(() => ({
     add: (partId: string, instance: number) => {
@@ -357,6 +407,8 @@ export default function App() {
               onRemovePair={notchHandlers.remove}
               onMoveNotch={notchHandlers.move}
               onAlignOpposite={notchHandlers.align}
+              onMovePart={(partId, instance, x, y) => editPlacement(partId, instance, { x, y })}
+              onResetPart={(partId, instance) => editPlacement(partId, instance, null)}
             />
           ) : (
             <Preview

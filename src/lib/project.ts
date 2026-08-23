@@ -39,6 +39,14 @@ export function coerceProject(raw: unknown): Project {
           unitOverrideMm: typeof p.unitOverrideMm === 'number' && p.unitOverrideMm > 0
             ? p.unitOverrideMm : null,
           unitsAmbiguous: p.unitsAmbiguous === true,
+          placements: Array.isArray(p.placements)
+            ? (p.placements as Record<string, unknown>[]).flatMap((n) => {
+                const instance = Math.max(0, Math.round(num(n.instance, 0)));
+                const x = num(n.x, NaN);
+                const y = num(n.y, NaN);
+                return Number.isFinite(x) && Number.isFinite(y) ? [{ instance, x, y }] : [];
+              })
+            : [],
           fingerNotches: Array.isArray(p.fingerNotches)
             ? (p.fingerNotches as Record<string, unknown>[]).flatMap((n) => {
                 const instance = Math.max(0, Math.round(num(n.instance, 0)));

@@ -220,3 +220,6 @@ table.parts tr.unsure .sub { color: var(--warn); }
 .v2-notch.sel { stroke-width: 1.6; }
 .v2-notch.live { stroke-width: 1.6; }
 .v2-notch.bad { fill: rgba(224, 96, 95, 0.35); stroke: var(--bad); }
+
+.v2-pocket.live { stroke-width: 1.4; cursor: grabbing; }
+.v2-pocket.bad { stroke: var(--bad); fill: rgba(224, 96, 95, 0.16); }

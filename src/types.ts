@@ -29,6 +29,12 @@ export interface PartInput {
    * rotating that copy.
    */
   fingerNotches: FingerNotchPair[];
+  /**
+   * Manual position overrides from the 2D editor, one per moved copy.
+   * x/y is the pocket bounding box origin in tray-local mm, in the tray frame
+   * the user saw when dragging.
+   */
+  placements: PlacementOverride[];
 
   /** Millimetres per SVG user unit that the parser applied to `poly`. */
   sourceUnitMm: number;
@@ -97,6 +103,13 @@ export interface Project {
   groups: { id: string; name: string }[];
 }
 
+export interface PlacementOverride {
+  /** Which placed copy of the part this override moves. */
+  instance: number;
+  x: number;
+  y: number;
+}
+
 export interface FingerNotchPair {
   /** Which placed copy of the part this pair belongs to. */
   instance: number;
@@ -121,6 +134,12 @@ export interface PlacedPart {
   insertProblem?: string;
   /** Finger notches resolved to tray coordinates, with validity. */
   fingerNotches?: ResolvedNotch[];
+  /** Where the packer put this copy, so a manual move can be reset. */
+  packed?: { x: number; y: number };
+  /** True when a manual override positioned this copy. */
+  moved?: boolean;
+  /** Why the manual position is unusable; blocks the tray's geometry. */
+  placementProblem?: string;
   /** Depth of this pocket below the tray's stacking-recess floor. */
   depth: number;
   /** Rotation applied to the source silhouette, degrees CCW. */

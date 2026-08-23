@@ -3,6 +3,7 @@ import { MaxRects } from './maxrects';
 import { offsetPoly } from '../cad/manifold';
 import { partPoly } from '../part';
 import { resolveTrayNotches } from './notches';
+import { applyPlacementOverrides, updateTrayBlocked } from './placement';
 
 /** Every tray that made it into a layer (identical sets today; kept honest). */
 function placedOrAll(layers: Layer[], trays: Tray[]): Tray[] {
@@ -307,6 +308,10 @@ function makeTrays(
   return out;
 }
 
+export function computeThumbNotches(tray: Tray, s: Settings): { notches: TrayNotch[]; warning?: string } {
+  return notchesFor(tray, s);
+}
+
 function notchesFor(tray: Tray, s: Settings): { notches: TrayNotch[]; warning?: string } {
   if (!s.thumbNotches) return { notches: [] };
   const boxes = tray.parts.map((p) => p.bbox);
@@ -543,19 +548,20 @@ export function solve(parts: PartInput[], s: Settings): SolveResult {
   }
 
   padLoadedTrays(layers, s);
-  for (const t of trays) {
+  // Per tray: manual placement overrides first (the frame is final here),
+  // then thumb notches (they avoid pockets where they ended up), then finger
+  // notches (their validity depends on both of the above).
+  for (const t of placedOrAll(layers, trays)) {
+    const placeProblems = applyPlacementOverrides(t, parts, s);
     const n = notchesFor(t, s);
     t.notches = n.notches;
     if (n.warning) t.warnings.push(n.warning);
-  }
-  // Finger notches last: their validity depends on final placement and on the
-  // thumb notches chosen above.
-  for (const t of placedOrAll(layers, trays)) {
-    const problems = resolveTrayNotches(t, parts, s);
-    for (const msg of problems) {
+    const notchProblems = resolveTrayNotches(t, parts, s);
+    for (const msg of [...placeProblems, ...notchProblems]) {
       t.warnings.push(msg);
       warnings.push(`${t.name}: ${msg}`);
     }
+    updateTrayBlocked(t);
   }
 
   const stackHeight = layers.length ? z + REG.height : 0;

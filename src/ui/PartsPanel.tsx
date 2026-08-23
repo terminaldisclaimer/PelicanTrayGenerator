@@ -35,6 +35,7 @@ export function PartsPanel({ project, setProject }: {
           unitOverrideMm: null,
           unitsAmbiguous: parsed.unitsAmbiguous,
           fingerNotches: [],
+          placements: [],
         });
       } catch (e) {
         errs.push(`${file.name}: ${(e as Error).message}`);

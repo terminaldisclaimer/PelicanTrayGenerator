@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import type { PlacedPart, Ring, Settings, Tray, Vec2 } from '../types';
 import { REG } from '../lib/cad/profile';
 import { nearestT, notchProblemAt, pointAtT } from '../lib/solver/notches';
+import { placementProblemAt } from '../lib/solver/placement';
 
 export interface TrayView2DProps {
   tray: Tray;
@@ -11,15 +12,27 @@ export interface TrayView2DProps {
   onRemovePair: (partId: string, instance: number) => void;
   onMoveNotch: (partId: string, instance: number, key: 'a' | 'b', t: number) => void;
   onAlignOpposite: (partId: string, instance: number, dragged: 'a' | 'b') => void;
+  onMovePart: (partId: string, instance: number, x: number, y: number) => void;
+  onResetPart: (partId: string, instance: number) => void;
 }
 
 interface Sel { partId: string; instance: number }
 interface Drag extends Sel { key: 'a' | 'b'; t: number }
+interface PartDrag extends Sel {
+  /** Pointer position when the drag began, world mm. */
+  grab: Vec2;
+  /** Pocket bbox origin when the drag began. */
+  from: Vec2;
+  /** Live bbox origin. */
+  at: Vec2;
+  engaged: boolean;
+}
 
 const sameSel = (a: Sel | null, b: Sel) => !!a && a.partId === b.partId && a.instance === b.instance;
 
 export function TrayView2D({
   tray, settings: s, message, onAddPair, onRemovePair, onMoveNotch, onAlignOpposite,
+  onMovePart, onResetPart,
 }: TrayView2DProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const MARGIN = 14;
@@ -33,6 +46,7 @@ export function TrayView2D({
   const [sel, setSel] = useState<Sel | null>(null);
   const [selNotch, setSelNotch] = useState<'a' | 'b' | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
+  const [partDrag, setPartDrag] = useState<PartDrag | null>(null);
   const [pan, setPan] = useState<{ sx: number; sy: number; vx: number; vy: number } | null>(null);
 
   // World y-up -> svg y-down.
@@ -51,6 +65,13 @@ export function TrayView2D({
 
   const selected = sel && tray.parts.find((p) => p.partId === sel.partId && p.instance === sel.instance);
   const selectedPair = selected?.fingerNotches;
+
+  const partDragProblem = useMemo(() => {
+    if (!partDrag?.engaged) return null;
+    const part = tray.parts.find((p) => p.partId === partDrag.partId && p.instance === partDrag.instance);
+    if (!part) return null;
+    return placementProblemAt(tray, part, s, partDrag.at[0], partDrag.at[1]);
+  }, [partDrag, tray, s]);
 
   const dragProblem = useMemo(() => {
     if (!drag) return null;
@@ -74,6 +95,11 @@ export function TrayView2D({
     if (drag) {
       const part = tray.parts.find((p) => p.partId === drag.partId && p.instance === drag.instance);
       if (part) setDrag({ ...drag, t: nearestT(part.poly[0], toWorld(e)) });
+    } else if (partDrag) {
+      const w = toWorld(e);
+      const at: Vec2 = [partDrag.from[0] + w[0] - partDrag.grab[0], partDrag.from[1] + w[1] - partDrag.grab[1]];
+      const engaged = partDrag.engaged || Math.hypot(at[0] - partDrag.from[0], at[1] - partDrag.from[1]) > 0.8;
+      setPartDrag({ ...partDrag, at, engaged });
     } else if (pan) {
       const svg = svgRef.current!;
       const r = svg.getBoundingClientRect();
@@ -92,6 +118,15 @@ export function TrayView2D({
       onMoveNotch(drag.partId, drag.instance, drag.key, drag.t);
       setSelNotch(drag.key);
       setDrag(null);
+    }
+    if (partDrag) {
+      if (partDrag.engaged) {
+        onMovePart(
+          partDrag.partId, partDrag.instance,
+          Math.round(partDrag.at[0] * 10) / 10, Math.round(partDrag.at[1] * 10) / 10,
+        );
+      }
+      setPartDrag(null);
     }
     setPan(null);
   };
@@ -119,6 +154,15 @@ export function TrayView2D({
         {selected ? (
           <>
             <span className="v2-name">{selected.name}{selected.instance ? ` #${selected.instance + 1}` : ''}</span>
+            {selected.moved && (
+              <button
+                className="ghost small"
+                title="Put this pocket back where the packer placed it"
+                onClick={() => onResetPart(selected.partId, selected.instance)}
+              >
+                Reset position
+              </button>
+            )}
             {!selectedPair?.length ? (
               <button className="primary small" onClick={() => onAddPair(selected.partId, selected.instance)}>
                 Add finger notches
@@ -140,11 +184,18 @@ export function TrayView2D({
             )}
           </>
         ) : (
-          <span className="muted small">Click a pocket to add or edit its finger notches. Drag a notch around the outline.</span>
+          <span className="muted small">Click a pocket to select it; drag it to move it. Drag a notch around the outline.</span>
         )}
         {drag && dragProblem && <span className="warn small">{dragProblem}</span>}
+        {partDrag?.engaged && (
+          <span className={partDragProblem ? 'warn small' : 'muted small'}>
+            {partDragProblem ?? `${partDrag.at[0].toFixed(1)}, ${partDrag.at[1].toFixed(1)} mm`}
+          </span>
+        )}
         {message && <span className="warn small">{message}</span>}
-        {tray.blocked && !drag && <span className="warn small">A notch collides - geometry for this tray is withheld.</span>}
+        {tray.blocked && !drag && !partDrag?.engaged && (
+          <span className="warn small">An invalid placement or notch - geometry for this tray is withheld.</span>
+        )}
       </div>
       <svg
         ref={svgRef}
@@ -173,13 +224,27 @@ export function TrayView2D({
         {tray.notches.map((n, i) => (
           <circle key={`thumb${i}`} cx={n.cx} cy={Y(n.cy)} r={n.radius} className="v2-thumb" />
         ))}
-        {tray.parts.map((p) => (
-          <g key={`${p.partId}#${p.instance}`}>
+        {tray.parts.map((p) => {
+          const isPartDrag = partDrag?.engaged && partDrag.partId === p.partId && partDrag.instance === p.instance;
+          const dx = isPartDrag ? partDrag.at[0] - p.bbox.x : 0;
+          const dy = isPartDrag ? partDrag.at[1] - p.bbox.y : 0;
+          return (
+          <g key={`${p.partId}#${p.instance}`} transform={`translate(${dx} ${-dy})`}>
             <path
               d={path(p.poly)}
-              className={`v2-pocket${sameSel(sel, p) ? ' sel' : ''}`}
+              className={`v2-pocket${sameSel(sel, p) ? ' sel' : ''}${isPartDrag ? (partDragProblem ? ' bad' : ' live') : ''}${p.placementProblem ? ' bad' : ''}`}
               fillRule="evenodd"
-              onPointerDown={(e) => { setSel({ partId: p.partId, instance: p.instance }); setSelNotch(null); e.stopPropagation(); }}
+              onPointerDown={(e) => {
+                setSel({ partId: p.partId, instance: p.instance });
+                setSelNotch(null);
+                setPartDrag({
+                  partId: p.partId, instance: p.instance,
+                  grab: toWorld(e), from: [p.bbox.x, p.bbox.y], at: [p.bbox.x, p.bbox.y],
+                  engaged: false,
+                });
+                (e.target as Element).setPointerCapture?.(e.pointerId);
+                e.stopPropagation();
+              }}
             />
             <path d={path(p.rawPoly)} className="v2-raw" fillRule="evenodd" />
             <text x={p.bbox.x + p.bbox.w / 2} y={Y(p.bbox.y + p.bbox.h / 2)} className="v2-label">
@@ -207,7 +272,7 @@ export function TrayView2D({
               />
             ))}
           </g>
-        ))}
+        );})}
       </svg>
     </div>
   );

@@ -2,6 +2,7 @@ import type {
   PartInput, PlacedPart, ResolvedNotch, Ring, Settings, Tray, Vec2,
 } from '../../types';
 import { pointInRing } from '../geom2d';
+import { updateTrayBlocked } from './placement';
 
 /**
  * Finger notches: scallops cut outward from a pocket wall so a part can be
@@ -248,6 +249,6 @@ export function resolveTrayNotches(tray: Tray, parts: PartInput[], s: Settings):
       }
     }
   }
-  tray.blocked = problems.length > 0;
+  updateTrayBlocked(tray);
   return problems;
 }

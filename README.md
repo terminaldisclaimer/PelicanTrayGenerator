@@ -26,7 +26,9 @@ Everything runs in the browser. No server, no uploads, no account.
    per-part clearance to manage.
 5. **Generate** - the preview shows the trays in the case. Drag to orbit, use
    **Explode** to separate the layers, and click a tray to highlight it.
-   The **2D** toggle opens a top-down editor for one tray at a time: click a
+   The **2D** toggle opens a top-down editor for one tray at a time. Drag a
+   pocket to reposition it within its tray (the packer's layout is the starting
+   point; **Reset position** hands a pocket back to it). Click a
    pocket, **Add finger notches**, and a pair of scallops is auto-placed
    opposite each other where fingers naturally pinch. Drag either notch around
    the outline; **Align opposite** brings its partner across the shape. Invalid
