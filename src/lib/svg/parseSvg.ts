@@ -7,6 +7,14 @@ export interface ParsedSvg {
   notes: string[];
   /** Width/height of the silhouette in mm. */
   size: { w: number; h: number };
+  /** Millimetres per SVG user unit that was applied. */
+  unitMm: number;
+  /**
+   * True when the document carried no real-world size and the unit had to be
+   * guessed. An SVG with only a viewBox has no intrinsic physical size, so
+   * this is a guess the user may need to correct.
+   */
+  unitsAmbiguous: boolean;
 }
 
 type Mat = [number, number, number, number, number, number]; // a b c d e f
@@ -179,6 +187,7 @@ export function parseSvgSilhouette(text: string): ParsedSvg {
   const hMm = lengthMm(svg.getAttribute('height'));
 
   let scale = UNIT_MM.px; // default: user units are CSS px
+  let ambiguous = false;
   if (hasVb && wMm !== null && hMm !== null) {
     const sx = wMm / vb[2], sy = hMm / vb[3];
     scale = (sx + sy) / 2;
@@ -191,9 +200,14 @@ export function parseSvgSilhouette(text: string): ParsedSvg {
     scale = hMm / vb[3];
   } else if (!hasVb && (wMm !== null || hMm !== null)) {
     scale = 1; // width/height are the user-unit extent already in real units
+    ambiguous = true;
     notes.push('No viewBox found; assuming user units are millimetres.');
   } else {
-    notes.push('No real-world units found; assuming 96 dpi pixels.');
+    ambiguous = true;
+    notes.push(
+      'This file carries no real-world size, only a viewBox, so 96 dpi pixels were assumed. ' +
+      'Check the size below and set the units if it is wrong.',
+    );
   }
 
   // viewBox origin offset, then unit scale, then Y flip.
@@ -229,5 +243,11 @@ export function parseSvgSilhouette(text: string): ParsedSvg {
 
   const poly = normalisePoly([outer, ...holes]);
   const bb = ringBBox(poly[0]);
-  return { poly, notes, size: { w: bb.maxX - bb.minX, h: bb.maxY - bb.minY } };
+  return {
+    poly,
+    notes,
+    size: { w: bb.maxX - bb.minX, h: bb.maxY - bb.minY },
+    unitMm: scale,
+    unitsAmbiguous: ambiguous,
+  };
 }

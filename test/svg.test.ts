@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
 import { parseSvgSilhouette } from '../src/lib/svg/parseSvg';
+import { partSize } from '../src/lib/part';
+import type { PartInput } from '../src/types';
 import { ringAreaAbs } from '../src/lib/geom2d';
 
 const svg = (attrs: string, body: string) => `<?xml version="1.0"?>
@@ -36,6 +38,45 @@ describe('svg unit handling', () => {
   it('handles inches', () => {
     const { size } = parseSvgSilhouette(svg('width="2in" height="1in" viewBox="0 0 200 100"', '<rect width="100" height="50"/>'));
     expect(size.w).toBeCloseTo(25.4, 2);
+  });
+});
+
+describe('documents with no real-world size', () => {
+  // An Illustrator export with only a viewBox: the SVG spec gives it no
+  // intrinsic physical size, so the parser has to guess and must say so.
+  const noSize = svg('viewBox="0 0 112.63 251.35"', '<rect x="0" y="0" width="112.63" height="251.35"/>');
+
+  it('flags the guess instead of quietly getting it wrong', () => {
+    const r = parseSvgSilhouette(noSize);
+    expect(r.unitsAmbiguous).toBe(true);
+    expect(r.unitMm).toBeCloseTo(25.4 / 96, 6);
+    expect(r.notes.join(' ')).toMatch(/no real-world size/i);
+    // 96 dpi reading of the same drawing.
+    expect(r.size.h).toBeCloseTo(251.35 * (25.4 / 96), 2);
+  });
+
+  it('a unit override rescales the outline', () => {
+    const r = parseSvgSilhouette(noSize);
+    const base: PartInput = {
+      id: 'x', name: 'x', poly: r.poly, keepHoles: false, depth: 10, qty: 1,
+      groupId: null, sourceFile: '', notes: r.notes,
+      sourceUnitMm: r.unitMm, unitOverrideMm: null, unitsAmbiguous: r.unitsAmbiguous,
+    };
+    expect(partSize(base).h).toBeCloseTo(251.35 * (25.4 / 96), 2);
+
+    // Telling it the drawing is in points gives the true size.
+    const asPoints = { ...base, unitOverrideMm: 25.4 / 72 };
+    expect(partSize(asPoints).h).toBeCloseTo(251.35 * (25.4 / 72), 2);
+    expect(partSize(asPoints).h / partSize(base).h).toBeCloseTo(96 / 72, 6);
+
+    const asMm = { ...base, unitOverrideMm: 1 };
+    expect(partSize(asMm).h).toBeCloseTo(251.35, 2);
+  });
+
+  it('leaves documents that do declare a size alone', () => {
+    const r = parseSvgSilhouette(svg('width="100mm" height="60mm" viewBox="0 0 100 60"', '<rect width="80" height="40"/>'));
+    expect(r.unitsAmbiguous).toBe(false);
+    expect(r.size.w).toBeCloseTo(80, 3);
   });
 });
 

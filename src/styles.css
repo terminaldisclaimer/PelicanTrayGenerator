@@ -179,3 +179,14 @@ ul.trays li.sel { border-color: var(--accent); }
 }
 .mat.tpu { color: var(--warn); border-color: rgba(240, 160, 43, 0.4); margin-left: 6px; }
 .tray-actions { align-items: center; }
+
+/* A part whose real-world size had to be guessed. */
+table.parts tr.unsure td { background: rgba(240, 160, 43, 0.07); }
+table.parts tr.unsure .sub { color: var(--warn); }
+.units {
+  margin-top: 3px;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-color: rgba(240, 160, 43, 0.45);
+}
+.inch { font-style: normal; opacity: 0.7; }

@@ -33,6 +33,12 @@ export function coerceProject(raw: unknown): Project {
           groupId: typeof p.groupId === 'string' ? p.groupId : null,
           sourceFile: typeof p.sourceFile === 'string' ? p.sourceFile : '',
           notes: Array.isArray(p.notes) ? (p.notes as string[]) : [],
+          // Older project files predate unit tracking; their outlines are
+          // already in mm, so a scale of 1 reproduces them exactly.
+          sourceUnitMm: num(p.sourceUnitMm, 1),
+          unitOverrideMm: typeof p.unitOverrideMm === 'number' && p.unitOverrideMm > 0
+            ? p.unitOverrideMm : null,
+          unitsAmbiguous: p.unitsAmbiguous === true,
         }];
       })
     : [];

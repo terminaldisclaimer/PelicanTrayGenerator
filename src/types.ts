@@ -22,6 +22,13 @@ export interface PartInput {
   groupId: string | null;
   sourceFile: string;
   notes: string[];
+
+  /** Millimetres per SVG user unit that the parser applied to `poly`. */
+  sourceUnitMm: number;
+  /** User's correction, in millimetres per user unit. null keeps the parse. */
+  unitOverrideMm: number | null;
+  /** The parser had to guess the unit; the outline may be the wrong size. */
+  unitsAmbiguous: boolean;
 }
 
 export interface Settings {

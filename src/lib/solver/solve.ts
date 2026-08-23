@@ -1,6 +1,7 @@
 import type { Layer, PartInput, PlacedPart, Poly, Settings, SolveResult, Tray, TrayNotch } from '../../types';
 import { MaxRects } from './maxrects';
 import { offsetPoly } from '../cad/manifold';
+import { partPoly } from '../part';
 import { LIP_BASE, REG, stackPitch, trayFootprint, trayHeight } from '../cad/profile';
 import {
   bboxH, bboxW, minAreaRotation, polyArea, polyBBox, rotatePoly, translatePoly,
@@ -62,7 +63,8 @@ function buildItems(parts: PartInput[], s: Settings): { items: Item[]; problems:
   const items: Item[] = [];
   const problems: SolveResult['unplaced'] = [];
   for (const p of parts) {
-    const source: Poly = p.keepHoles ? p.poly : [p.poly[0]];
+    const scaled = partPoly(p);
+    const source: Poly = p.keepHoles ? scaled : [scaled[0]];
     let offset: Poly;
     try {
       offset = offsetPoly(source, s.clearance);

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { PartInput, Project } from '../types';
 import { parseSvgSilhouette } from '../lib/svg/parseSvg';
-import { polyBBox, bboxW, bboxH } from '../lib/geom2d';
+import { partSize, UNIT_CHOICES } from '../lib/part';
 import { Panel } from './Field';
 
 let seq = 0;
@@ -31,6 +31,9 @@ export function PartsPanel({ project, setProject }: {
           groupId: null,
           sourceFile: file.name,
           notes: parsed.notes,
+          sourceUnitMm: parsed.unitMm,
+          unitOverrideMm: null,
+          unitsAmbiguous: parsed.unitsAmbiguous,
         });
       } catch (e) {
         errs.push(`${file.name}: ${(e as Error).message}`);
@@ -111,16 +114,35 @@ export function PartsPanel({ project, setProject }: {
           </thead>
           <tbody>
             {project.parts.map((part) => {
-              const bb = polyBBox(part.poly);
+              const size = partSize(part);
+              const unsure = part.unitsAmbiguous && part.unitOverrideMm === null;
               return (
-                <tr key={part.id}>
+                <tr key={part.id} className={unsure ? 'unsure' : undefined}>
                   <td>
                     <input
                       className="name"
                       value={part.name}
                       onChange={(e) => update(part.id, { name: e.target.value })}
                     />
-                    <span className="mono sub">{bboxW(bb).toFixed(1)} x {bboxH(bb).toFixed(1)} mm</span>
+                    <span className="mono sub">
+                      {size.w.toFixed(1)} x {size.h.toFixed(1)} mm
+                      <em className="inch"> ({(size.w / 25.4).toFixed(2)} x {(size.h / 25.4).toFixed(2)} in)</em>
+                    </span>
+                    {part.unitsAmbiguous && (
+                      <select
+                        className="units"
+                        value={part.unitOverrideMm ?? ''}
+                        title="This file carried no real-world size. If the dimensions above are wrong, say what the drawing's units are."
+                        onChange={(e) =>
+                          update(part.id, { unitOverrideMm: e.target.value ? Number(e.target.value) : null })
+                        }
+                      >
+                        <option value="">units: guessed</option>
+                        {UNIT_CHOICES.map((u) => (
+                          <option key={u.label} value={u.mm}>units: {u.label}</option>
+                        ))}
+                      </select>
+                    )}
                     {part.notes.length > 0 && (
                       <span className="note" title={part.notes.join('\n')}>{part.notes.length} note{part.notes.length > 1 ? 's' : ''}</span>
                     )}
