@@ -234,14 +234,21 @@ function tryTray(clusters: Cluster[], cx: number, cy: number, s: Settings, margi
   return { cellsX: sx, cellsY: sy, placements, density };
 }
 
+/** Why the biggest possible tray is the size it is. */
+export interface TrayLimit {
+  maxCX: number;
+  maxCY: number;
+  boundByBed: boolean;
+}
+
 function makeTrays(
   bucket: Cluster[],
   s: Settings,
-  maxCX: number,
-  maxCY: number,
+  limit: TrayLimit,
   margin: number,
   problems: SolveResult['unplaced'],
 ): TrayDraft[] {
+  const { maxCX, maxCY } = limit;
   let remaining = [...bucket].sort((a, b) => b.area - a.area);
   const out: TrayDraft[] = [];
 
@@ -255,11 +262,27 @@ function makeTrays(
     }
     if (candidates.length === 0) {
       const c = remaining[0];
+      // Say which limit was actually hit and by how much: "too big" on its own
+      // leaves the user with nothing to act on.
+      const needW = c.w + 2 * margin;
+      const needH = c.h + 2 * margin;
+      const haveW = trayFootprint(maxCX, s.gridPitch);
+      const haveH = trayFootprint(maxCY, s.gridPitch);
+      const short = Math.max(
+        Math.min(needW, needH) - Math.min(haveW, haveH),
+        Math.max(needW, needH) - Math.max(haveW, haveH),
+      );
+      const cause = limit.boundByBed
+        ? `the ${s.maxBed} mm printer bed`
+        : 'the case cutout';
       for (const it of c.items) {
         problems.push({
           partId: it.partId,
           name: it.name,
-          reason: `Needs ${Math.ceil(c.w)}x${Math.ceil(c.h)} mm of pocket area, larger than the biggest tray that fits this case and printer.`,
+          reason:
+            `Needs a ${needW.toFixed(0)} x ${needH.toFixed(0)} mm tray, but the largest that fits is ` +
+            `${haveW.toFixed(0)} x ${haveH.toFixed(0)} mm - ${short.toFixed(0)} mm short, limited by ${cause}. ` +
+            `This part cannot be held by a single printed tray.`,
         });
       }
       remaining = remaining.slice(1);
@@ -372,9 +395,10 @@ export function solve(parts: PartInput[], s: Settings): SolveResult {
   const { clusters, problems: clusterProblems } = buildClusters(items, parts, maxInner, s.wall);
   unplaced.push(...clusterProblems);
 
+  const limit: TrayLimit = { maxCX, maxCY, boundByBed: bedCells < gridCellsX || bedCells < gridCellsY };
   const drafts: TrayDraft[] = [];
   for (const bucket of bucketise(clusters, s.depthBucketTolerance)) {
-    drafts.push(...makeTrays(bucket, s, maxCX, maxCY, margin, unplaced));
+    drafts.push(...makeTrays(bucket, s, limit, margin, unplaced));
   }
 
   // Materialise trays in their own local frame.
@@ -525,6 +549,12 @@ export function solve(parts: PartInput[], s: Settings): SolveResult {
     );
   }
   for (const t of trays) if (t.oversize) warnings.push(`${t.name} is larger than the printer bed.`);
+  if (layers.length === 0 && unplaced.length > 0) {
+    warnings.push(
+      `No trays were generated: ${unplaced.length === 1 ? 'the part' : `all ${unplaced.length} parts`} ` +
+      `could not be placed. See the reasons below.`,
+    );
+  }
 
   const placedTrays = layers.flatMap((l) => l.trays);
   const cellArea = gridCellsX * gridCellsY;

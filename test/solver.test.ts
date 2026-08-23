@@ -224,10 +224,25 @@ describe('depth handling', () => {
 });
 
 describe('limits', () => {
-  it('flags a part that cannot fit any tray', () => {
+  it('flags a part that cannot fit any tray, and says why', () => {
     const s = settings();
     const res = solve([part({ poly: rect(400, 200), name: 'huge' })], s);
-    expect(res.unplaced.some((u) => u.name === 'huge')).toBe(true);
+    const u = res.unplaced.find((x) => x.name === 'huge');
+    expect(u).toBeDefined();
+    // The message has to name the limit and the shortfall, not just "too big".
+    expect(u!.reason).toMatch(/printer bed/);
+    expect(u!.reason).toMatch(/\d+ mm short/);
+    expect(u!.reason).toMatch(new RegExp(`${s.maxBed} mm`));
+    // And a solve that placed nothing must say so at the top level.
+    expect(res.trays).toHaveLength(0);
+    expect(res.warnings.join(' ')).toMatch(/No trays were generated/);
+  });
+
+  it('blames the cutout, not the bed, when the case is the smaller limit', () => {
+    const s = settings({ cutoutLength: 120, cutoutWidth: 120 });
+    const res = solve([part({ poly: rect(200, 90), name: 'wide' })], s);
+    const u = res.unplaced.find((x) => x.name === 'wide');
+    expect(u!.reason).toMatch(/case cutout/);
   });
 
   it('never produces a tray wider than the printer bed', () => {
