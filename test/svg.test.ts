@@ -80,6 +80,59 @@ describe('documents with no real-world size', () => {
   });
 });
 
+describe('CAM and plotter exports', () => {
+  // One outline emitted as separate M-runs that continue from each other,
+  // which is how Shaper Origin and similar exporters write polyline chains.
+  const chained =
+    'M 0,0 L 40,0 M 40,0 L 40,30 M 40,30 L 0,30 M 0,30 L 0,0';
+
+  it('joins segments that share endpoints into one closed outline', () => {
+    const r = parseSvgSilhouette(svg('width="100mm" height="100mm" viewBox="0 0 100 100"', `<path d="${chained}"/>`));
+    expect(r.poly).toHaveLength(1);
+    expect(r.size.w).toBeCloseTo(40, 3);
+    expect(r.size.h).toBeCloseTo(30, 3);
+    expect(ringAreaAbs(r.poly[0])).toBeCloseTo(1200, 1);
+    expect(r.notes.join(' ')).toMatch(/joined end to end/);
+  });
+
+  it('joins segments regardless of their order or direction', () => {
+    // Same rectangle, shuffled and with two segments reversed.
+    const shuffled = 'M 40,30 L 0,30 M 0,0 L 40,0 M 0,0 L 0,30 M 40,0 L 40,30';
+    const r = parseSvgSilhouette(svg('width="100mm" height="100mm" viewBox="0 0 100 100"', `<path d="${shuffled}"/>`));
+    expect(r.poly).toHaveLength(1);
+    expect(ringAreaAbs(r.poly[0])).toBeCloseTo(1200, 1);
+  });
+
+  it('ignores an artboard border drawn around the part', () => {
+    // A page frame as four straight runs, plus the real outline inside it.
+    const frame = 'M 0,0 L 100,0 M 100,0 L 100,100 M 100,100 L 0,100 M 0,100 L 0,0';
+    const r = parseSvgSilhouette(svg(
+      'width="100mm" height="100mm" viewBox="0 0 100 100"',
+      `<path d="${frame}"/><path d="M 20,20 L 70,20 M 70,20 L 70,60 M 70,60 L 20,60 M 20,60 L 20,20"/>`,
+    ));
+    expect(r.size.w).toBeCloseTo(50, 3);
+    expect(r.size.h).toBeCloseTo(40, 3);
+    expect(r.notes.join(' ')).toMatch(/page border was ignored/);
+  });
+
+  it('keeps a part that genuinely fills the page', () => {
+    // Only one outline, so there is nothing to fall back to: never drop it.
+    const frame = 'M 0,0 L 100,0 M 100,0 L 100,100 M 100,100 L 0,100 M 0,100 L 0,0';
+    const r = parseSvgSilhouette(svg('width="100mm" height="100mm" viewBox="0 0 100 100"', `<path d="${frame}"/>`));
+    expect(r.size.w).toBeCloseTo(100, 3);
+    expect(r.notes.join(' ')).not.toMatch(/page border/);
+  });
+
+  it('still treats a genuinely separate inner outline as a hole', () => {
+    const r = parseSvgSilhouette(svg(
+      'width="100mm" height="100mm" viewBox="0 0 100 100"',
+      '<rect x="10" y="10" width="60" height="60"/><circle cx="40" cy="40" r="10"/>',
+    ));
+    expect(r.poly).toHaveLength(2);
+    expect(r.size.w).toBeCloseTo(60, 3);
+  });
+});
+
 describe('svg shape handling', () => {
   it('applies nested transforms', () => {
     const doc = svg(

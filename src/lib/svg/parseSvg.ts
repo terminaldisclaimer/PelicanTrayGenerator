@@ -123,6 +123,53 @@ const numAttr = (el: Element, name: string, dflt = 0) => {
   return Number.isFinite(n) ? n : dflt;
 };
 
+/**
+ * Join open subpaths that share an endpoint into continuous chains.
+ *
+ * CAM and plotter exports routinely emit one outline as a run of separate
+ * `M ... L ...` segments, each starting where the last finished. Read
+ * literally that is a few dozen unrelated open shapes; read as intended it is
+ * a single closed outline. Without this, the largest fragment wins and the
+ * pocket ends up an arbitrary sliver of the real part.
+ */
+function stitchSubPaths(subs: SubPath[], tol: number): SubPath[] {
+  const out: SubPath[] = subs.filter((s) => s.closed);
+  const open = subs
+    .filter((s) => !s.closed && s.points.length >= 2)
+    .map((s) => ({ pts: s.points, used: false }));
+
+  const near = (a: Vec2, b: Vec2) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= tol;
+
+  for (let i = 0; i < open.length; i++) {
+    if (open[i].used) continue;
+    open[i].used = true;
+    let chain = open[i].pts.slice();
+
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (let j = 0; j < open.length; j++) {
+        if (open[j].used) continue;
+        const seg = open[j].pts;
+        const head = chain[0];
+        const tail = chain[chain.length - 1];
+        if (near(tail, seg[0])) chain = chain.concat(seg.slice(1));
+        else if (near(tail, seg[seg.length - 1])) chain = chain.concat(seg.slice(0, -1).reverse());
+        else if (near(head, seg[seg.length - 1])) chain = seg.slice(0, -1).concat(chain);
+        else if (near(head, seg[0])) chain = seg.slice(1).reverse().concat(chain);
+        else continue;
+        open[j].used = true;
+        grew = true;
+      }
+    }
+
+    const closed = chain.length >= 4 && near(chain[0], chain[chain.length - 1]);
+    if (closed) chain.pop(); // drop the duplicated closing point
+    out.push({ points: chain, closed });
+  }
+  return out;
+}
+
 function collect(el: Element, m: Mat, out: SubPath[], tol: number) {
   const local = mul(m, parseTransform(el.getAttribute('transform')));
   const tag = el.tagName.toLowerCase().replace(/^.*:/, '');
@@ -214,18 +261,41 @@ export function parseSvgSilhouette(text: string): ParsedSvg {
   let root: Mat = [scale, 0, 0, -scale, 0, 0];
   if (hasVb) root = mul(root, [1, 0, 0, 1, -vb[0], -vb[1]]);
 
-  const subs: SubPath[] = [];
-  collect(svg, root, subs, 0.05 * Math.max(scale, 0.01));
+  const raw: SubPath[] = [];
+  collect(svg, root, raw, 0.05 * Math.max(scale, 0.01));
+  const subs = stitchSubPaths(raw, 0.02);
+  const joined = raw.filter((s) => !s.closed).length - subs.filter((s) => !s.closed).length;
+  if (joined > 0) {
+    notes.push(`${joined} path segment${joined > 1 ? 's were' : ' was'} joined end to end into continuous outlines.`);
+  }
 
-  const rings = subs
+  let rings = subs
     .map((s) => s.points)
     .filter((r) => r.length >= 3 && ringAreaAbs(r) > 0.02);
   if (rings.length === 0) throw new Error('No closed outlines with area were found in this SVG.');
 
   const open = subs.filter((s) => !s.closed && s.points.length >= 3).length;
-  if (open > 0) notes.push(`${open} open path${open > 1 ? 's were' : ' was'} treated as closed.`);
+  if (open > 0) notes.push(`${open} open outline${open > 1 ? 's were' : ' was'} closed automatically.`);
 
   rings.sort((a, b) => ringAreaAbs(b) - ringAreaAbs(a));
+
+  // Drop an artboard border. Exports often trace the page as well as the part;
+  // taken at face value it becomes the silhouette and the real outline becomes
+  // a hole inside it. Only ever dropped when a real outline remains.
+  if (rings.length > 1 && hasVb) {
+    const pageW = vb[2] * scale;
+    const pageH = vb[3] * scale;
+    const bb = ringBBox(rings[0]);
+    const w = bb.maxX - bb.minX;
+    const h = bb.maxY - bb.minY;
+    const fillsPage = w >= pageW * 0.98 && h >= pageH * 0.98;
+    const rectangular = ringAreaAbs(rings[0]) >= w * h * 0.98;
+    if (fillsPage && rectangular) {
+      rings = rings.slice(1);
+      notes.push('A page border was ignored; the part outline inside it was used.');
+    }
+  }
+
   const outer = rings[0];
   const holes: Ring[] = [];
   const separate: Ring[] = [];
