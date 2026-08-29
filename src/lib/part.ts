@@ -9,6 +9,7 @@ import { polyBBox, bboxW, bboxH } from './geom2d';
  */
 export const UNIT_CHOICES: { label: string; mm: number }[] = [
   { label: 'Millimetres', mm: 1 },
+  { label: '0.1 mm (plotter/CAM)', mm: 0.1 },
   { label: 'Points (72 dpi)', mm: 25.4 / 72 },
   { label: 'Pixels (96 dpi)', mm: 25.4 / 96 },
   { label: 'Centimetres', mm: 10 },
