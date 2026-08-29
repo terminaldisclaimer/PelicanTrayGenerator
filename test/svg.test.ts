@@ -78,6 +78,25 @@ describe('documents with no real-world size', () => {
     expect(r.unitsAmbiguous).toBe(false);
     expect(r.size.w).toBeCloseTo(80, 3);
   });
+
+  it('an override can correct a file whose declared size is a lie', () => {
+    // Some exporters draw in millimetres but stamp width/height as if the
+    // units were 96 dpi pixels - the declared size is exactly units*25.4/96.
+    const lying = svg('width="26.458mm" height="26.458mm" viewBox="0 0 100 100"', '<rect width="100" height="60"/>');
+    const r = parseSvgSilhouette(lying);
+    expect(r.unitsAmbiguous).toBe(false);        // it *declares* a size...
+    expect(r.size.w).toBeCloseTo(26.458, 2);     // ...and is honoured as-is
+    const base: PartInput = {
+      id: 'x', name: 'x', poly: r.poly, keepHoles: false, depth: 10, qty: 1,
+      groupId: null, sourceFile: '', notes: r.notes,
+      sourceUnitMm: r.unitMm, unitOverrideMm: null, unitsAmbiguous: r.unitsAmbiguous,
+      fingerNotches: [], placements: [],
+    };
+    // Declaring the truth - the drawing is in millimetres - rescales exactly.
+    const asMm = { ...base, unitOverrideMm: 1 };
+    expect(partSize(asMm).w).toBeCloseTo(100, 2);
+    expect(partSize(asMm).w / partSize(base).w).toBeCloseTo(96 / 25.4, 4);
+  });
 });
 
 describe('CAM and plotter exports', () => {

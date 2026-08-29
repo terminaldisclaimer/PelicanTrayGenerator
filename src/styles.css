@@ -223,3 +223,5 @@ table.parts tr.unsure .sub { color: var(--warn); }
 
 .v2-pocket.live { stroke-width: 1.4; cursor: grabbing; }
 .v2-pocket.bad { stroke: var(--bad); fill: rgba(224, 96, 95, 0.16); }
+
+.units.quiet { border-color: var(--line); }

@@ -130,21 +130,21 @@ export function PartsPanel({ project, setProject }: {
                       {size.w.toFixed(1)} x {size.h.toFixed(1)} mm
                       <em className="inch"> ({(size.w / 25.4).toFixed(2)} x {(size.h / 25.4).toFixed(2)} in)</em>
                     </span>
-                    {part.unitsAmbiguous && (
-                      <select
-                        className="units"
-                        value={part.unitOverrideMm ?? ''}
-                        title="This file carried no real-world size. If the dimensions above are wrong, say what the drawing's units are."
-                        onChange={(e) =>
-                          update(part.id, { unitOverrideMm: e.target.value ? Number(e.target.value) : null })
-                        }
-                      >
-                        <option value="">units: guessed</option>
-                        {UNIT_CHOICES.map((u) => (
-                          <option key={u.label} value={u.mm}>units: {u.label}</option>
-                        ))}
-                      </select>
-                    )}
+                    <select
+                      className={part.unitsAmbiguous ? 'units' : 'units quiet'}
+                      value={part.unitOverrideMm ?? ''}
+                      title={part.unitsAmbiguous
+                        ? "This file carried no real-world size. If the dimensions above are wrong, say what the drawing's units are."
+                        : "The file declares its own size, but some exporters stamp it wrongly. If the dimensions above don't match the real part, say what the drawing's units are."}
+                      onChange={(e) =>
+                        update(part.id, { unitOverrideMm: e.target.value ? Number(e.target.value) : null })
+                      }
+                    >
+                      <option value="">{part.unitsAmbiguous ? 'units: guessed' : 'units: as declared'}</option>
+                      {UNIT_CHOICES.map((u) => (
+                        <option key={u.label} value={u.mm}>units: {u.label}</option>
+                      ))}
+                    </select>
                     {part.notes.length > 0 && (
                       <span className="note" title={part.notes.join('\n')}>{part.notes.length} note{part.notes.length > 1 ? 's' : ''}</span>
                     )}
