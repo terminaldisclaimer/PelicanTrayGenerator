@@ -52,6 +52,11 @@ export interface Settings {
 
   /** Single global outward offset applied around every part silhouette. */
   clearance: number;
+  /**
+   * Shrink every imported outline by this much per side before use, to cancel
+   * the rim a tracing tool bakes into its export. 0 trusts outlines as drawn.
+   */
+  traceOffset: number;
 
   /** Tray wall thickness between pockets. */
   wall: number;

@@ -272,6 +272,31 @@ describe('limits', () => {
   });
 });
 
+describe('trace offset compensation', () => {
+  it('shrinks the outline before clearance, keeping pocket = tool + clearance', () => {
+    const s = settings({ allowRotation: false, thumbNotches: false, traceOffset: 1 });
+    const res = solve([part({ poly: rect(60, 40) })], s);
+    const placed = res.trays[0].parts[0];
+    // Drawn 60x40 with a 1 mm/side rim: true tool 58x38, pocket 62x42.
+    // The layer packer may turn the whole tray, so compare sorted extents.
+    const raw = polyBBox(placed.rawPoly);
+    const rawDims = [raw.maxX - raw.minX, raw.maxY - raw.minY].sort((a, b) => a - b);
+    expect(rawDims[0]).toBeCloseTo(38, 1);
+    expect(rawDims[1]).toBeCloseTo(58, 1);
+    const pocketDims = [placed.bbox.w, placed.bbox.h].sort((a, b) => a - b);
+    expect(pocketDims[0]).toBeCloseTo(38 + 2 * s.clearance, 1);
+    expect(pocketDims[1]).toBeCloseTo(58 + 2 * s.clearance, 1);
+  });
+
+  it('reports a part whose thinnest feature the offset consumes', () => {
+    const s = settings({ traceOffset: 20 });
+    const res = solve([part({ poly: rect(30, 25), name: 'thin' })], s);
+    const u = res.unplaced.find((x) => x.name === 'thin');
+    expect(u).toBeDefined();
+    expect(u!.reason).toMatch(/trace offset/);
+  });
+});
+
 describe('rotation', () => {
   it('turns an off-axis outline to its minimum-area orientation', () => {
     const s = settings({ allowRotation: true });

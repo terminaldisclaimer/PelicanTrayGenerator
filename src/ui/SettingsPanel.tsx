@@ -49,6 +49,15 @@ export function SettingsPanel({ s, set }: { s: Settings; set: (patch: Partial<Se
           step={0.1}
           hint="Single global outward offset around every outline. Sized so a foam or felt liner takes up the slack."
         />
+        <NumberField
+          label="Trace offset"
+          value={s.traceOffset}
+          onChange={(v) => set({ traceOffset: v })}
+          min={0}
+          max={5}
+          step={0.1}
+          hint="Shrink every imported outline by this much per side, cancelling the rim a tracing tool bakes into its export. Set it to (outline width - real part width) / 2."
+        />
         <NumberField label="Wall" value={s.wall} onChange={(v) => set({ wall: v })} min={0.8} max={10} step={0.1} />
         <NumberField label="Floor" value={s.floor} onChange={(v) => set({ floor: v })} min={0.8} max={10} step={0.1} />
       </div>

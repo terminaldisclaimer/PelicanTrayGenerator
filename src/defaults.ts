@@ -6,6 +6,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cutoutDepth: 155,
 
   clearance: 2,
+  traceOffset: 0,
 
   wall: 2,
   floor: 3,

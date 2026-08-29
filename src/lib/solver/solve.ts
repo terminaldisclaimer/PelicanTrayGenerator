@@ -72,18 +72,30 @@ function buildItems(parts: PartInput[], s: Settings): { items: Item[]; problems:
   const problems: SolveResult['unplaced'] = [];
   for (const p of parts) {
     const scaled = partPoly(p);
-    const source: Poly = p.keepHoles ? scaled : [scaled[0]];
+    const drawn: Poly = p.keepHoles ? scaled : [scaled[0]];
+    // The true part boundary: the drawn outline pulled back by the trace
+    // offset. Everything else - pocket, liner ribs - measures from this, so a
+    // tracing rim no longer inflates the pocket or strands the ribs.
+    let source: Poly;
     let offset: Poly;
     try {
-      offset = offsetPoly(source, s.clearance);
+      source = s.traceOffset > 0 ? offsetPoly(drawn, -s.traceOffset) : drawn;
+      offset = source.length ? offsetPoly(source, s.clearance) : [];
     } catch {
       problems.push({ partId: p.id, name: p.name, reason: 'Could not offset this outline.' });
       continue;
     }
-    if (offset.length === 0) {
-      problems.push({ partId: p.id, name: p.name, reason: 'Outline collapsed when offset.' });
+    if (source.length === 0 || offset.length === 0) {
+      problems.push({
+        partId: p.id,
+        name: p.name,
+        reason: s.traceOffset > 0
+          ? `Outline collapsed - the ${s.traceOffset} mm trace offset is larger than this part's thinnest feature.`
+          : 'Outline collapsed when offset.',
+      });
       continue;
     }
+    if (s.traceOffset > 0) source.sort((a, b) => Math.abs(polyArea([b])) - Math.abs(polyArea([a])));
     // Largest ring is the pocket boundary; anything inside it is an island.
     offset.sort((a, b) => Math.abs(polyArea([b])) - Math.abs(polyArea([a])));
 
