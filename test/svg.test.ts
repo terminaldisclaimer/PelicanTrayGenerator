@@ -241,6 +241,6 @@ describe('calibration by a known dimension', () => {
     expect(override).toBeCloseTo(0.1, 4);
     const size = partSize({ ...part, unitOverrideMm: override });
     expect(Math.max(size.w, size.h)).toBeCloseTo(31.6, 4);
-    expect(Math.min(size.w, size.h)).toBeCloseTo(12.878, 3);
+    expect(Math.min(size.w, size.h)).toBeCloseTo(128.78 * (31.6 / 315.92), 4);
   });
 });
