@@ -6,6 +6,8 @@ export const DEFAULT_SETTINGS: Settings = {
   cutoutDepth: 155,
 
   clearance: 6.2,
+  rectPockets: true,
+  insertSizeStep: 5,
   traceOffset: 0,
 
   wall: 3,

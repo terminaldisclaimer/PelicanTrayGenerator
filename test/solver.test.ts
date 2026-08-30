@@ -24,7 +24,7 @@ const part = (over: Partial<PartInput> = {}): PartInput => ({
   qty: 1, groupId: null, sourceFile: '', notes: [], sourceUnitMm: 1, unitOverrideMm: null,
   unitsAmbiguous: false, fingerNotches: [], ...over,
 });
-const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, ...over });
+const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, rectPockets: false, ...over });
 
 const overlaps = (a: { x: number; y: number; w: number; h: number }, b: typeof a, slack = 1e-6) =>
   a.x < b.x + b.w - slack && b.x < a.x + a.w - slack &&

@@ -53,6 +53,14 @@ export interface Settings {
   /** Single global outward offset applied around every part silhouette. */
   clearance: number;
   /**
+   * Cut plain rectangular pockets sized in insertSizeStep increments; the
+   * TPU insert becomes a rectangular block carrying the tool-shaped cavity.
+   * Off restores pockets shaped like the tool outline.
+   */
+  rectPockets: boolean;
+  /** Rectangular insert outer sizes round up to multiples of this. */
+  insertSizeStep: number;
+  /**
    * Shrink every imported outline by this much per side before use, to cancel
    * the rim a tracing tool bakes into its export. 0 trusts outlines as drawn.
    */

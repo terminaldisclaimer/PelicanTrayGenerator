@@ -23,7 +23,7 @@ const part = (over: Partial<PartInput> = {}): PartInput => ({
   qty: 1, groupId: null, sourceFile: '', notes: [], sourceUnitMm: 1, unitOverrideMm: null,
   unitsAmbiguous: false, fingerNotches: [], ...over,
 });
-const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, ...over });
+const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, rectPockets: false, ...over });
 
 describe('arc parameterization', () => {
   it('round-trips and survives rigid motion', () => {

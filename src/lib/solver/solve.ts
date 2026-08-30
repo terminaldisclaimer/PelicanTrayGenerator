@@ -1,4 +1,4 @@
-import type { Layer, PartInput, PlacedPart, Poly, Settings, SolveResult, Tray, TrayNotch } from '../../types';
+import type { Layer, PartInput, PlacedPart, Poly, Ring, Settings, SolveResult, Tray, TrayNotch } from '../../types';
 import { MaxRects } from './maxrects';
 import { offsetPoly } from '../cad/manifold';
 import { partPoly } from '../part';
@@ -67,6 +67,27 @@ function placePair(poly: Poly, raw: Poly, quarters: number, x: number, y: number
   };
 }
 
+/** CCW rectangle ring with rounded corners, for printable rectangular pockets. */
+function roundedRectRing(x0: number, y0: number, w: number, h: number, r: number): Ring {
+  const rad = Math.max(0, Math.min(r, w / 2 - 0.05, h / 2 - 0.05));
+  if (rad < 0.05) return [[x0, y0], [x0 + w, y0], [x0 + w, y0 + h], [x0, y0 + h]];
+  const ring: Ring = [];
+  const corners: [number, number, number][] = [
+    [x0 + w - rad, y0 + rad, -Math.PI / 2],
+    [x0 + w - rad, y0 + h - rad, 0],
+    [x0 + rad, y0 + h - rad, Math.PI / 2],
+    [x0 + rad, y0 + rad, Math.PI],
+  ];
+  const segs = 6;
+  for (const [cx, cy, start] of corners) {
+    for (let i = 0; i <= segs; i++) {
+      const a = start + (i / segs) * (Math.PI / 2);
+      ring.push([cx + rad * Math.cos(a), cy + rad * Math.sin(a)]);
+    }
+  }
+  return ring;
+}
+
 function buildItems(parts: PartInput[], s: Settings): { items: Item[]; problems: SolveResult['unplaced'] } {
   const items: Item[] = [];
   const problems: SolveResult['unplaced'] = [];
@@ -113,6 +134,28 @@ function buildItems(parts: PartInput[], s: Settings): { items: Item[]; problems:
     const pre = polyBBox(oriented);
     oriented = translatePoly(oriented, -pre.minX, -pre.minY);
     rawOriented = translatePoly(rawOriented, -pre.minX, -pre.minY);
+    // Rectangular mode: the pocket is a plain rectangle whose matching
+    // insert outer size rounds up to the size step, with the part centred
+    // in the slack. The shaped offset above still guarantees the outline
+    // survives the clearance; the rectangle can only be larger.
+    if (s.rectPockets) {
+      const rawBB = polyBBox(rawOriented);
+      const rw = bboxW(rawBB);
+      const rh = bboxH(rawBB);
+      const fit = s.generateInserts ? s.insertFit : 0;
+      const margin = s.clearance - fit;
+      const step = Math.max(0.5, s.insertSizeStep);
+      const outW = Math.ceil((rw + 2 * margin - 1e-6) / step) * step;
+      const outH = Math.ceil((rh + 2 * margin - 1e-6) / step) * step;
+      const pw = outW + 2 * fit;
+      const ph = outH + 2 * fit;
+      const cx = rawBB.minX + rw / 2;
+      const cy = rawBB.minY + rh / 2;
+      oriented = [roundedRectRing(cx - pw / 2, cy - ph / 2, pw, ph, 2)];
+      const shift = polyBBox(oriented);
+      oriented = translatePoly(oriented, -shift.minX, -shift.minY);
+      rawOriented = translatePoly(rawOriented, -shift.minX, -shift.minY);
+    }
     const bb = polyBBox(oriented);
     const w = bboxW(bb);
     const h = bboxH(bb);

@@ -25,7 +25,7 @@ const part = (over: Partial<PartInput> = {}): PartInput => ({
   groupId: null, sourceFile: '', notes: [], sourceUnitMm: 1, unitOverrideMm: null,
   unitsAmbiguous: false, fingerNotches: [], ...over,
 });
-const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, ...over });
+const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, rectPockets: false, ...over });
 
 const toSolid = (m: { positions: Float32Array; indices: Uint32Array }) => {
   const { Manifold, Mesh } = cad();
@@ -180,6 +180,47 @@ describe('liner geometry', () => {
     // (small volume), never with a 5 mm wall that closed over it.
     const plug = sectionFromPoly(p.rawPoly).extrude(p.depth).translate(0, 0, s.insertPad);
     expect(solid.intersect(plug).volume()).toBeLessThan(p.depth * 0.5 * 1000);
+  });
+
+  it('rectangular mode: block insert on the size step, shaped cavity inside', () => {
+    const s = settings({ rectPockets: true, thumbNotches: false, insertGrip: 0 });
+    const res = solve([part()], s); // 60 x 40 part
+    const p = res.trays[0].parts[0];
+
+    // Pocket: part bbox + 2 x (clearance - fit) = 72.1 x 52.1, rounded up to
+    // the 5 mm step for the insert (75 x 55), plus the fit gap per side.
+    // Compare sorted dims - the packer may rotate the whole tray 90 degrees.
+    const dims = [p.bbox.w, p.bbox.h].sort((a, b) => a - b);
+    expect(dims[0]).toBeCloseTo(55 + 2 * s.insertFit, 3);
+    expect(dims[1]).toBeCloseTo(75 + 2 * s.insertFit, 3);
+    // The part sits centred in the rectangle.
+    const raw = polyBBox(p.rawPoly);
+    expect(raw.minX - p.bbox.x).toBeCloseTo((p.bbox.w - (raw.maxX - raw.minX)) / 2, 3);
+    expect(raw.minY - p.bbox.y).toBeCloseTo((p.bbox.h - (raw.maxY - raw.minY)) / 2, 3);
+
+    // The insert outer lands exactly on the step multiples.
+    const ins = buildInsertMesh(p, s)!;
+    const solid = toSolid(ins.mesh);
+    expect(solid.status()).toBe('NoError');
+    const bb = solid.boundingBox();
+    const insDims = [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1]].sort((a, b) => a - b);
+    expect(insDims[0]).toBeCloseTo(55, 2);
+    expect(insDims[1]).toBeCloseTo(75, 2);
+
+    // Cavity mechanics carry over: ribs squeeze the part, and a part shrunk
+    // by the squeeze allowance clears them.
+    const partCs = sectionFromPoly(p.rawPoly);
+    const plug = partCs.extrude(p.depth).translate(0, 0, s.insertPad);
+    const clash = solid.intersect(plug).volume();
+    expect(clash).toBeGreaterThan(0.5);
+    expect(clash).toBeLessThan(p.depth * 0.5 * 1000);
+    const relieved = partCs.offset(-s.insertSqueeze - 0.05, 'Round', 2, 24).extrude(p.depth).translate(0, 0, s.insertPad);
+    expect(solid.intersect(relieved).volume()).toBeLessThan(0.05);
+
+    // A finer step tracks the part more closely.
+    const fine = solve([part()], settings({ rectPockets: true, thumbNotches: false, insertSizeStep: 2.5 }));
+    const fp = fine.trays[0].parts[0];
+    expect(Math.max(fp.bbox.w, fp.bbox.h)).toBeCloseTo(72.5 + 2 * s.insertFit, 3);
   });
 
   it('handles a round part and honours coverage', () => {

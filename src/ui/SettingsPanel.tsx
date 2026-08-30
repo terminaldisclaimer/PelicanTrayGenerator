@@ -90,7 +90,24 @@ export function SettingsPanel({ s, set }: { s: Settings; set: (patch: Partial<Se
           hint="Radius of the per-pocket finger notches placed in the 2D view. 9 mm is a fingertip."
         />
       </div>
+      <div className="grid3">
+        <NumberField
+          label="Insert size step"
+          value={s.insertSizeStep}
+          onChange={(v) => set({ insertSizeStep: v })}
+          min={0.5}
+          max={25}
+          step={0.5}
+          hint="Rectangular insert outer sizes round up to multiples of this, so inserts come in standard sizes."
+        />
+      </div>
       <div className="checks">
+        <CheckField
+          label="Rectangular pockets"
+          value={s.rectPockets}
+          onChange={(v) => set({ rectPockets: v })}
+          hint="Plain rectangular pockets; the TPU insert is a block carrying the tool-shaped cavity. Off shapes each pocket like its tool."
+        />
         <CheckField
           label="Thumb notches"
           value={s.thumbNotches}

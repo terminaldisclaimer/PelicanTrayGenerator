@@ -19,7 +19,7 @@ const part = (over: Partial<PartInput> = {}): PartInput => ({
   qty: 1, groupId: null, sourceFile: '', notes: [], sourceUnitMm: 1, unitOverrideMm: null,
   unitsAmbiguous: false, fingerNotches: [], placements: [], ...over,
 });
-const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, ...over });
+const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, rectPockets: false, ...over });
 
 /** A legal position as far from the packed one as the tray's slack allows. */
 function legalTarget(tray: { sizeX: number; sizeY: number }, bbox: { x: number; y: number; w: number; h: number }, s: Settings) {

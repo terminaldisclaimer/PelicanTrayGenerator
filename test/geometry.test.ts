@@ -26,7 +26,7 @@ const part = (over: Partial<PartInput> = {}): PartInput => ({
   unitsAmbiguous: false, fingerNotches: [], ...over,
 });
 
-const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, ...over });
+const settings = (over: Partial<Settings> = {}): Settings => ({ ...DEFAULT_SETTINGS, rectPockets: false, ...over });
 
 describe('svg path flattening', () => {
   it('closes a rounded rectangle and keeps its area', () => {

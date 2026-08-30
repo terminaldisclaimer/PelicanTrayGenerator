@@ -103,8 +103,13 @@ export function buildInsertMesh(part: PlacedPart, s: Settings): InsertResult | n
     // Outer face: the pocket, pulled in so the liner drops into it.
     const outer = offsetPoly(part.poly, -s.insertFit);
     if (outer.length === 0 || outer[0].length < 3) return null;
-    // Inner face of the backing shell.
-    const backing = offsetPoly(outer, -s.insertWall);
+    // Inner face of the backing shell. In rectangular mode the outer face is
+    // a block, so the cavity comes from the tool outline itself, at the same
+    // standoff the shaped mode produces (clearance - fit - wall); measured
+    // either way, ribs bridge an identical gap to the tool.
+    const backing = s.rectPockets
+      ? offsetPoly(part.rawPoly, s.clearance - s.insertFit - s.insertWall)
+      : offsetPoly(outer, -s.insertWall);
     if (backing.length === 0 || backing[0].length < 3) return null;
 
     const tip = ribTipDepth(s);
@@ -114,8 +119,11 @@ export function buildInsertMesh(part: PlacedPart, s: Settings): InsertResult | n
     const radius = Math.min(Math.max(s.insertRibWidth, tip - s.insertWall) / 2, tip / 2);
     if (!(radius > 0.15)) return null;
 
-    // Centres of the rib cylinders.
-    const ribCurve = offsetPoly(outer, -(tip - radius));
+    // Centres of the rib cylinders. Both forms put the rib tips exactly
+    // insertSqueeze inside the tool outline.
+    const ribCurve = s.rectPockets
+      ? offsetPoly(part.rawPoly, radius - s.insertSqueeze)
+      : offsetPoly(outer, -(tip - radius));
     const centres = ribCurve.length ? samplePerimeter(ribCurve, s.insertRibSpacing) : [];
 
     const outerCs = C(sectionFromPoly(outer));
