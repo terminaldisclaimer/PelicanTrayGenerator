@@ -5,7 +5,10 @@ export const DEFAULT_SETTINGS: Settings = {
   cutoutWidth: 290,
   cutoutDepth: 155,
 
-  clearance: 6.2,
+  // fit + 5: exactly 5 mm of TPU between the tool and the pocket wall
+  // (3.95 solid backing + 1.05 rib crush zone), 10 mm tool-to-tool through
+  // two insert walls.
+  clearance: 5.15,
   rectPockets: true,
   insertSizeStep: 5,
   traceOffset: 0,
@@ -27,7 +30,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
   generateInserts: true,
   insertFit: 0.15,
-  insertWall: 5,
+  insertWall: 3.95,
   insertPad: 5,
   insertSqueeze: 0.35,
   insertRibSpacing: 12,

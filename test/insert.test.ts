@@ -153,13 +153,15 @@ describe('liner geometry', () => {
     expect(insertProblem(settings())).toBeNull();
   });
 
-  it('defaults give a 5 mm wall and floor, and the tray accommodates both', () => {
+  it('defaults give 5 mm of TPU per side and floor, and the tray accommodates both', () => {
     const s = settings();
-    expect(s.insertWall).toBe(5);
+    // Exactly 5 mm of TPU between the tool and the pocket wall - so tools in
+    // neighbouring inserts sit 10 mm of TPU apart - split into a solid
+    // backing plus the 1.05 mm rib crush zone.
+    expect(s.clearance - s.insertFit).toBeCloseTo(5, 6);
+    expect(s.insertWall).toBeCloseTo(3.95, 6);
     expect(s.insertPad).toBe(5);
     expect(s.insertRibWidth).toBe(5);
-    // The liner's inner face must land outside the part with room for the
-    // ribs to bridge: clearance - fit - wall is the backing standoff.
     expect(s.clearance - s.insertFit - s.insertWall).toBeCloseTo(1.05, 6);
     expect(insertProblem(s)).toBeNull();
 
@@ -187,12 +189,12 @@ describe('liner geometry', () => {
     const res = solve([part()], s); // 60 x 40 part
     const p = res.trays[0].parts[0];
 
-    // Pocket: part bbox + 2 x (clearance - fit) = 72.1 x 52.1, rounded up to
-    // the 5 mm step for the insert (75 x 55), plus the fit gap per side.
+    // Pocket: part bbox + 2 x (clearance - fit) = 70 x 50, already on the
+    // 5 mm step for the insert, plus the fit gap per side.
     // Compare sorted dims - the packer may rotate the whole tray 90 degrees.
     const dims = [p.bbox.w, p.bbox.h].sort((a, b) => a - b);
-    expect(dims[0]).toBeCloseTo(55 + 2 * s.insertFit, 3);
-    expect(dims[1]).toBeCloseTo(75 + 2 * s.insertFit, 3);
+    expect(dims[0]).toBeCloseTo(50 + 2 * s.insertFit, 3);
+    expect(dims[1]).toBeCloseTo(70 + 2 * s.insertFit, 3);
     // The part sits centred in the rectangle.
     const raw = polyBBox(p.rawPoly);
     expect(raw.minX - p.bbox.x).toBeCloseTo((p.bbox.w - (raw.maxX - raw.minX)) / 2, 3);
@@ -204,8 +206,8 @@ describe('liner geometry', () => {
     expect(solid.status()).toBe('NoError');
     const bb = solid.boundingBox();
     const insDims = [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1]].sort((a, b) => a - b);
-    expect(insDims[0]).toBeCloseTo(55, 2);
-    expect(insDims[1]).toBeCloseTo(75, 2);
+    expect(insDims[0]).toBeCloseTo(50, 2);
+    expect(insDims[1]).toBeCloseTo(70, 2);
 
     // Cavity mechanics carry over: ribs squeeze the part, and a part shrunk
     // by the squeeze allowance clears them.
@@ -217,10 +219,10 @@ describe('liner geometry', () => {
     const relieved = partCs.offset(-s.insertSqueeze - 0.05, 'Round', 2, 24).extrude(p.depth).translate(0, 0, s.insertPad);
     expect(solid.intersect(relieved).volume()).toBeLessThan(0.05);
 
-    // A finer step tracks the part more closely.
-    const fine = solve([part()], settings({ rectPockets: true, thumbNotches: false, insertSizeStep: 2.5 }));
-    const fp = fine.trays[0].parts[0];
-    expect(Math.max(fp.bbox.w, fp.bbox.h)).toBeCloseTo(72.5 + 2 * s.insertFit, 3);
+    // A coarser step rounds further up.
+    const coarse = solve([part()], settings({ rectPockets: true, thumbNotches: false, insertSizeStep: 12.5 }));
+    const cp = coarse.trays[0].parts[0];
+    expect(Math.max(cp.bbox.w, cp.bbox.h)).toBeCloseTo(75 + 2 * s.insertFit, 3);
   });
 
   it('handles a round part and honours coverage', () => {
