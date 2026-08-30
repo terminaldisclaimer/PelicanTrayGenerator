@@ -8,7 +8,7 @@ export const DEFAULT_SETTINGS: Settings = {
   clearance: 6.2,
   traceOffset: 0,
 
-  wall: 2,
+  wall: 3,
   floor: 3,
 
   caseFit: 0.5,
