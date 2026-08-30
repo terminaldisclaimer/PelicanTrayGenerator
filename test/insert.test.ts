@@ -126,6 +126,26 @@ describe('liner geometry', () => {
     expect(insertProblem(settings())).toBeNull();
   });
 
+  it('defaults give a 5 mm wall and a clearance that accommodates it', () => {
+    const s = settings();
+    expect(s.insertWall).toBe(5);
+    // The liner's inner face must land outside the part with room for the
+    // ribs to bridge: clearance - fit - wall is the backing standoff.
+    expect(s.clearance - s.insertFit - s.insertWall).toBeCloseTo(1.05, 6);
+    expect(insertProblem(s)).toBeNull();
+
+    // Physically: for a 60x40 part the backing opening must be larger than
+    // the part on every side.
+    const res = solve([part()], s);
+    const p = res.trays[0].parts[0];
+    const ins = buildInsertMesh(p, s)!;
+    const solid = toSolid(ins.mesh);
+    // A part-sized plug lowered into the liner may only clash with the ribs
+    // (small volume), never with a 5 mm wall that closed over it.
+    const plug = sectionFromPoly(p.rawPoly).extrude(p.depth).translate(0, 0, s.insertPad);
+    expect(solid.intersect(plug).volume()).toBeLessThan(p.depth * 0.5 * 1000);
+  });
+
   it('handles a round part and honours coverage', () => {
     const s = settings();
     const res = solve([part({ poly: disc(30), depth: 25 })], s);

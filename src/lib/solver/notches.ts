@@ -164,27 +164,28 @@ function sampleValid(ctx: NotchContext): Sample[] {
 /**
  * Best opposite pair for this pocket: positions facing each other across the
  * centroid, preferring the closer-together axis (pinching across a part's
- * width, not its length). Null when no valid pair exists.
+ * width, not its length). Angle and distance trade off in one score - a
+ * strict opposite-angle-first ranking is unstable, because whether an exactly
+ * opposite sample pair exists depends on the sampling parity, not the shape.
+ * Null when no valid pair exists.
  */
 export function autoPlacePair(ctx: NotchContext): { a: number; b: number } | null {
   const valid = sampleValid(ctx);
   if (valid.length < 2) return null;
   const r = ctx.settings.fingerNotchRadius;
-  let best: { a: Sample; b: Sample; err: number; dist: number } | null = null;
+  let best: { a: Sample; b: Sample; score: number } | null = null;
   for (let i = 0; i < valid.length; i++) {
     for (let j = i + 1; j < valid.length; j++) {
       const va = valid[i], vb = valid[j];
       const dist = Math.hypot(va.p[0] - vb.p[0], va.p[1] - vb.p[1]);
       if (dist < 2 * r + 2) continue;
       const err = angDiff(va.ang, vb.ang + Math.PI);
-      if (
-        !best ||
-        err < best.err - 1e-3 ||
-        (Math.abs(err - best.err) <= 1e-3 && dist < best.dist)
-      ) best = { a: va, b: vb, err, dist };
+      if (err > Math.PI / 2) continue;
+      const score = dist * (1 + err);
+      if (!best || score < best.score) best = { a: va, b: vb, score };
     }
   }
-  if (!best || best.err > Math.PI / 2) return null;
+  if (!best) return null;
   // 'a' is the left-hand notch so the pair reads left/right in the editor.
   const [first, second] = best.a.p[0] <= best.b.p[0] ? [best.a, best.b] : [best.b, best.a];
   return { a: first.t, b: second.t };

@@ -108,7 +108,9 @@ describe('placement overrides', () => {
   });
 
   it('the pocket is cut at the moved position, not the packed one', () => {
-    const s = settings({ thumbNotches: false });
+    // Pinned small clearance: the test needs slack on the tray to move the
+    // pocket a few mm, which the default liner-sized clearance packs away.
+    const s = settings({ thumbNotches: false, clearance: 2 });
     const a = part({ poly: rect(40, 30), depth: 15 });
     const probe = solve([a], s);
     const packed = probe.trays[0].parts[0].bbox;

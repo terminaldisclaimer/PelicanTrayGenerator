@@ -47,7 +47,7 @@ export function SettingsPanel({ s, set }: { s: Settings; set: (patch: Partial<Se
           min={0}
           max={15}
           step={0.1}
-          hint="Single global outward offset around every outline. Sized so a foam or felt liner takes up the slack."
+          hint="Single global outward offset around every outline. Must cover the liner backing wall plus about 1.2 mm of rib room."
         />
         <NumberField
           label="Trace offset"
@@ -141,9 +141,9 @@ export function InsertPanel({ s, set }: { s: Settings; set: (patch: Partial<Sett
               value={s.insertWall}
               onChange={(v) => set({ insertWall: v })}
               min={0.4}
-              max={5}
+              max={10}
               step={0.1}
-              hint="Thin shell that hugs the pocket wall and carries the ribs."
+              hint="TPU shell between the pocket wall and the ribs. The pocket clearance must leave room for it."
             />
             <NumberField
               label="Pocket fit"

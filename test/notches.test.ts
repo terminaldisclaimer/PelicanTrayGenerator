@@ -110,11 +110,20 @@ describe('auto placement', () => {
       for (const t of [pair.a, pair.b]) {
         const pt = pointAtT(placed.poly[0], t);
         // Each chosen spot keeps a full notch radius plus wall away from the
-        // neighbouring pocket.
-        const b = other.bbox;
-        const dx = Math.max(b.x - pt[0], 0, pt[0] - (b.x + b.w));
-        const dy = Math.max(b.y - pt[1], 0, pt[1] - (b.y + b.h));
-        expect(Math.hypot(dx, dy)).toBeGreaterThanOrEqual(s.fingerNotchRadius + s.wall - 1e-6);
+        // neighbouring pocket outline (the outline, not its bbox: the round
+        // pocket corners pull well inside the bbox corners).
+        let min = Infinity;
+        for (const ring of other.poly) {
+          for (let i = 0; i < ring.length; i++) {
+            const a2 = ring[i];
+            const b2 = ring[(i + 1) % ring.length];
+            const dx = b2[0] - a2[0], dy = b2[1] - a2[1];
+            const len2 = dx * dx + dy * dy;
+            const u = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((pt[0] - a2[0]) * dx + (pt[1] - a2[1]) * dy) / len2));
+            min = Math.min(min, Math.hypot(pt[0] - (a2[0] + dx * u), pt[1] - (a2[1] + dy * u)));
+          }
+        }
+        expect(min).toBeGreaterThanOrEqual(s.fingerNotchRadius + s.wall - 1e-6);
       }
     }
   });

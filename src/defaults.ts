@@ -5,7 +5,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cutoutWidth: 290,
   cutoutDepth: 155,
 
-  clearance: 2,
+  clearance: 6.2,
   traceOffset: 0,
 
   wall: 2,
@@ -25,7 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
   generateInserts: true,
   insertFit: 0.15,
-  insertWall: 0.8,
+  insertWall: 5,
   insertPad: 2,
   insertSqueeze: 0.35,
   insertRibSpacing: 12,
