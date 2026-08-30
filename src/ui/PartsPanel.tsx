@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { PartInput, Project } from '../types';
 import { parseSvgSilhouette } from '../lib/svg/parseSvg';
-import { partSize, UNIT_CHOICES } from '../lib/part';
+import { calibrateOverride, parseLengthMm, partSize, UNIT_CHOICES } from '../lib/part';
 import { Panel } from './Field';
 
 let seq = 0;
@@ -136,14 +136,35 @@ export function PartsPanel({ project, setProject }: {
                       title={part.unitsAmbiguous
                         ? "This file carried no real-world size. If the dimensions above are wrong, say what the drawing's units are."
                         : "The file declares its own size, but some exporters stamp it wrongly. If the dimensions above don't match the real part, say what the drawing's units are."}
-                      onChange={(e) =>
-                        update(part.id, { unitOverrideMm: e.target.value ? Number(e.target.value) : null })
-                      }
+                      onChange={(e) => {
+                        if (e.target.value === '__calibrate') {
+                          const answer = prompt(
+                            `Real size of this part's LONGEST side (e.g. 31.6mm or 1.24in)?`,
+                          );
+                          if (!answer) return;
+                          const realMm = parseLengthMm(answer);
+                          const override = realMm !== null ? calibrateOverride(part, realMm) : null;
+                          if (override === null) {
+                            alert('Could not read that as a length. Try something like 32mm or 1.26in.');
+                            return;
+                          }
+                          update(part.id, { unitOverrideMm: override });
+                          return;
+                        }
+                        update(part.id, { unitOverrideMm: e.target.value ? Number(e.target.value) : null });
+                      }}
                     >
                       <option value="">{part.unitsAmbiguous ? 'units: guessed' : 'units: as declared'}</option>
                       {UNIT_CHOICES.map((u) => (
                         <option key={u.label} value={u.mm}>units: {u.label}</option>
                       ))}
+                      {part.unitOverrideMm !== null &&
+                        !UNIT_CHOICES.some((u) => Math.abs(u.mm - part.unitOverrideMm!) < 1e-9) && (
+                          <option value={part.unitOverrideMm}>
+                            units: calibrated ({part.unitOverrideMm.toFixed(4)} mm/unit)
+                          </option>
+                        )}
+                      <option value="__calibrate">Calibrate: type a real size...</option>
                     </select>
                     {part.notes.length > 0 && (
                       <span className="note" title={part.notes.join('\n')}>{part.notes.length} note{part.notes.length > 1 ? 's' : ''}</span>

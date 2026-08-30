@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
 import { parseSvgSilhouette } from '../src/lib/svg/parseSvg';
-import { partSize } from '../src/lib/part';
+import { calibrateOverride, parseLengthMm, partSize } from '../src/lib/part';
 import type { PartInput } from '../src/types';
 import { ringAreaAbs } from '../src/lib/geom2d';
 
@@ -210,5 +210,37 @@ describe('svg shape handling', () => {
   it('reports a helpful error when there is nothing to use', () => {
     expect(() => parseSvgSilhouette(svg('width="10mm" height="10mm" viewBox="0 0 10 10"', '<line x1="0" y1="0" x2="5" y2="5"/>')))
       .toThrow(/no closed outlines/i);
+  });
+});
+
+describe('calibration by a known dimension', () => {
+  it('parses human lengths', () => {
+    expect(parseLengthMm('32mm')).toBeCloseTo(32, 6);
+    expect(parseLengthMm('3.2cm')).toBeCloseTo(32, 6);
+    expect(parseLengthMm('1.26in')).toBeCloseTo(32.004, 3);
+    expect(parseLengthMm('1.24"')).toBeCloseTo(31.496, 3);
+    expect(parseLengthMm('31.6')).toBeCloseTo(31.6, 6);
+    expect(parseLengthMm('banana')).toBeNull();
+    expect(parseLengthMm('-4mm')).toBeNull();
+  });
+
+  it('makes the longest side exactly the typed size, whatever the file claimed', () => {
+    // A file whose header lies about its size by an arbitrary factor.
+    const doc = svg('width="42.12mm" height="90.14mm" viewBox="0 0 159.192 340.68"',
+      '<rect x="15" y="12" width="128.78" height="315.92"/>');
+    const r = parseSvgSilhouette(doc);
+    const part: PartInput = {
+      id: 'x', name: 'x', poly: r.poly, keepHoles: false, depth: 10, qty: 1,
+      groupId: null, sourceFile: '', notes: r.notes,
+      sourceUnitMm: r.unitMm, unitOverrideMm: null, unitsAmbiguous: r.unitsAmbiguous,
+      fingerNotches: [], placements: [],
+    };
+    const override = calibrateOverride(part, 31.6)!;
+    expect(override).not.toBeNull();
+    // 315.92 units calibrated to 31.6 mm = 0.1 mm per unit.
+    expect(override).toBeCloseTo(0.1, 4);
+    const size = partSize({ ...part, unitOverrideMm: override });
+    expect(Math.max(size.w, size.h)).toBeCloseTo(31.6, 4);
+    expect(Math.min(size.w, size.h)).toBeCloseTo(12.878, 3);
   });
 });
