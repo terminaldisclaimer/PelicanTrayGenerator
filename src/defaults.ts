@@ -26,7 +26,7 @@ export const DEFAULT_SETTINGS: Settings = {
   generateInserts: true,
   insertFit: 0.15,
   insertWall: 5,
-  insertPad: 2,
+  insertPad: 5,
   insertSqueeze: 0.35,
   insertRibSpacing: 12,
   insertCoverage: 1,

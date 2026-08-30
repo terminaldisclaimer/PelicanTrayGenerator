@@ -130,7 +130,10 @@ function buildItems(parts: PartInput[], s: Settings): { items: Item[]; problems:
         raw: rawOriented,
         w,
         h,
-        depth: p.depth,
+        // The entered depth is the part's own thickness; when a liner sits
+        // under it, the pocket deepens by the floor pad so the part still
+        // finishes below the tray rim.
+        depth: p.depth + (s.generateInserts ? s.insertPad : 0),
         rotationDeg,
       });
     }

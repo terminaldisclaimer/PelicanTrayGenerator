@@ -134,7 +134,7 @@ export function InsertPanel({ s, set }: { s: Settings; set: (patch: Partial<Sett
               min={0.4}
               max={20}
               step={0.2}
-              hint="Cushion the part sits on."
+              hint="Cushion the part sits on. Pockets are cut this much deeper so the part still ends below the rim."
             />
             <NumberField
               label="Backing wall"

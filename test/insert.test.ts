@@ -126,13 +126,21 @@ describe('liner geometry', () => {
     expect(insertProblem(settings())).toBeNull();
   });
 
-  it('defaults give a 5 mm wall and a clearance that accommodates it', () => {
+  it('defaults give a 5 mm wall and floor, and the tray accommodates both', () => {
     const s = settings();
     expect(s.insertWall).toBe(5);
+    expect(s.insertPad).toBe(5);
     // The liner's inner face must land outside the part with room for the
     // ribs to bridge: clearance - fit - wall is the backing standoff.
     expect(s.clearance - s.insertFit - s.insertWall).toBeCloseTo(1.05, 6);
     expect(insertProblem(s)).toBeNull();
+
+    // The pocket deepens by the floor pad, so a part of the entered depth
+    // still finishes below the tray rim - but only while liners are on.
+    const withLiner = solve([part({ depth: 20 })], s).trays[0].parts[0];
+    expect(withLiner.depth).toBeCloseTo(20 + s.insertPad, 6);
+    const bare = solve([part({ depth: 20 })], settings({ generateInserts: false })).trays[0].parts[0];
+    expect(bare.depth).toBeCloseTo(20, 6);
 
     // Physically: for a 60x40 part the backing opening must be larger than
     // the part on every side.
@@ -152,7 +160,9 @@ describe('liner geometry', () => {
     const p = res.trays[0].parts[0];
 
     const full = buildInsertMesh(p, s)!;
-    expect(full.height).toBeCloseTo(25, 1);
+    // The pocket deepens by the floor pad, so a full-coverage liner spans
+    // the part's depth plus the pad it stands on.
+    expect(full.height).toBeCloseTo(25 + s.insertPad, 1);
 
     const half = buildInsertMesh(p, settings({ insertCoverage: 0.5 }))!;
     expect(half.height).toBeLessThan(full.height);
