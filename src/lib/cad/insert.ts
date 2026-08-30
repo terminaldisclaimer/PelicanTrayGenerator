@@ -121,8 +121,36 @@ export function buildInsertMesh(part: PlacedPart, s: Settings): InsertResult | n
     const outerCs = C(sectionFromPoly(outer));
     const backingCs = C(sectionFromPoly(backing));
 
+    let outerSolid = S(outerCs.extrude(height));
+
+    // Outer grip ribs: bumps on the liner's outside that press into the
+    // pocket wall by insertGrip, so the liner stays put in any orientation
+    // without adhesive yet can still be pried out. Built before the cavity
+    // is carved, so on a thin backing wall the cavity wins and a rib can
+    // never intrude on the part's space.
+    if (s.insertGrip > 0) {
+      const gripR = Math.max(0.6, s.insertRibWidth / 2);
+      // Rib tips reach insertFit + insertGrip past the outer face: through
+      // the pocket's fit gap, then insertGrip into the wall.
+      const gripCurve = offsetPoly(outer, s.insertFit + s.insertGrip - gripR);
+      const gripCentres = gripCurve.length ? samplePerimeter(gripCurve, s.insertRibSpacing) : [];
+      if (gripCentres.length) {
+        const lead = Math.min(2.5, height * 0.35);
+        const ribs: Solid[] = [];
+        for (const [cx, cy] of gripCentres) {
+          // Tapered at the bottom so the liner starts loose and wedges in
+          // as it is pushed down into the pocket.
+          ribs.push(S(S(Manifold.cylinder(lead, gripR * 0.35, gripR, 20)).translate(cx, cy, 0)));
+          if (height - lead > 0.05) {
+            ribs.push(S(S(Manifold.cylinder(height - lead, gripR, gripR, 20)).translate(cx, cy, lead)));
+          }
+        }
+        outerSolid = S(outerSolid.add(S(Manifold.union(ribs))));
+      }
+    }
+
     // Floor pad plus backing shell in one subtraction.
-    let body = S(S(outerCs.extrude(height)).subtract(
+    let body = S(outerSolid.subtract(
       S(S(backingCs.extrude(height)).translate(0, 0, pad)),
     ));
 

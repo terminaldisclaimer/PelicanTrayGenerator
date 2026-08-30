@@ -186,6 +186,15 @@ export function InsertPanel({ s, set }: { s: Settings; set: (patch: Partial<Sett
           </div>
           <div className="grid3">
             <NumberField
+              label="Outer grip"
+              value={s.insertGrip}
+              onChange={(v) => set({ insertGrip: v })}
+              min={0}
+              max={1}
+              step={0.05}
+              hint="How far ribs on the liner's outside press into the pocket wall, holding it in without glue. 0 removes them."
+            />
+            <NumberField
               label="Coverage"
               value={s.insertCoverage}
               onChange={(v) => set({ insertCoverage: v })}

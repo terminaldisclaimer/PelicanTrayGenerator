@@ -98,6 +98,11 @@ export interface Settings {
   insertRibSpacing: number;
   /** Diameter of a crush rib. */
   insertRibWidth: number;
+  /**
+   * Interference of the liner's outer grip ribs into the pocket wall, so the
+   * liner holds itself in without adhesive. 0 removes the outer ribs.
+   */
+  insertGrip: number;
   /** Fraction of the pocket depth the insert walls rise to. */
   insertCoverage: number;
 }

@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS: Settings = {
   insertSqueeze: 0.35,
   insertRibSpacing: 12,
   insertRibWidth: 5,
+  insertGrip: 0.3,
   insertCoverage: 1,
 };
 

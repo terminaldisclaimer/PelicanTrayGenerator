@@ -68,8 +68,8 @@ describe('liner geometry', () => {
     expect(solid.genus()).toBeGreaterThanOrEqual(0);
   });
 
-  it('fits inside its pocket without fouling the tray', () => {
-    const s = settings({ thumbNotches: false });
+  it('fits inside its pocket without fouling the tray when grip ribs are off', () => {
+    const s = settings({ thumbNotches: false, insertGrip: 0 });
     const res = solve([part()], s);
     const tray = res.trays[0];
     const p = tray.parts[0];
@@ -91,6 +91,33 @@ describe('liner geometry', () => {
     expect(bb.max[1]).toBeLessThanOrEqual(pocket.maxY + 1e-6);
     expect(bb.min[2]).toBeGreaterThanOrEqual(floorZ - 1e-6);
     expect(bb.max[2]).toBeLessThanOrEqual(floorZ + p.depth + 1e-6);
+  });
+
+  it('outer grip ribs press into the pocket wall by insertGrip and no more', () => {
+    const s = settings({ thumbNotches: false });
+    expect(s.insertGrip).toBeGreaterThan(0);
+    const res = solve([part()], s);
+    const tray = res.trays[0];
+    const p = tray.parts[0];
+    const withGrip = toSolid(buildInsertMesh(p, s)!.mesh);
+    const without = toSolid(buildInsertMesh(p, settings({ thumbNotches: false, insertGrip: 0 }))!.mesh);
+    expect(withGrip.status()).toBe('NoError');
+
+    // The outer ribs stand proud of the pocket outline by exactly the grip
+    // interference, nowhere more.
+    const pocket = polyBBox(p.poly);
+    const bb = withGrip.boundingBox();
+    expect(bb.max[0]).toBeLessThanOrEqual(pocket.maxX + s.insertGrip + 1e-3);
+    expect(bb.min[0]).toBeGreaterThanOrEqual(pocket.minX - s.insertGrip - 1e-3);
+    expect(bb.max[0] - bb.min[0]).toBeGreaterThan(without.boundingBox().max[0] - without.boundingBox().min[0]);
+
+    // They actually interfere with the tray wall - that's the retention.
+    const floorZ = tray.height - REG.height - p.depth;
+    const trayS = toSolid(buildTrayMesh(tray, s));
+    const clash = trayS.intersect(withGrip.translate(0, 0, floorZ)).volume();
+    expect(clash).toBeGreaterThan(1);
+    // ...but only as shallow rib bumps, nothing like a solid interference band.
+    expect(clash).toBeLessThan(1000);
   });
 
   it('grips the part: the ribs interfere, the backing does not', () => {

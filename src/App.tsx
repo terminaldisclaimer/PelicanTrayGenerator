@@ -104,7 +104,7 @@ export default function App() {
   /** Compact settings fingerprint stamped into every exported file. */
   const settingsStamp = useMemo(() => {
     const s = project.settings;
-    return `clr${s.clearance} tr${s.traceOffset} w${s.wall} f${s.floor} fit${s.insertFit} bw${s.insertWall} pad${s.insertPad} sq${s.insertSqueeze} rw${s.insertRibWidth}`;
+    return `clr${s.clearance} tr${s.traceOffset} w${s.wall} f${s.floor} fit${s.insertFit} bw${s.insertWall} pad${s.insertPad} sq${s.insertSqueeze} rw${s.insertRibWidth} gr${s.insertGrip}`;
   }, [project.settings]);
 
   const fileBase = useMemo(
