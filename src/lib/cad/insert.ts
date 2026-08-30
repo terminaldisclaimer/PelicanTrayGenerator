@@ -108,9 +108,10 @@ export function buildInsertMesh(part: PlacedPart, s: Settings): InsertResult | n
     if (backing.length === 0 || backing[0].length < 3) return null;
 
     const tip = ribTipDepth(s);
-    // Rib radius: as large as fits without breaking the back face, and at
-    // least large enough to stay fused to the backing shell.
-    const radius = Math.min(tip / 2, Math.max(1.2, (tip - s.insertWall) / 2));
+    // Rib radius: the chosen width, but never so thin the rib loses contact
+    // with the backing shell, and capped so the rib centre stays at least
+    // its own radius inside the outer face.
+    const radius = Math.min(Math.max(s.insertRibWidth, tip - s.insertWall) / 2, tip / 2);
     if (!(radius > 0.15)) return null;
 
     // Centres of the rib cylinders.

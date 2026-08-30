@@ -96,6 +96,8 @@ export interface Settings {
   insertSqueeze: number;
   /** Spacing of crush ribs measured along the pocket perimeter. */
   insertRibSpacing: number;
+  /** Diameter of a crush rib. */
+  insertRibWidth: number;
   /** Fraction of the pocket depth the insert walls rise to. */
   insertCoverage: number;
 }

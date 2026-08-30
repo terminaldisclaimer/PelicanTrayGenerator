@@ -175,6 +175,17 @@ export function InsertPanel({ s, set }: { s: Settings; set: (patch: Partial<Sett
               hint="Distance between ribs around the pocket perimeter."
             />
             <NumberField
+              label="Rib width"
+              value={s.insertRibWidth}
+              onChange={(v) => set({ insertRibWidth: v })}
+              min={1}
+              max={12}
+              step={0.5}
+              hint="Diameter of each rib. Wider ribs spread the grip and are gentler on delicate parts."
+            />
+          </div>
+          <div className="grid3">
+            <NumberField
               label="Coverage"
               value={s.insertCoverage}
               onChange={(v) => set({ insertCoverage: v })}

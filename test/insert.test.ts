@@ -130,6 +130,7 @@ describe('liner geometry', () => {
     const s = settings();
     expect(s.insertWall).toBe(5);
     expect(s.insertPad).toBe(5);
+    expect(s.insertRibWidth).toBe(5);
     // The liner's inner face must land outside the part with room for the
     // ribs to bridge: clearance - fit - wall is the backing standoff.
     expect(s.clearance - s.insertFit - s.insertWall).toBeCloseTo(1.05, 6);

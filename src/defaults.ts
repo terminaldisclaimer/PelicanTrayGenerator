@@ -29,6 +29,7 @@ export const DEFAULT_SETTINGS: Settings = {
   insertPad: 5,
   insertSqueeze: 0.35,
   insertRibSpacing: 12,
+  insertRibWidth: 5,
   insertCoverage: 1,
 };
 

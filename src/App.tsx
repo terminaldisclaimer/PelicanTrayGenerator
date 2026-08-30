@@ -104,7 +104,7 @@ export default function App() {
   /** Compact settings fingerprint stamped into every exported file. */
   const settingsStamp = useMemo(() => {
     const s = project.settings;
-    return `clr${s.clearance} tr${s.traceOffset} w${s.wall} f${s.floor} fit${s.insertFit} bw${s.insertWall} pad${s.insertPad} sq${s.insertSqueeze}`;
+    return `clr${s.clearance} tr${s.traceOffset} w${s.wall} f${s.floor} fit${s.insertFit} bw${s.insertWall} pad${s.insertPad} sq${s.insertSqueeze} rw${s.insertRibWidth}`;
   }, [project.settings]);
 
   const fileBase = useMemo(
@@ -444,7 +444,7 @@ function printNotes(project: Project, result: SolveResult): string {
     `Wall / floor      ${s.wall} / ${s.floor} mm`,
     `Stack tolerance   ${s.stackTolerance} mm per side`,
     s.generateInserts
-      ? `Liners            pad ${s.insertPad} mm, wall ${s.insertWall} mm, squeeze ${s.insertSqueeze} mm, ribs every ${s.insertRibSpacing} mm`
+      ? `Liners            pad ${s.insertPad} mm, wall ${s.insertWall} mm, squeeze ${s.insertSqueeze} mm, ribs ${s.insertRibWidth} mm wide every ${s.insertRibSpacing} mm`
       : 'Liners            not generated (use adhesive foam or felt)',
     `Stack height      ${result.stats.stackHeight.toFixed(1)} mm of ${s.cutoutDepth} mm`,
     '',
