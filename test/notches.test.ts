@@ -53,18 +53,24 @@ describe('auto placement', () => {
     const placed = tray.parts[0];
     const pair = autoPlacePair({ tray, part: placed, settings: s })!;
     expect(pair).not.toBeNull();
-    const pa = pointAtT(placed.poly[0], pair.a);
-    const pb = pointAtT(placed.poly[0], pair.b);
-    // Opposite: the two points straddle the centroid...
-    const cx = placed.bbox.x + placed.bbox.w / 2;
-    const cy = placed.bbox.y + placed.bbox.h / 2;
+    // Notches live on the tool outline, not the pocket ring.
+    const ring = placed.rawPoly[0];
+    const pa = pointAtT(ring, pair.a);
+    const pb = pointAtT(ring, pair.b);
+    const xs = ring.map((q) => q[0]);
+    const ys = ring.map((q) => q[1]);
+    const rawW = Math.max(...xs) - Math.min(...xs);
+    const rawH = Math.max(...ys) - Math.min(...ys);
+    // Opposite: the two points straddle the tool's centre...
+    const cx = (Math.max(...xs) + Math.min(...xs)) / 2;
+    const cy = (Math.max(...ys) + Math.min(...ys)) / 2;
     const d = Math.hypot(pa[0] - pb[0], pa[1] - pb[1]);
     const mid = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2];
     expect(Math.hypot(mid[0] - cx, mid[1] - cy)).toBeLessThan(d * 0.25);
     // ...across the shorter dimension, whichever way the solver oriented the
-    // part: the pair's separation matches the pocket's smaller extent.
-    expect(d).toBeLessThan(Math.min(placed.bbox.w, placed.bbox.h) + 2);
-    expect(d).toBeGreaterThan(Math.min(placed.bbox.w, placed.bbox.h) - 6);
+    // part: the pair's separation matches the tool's smaller extent.
+    expect(d).toBeLessThan(Math.min(rawW, rawH) + 2);
+    expect(d).toBeGreaterThan(Math.min(rawW, rawH) - 6);
     // 'a' reads as the left/lower-x notch.
     expect(pa[0]).toBeLessThanOrEqual(pb[0] + 1e-6);
   });
@@ -108,7 +114,7 @@ describe('auto placement', () => {
       expect(pair).not.toBeNull();
       const other = tray.parts.find((p) => p !== placed)!;
       for (const t of [pair.a, pair.b]) {
-        const pt = pointAtT(placed.poly[0], t);
+        const pt = pointAtT(placed.rawPoly[0], t);
         // Each chosen spot keeps a full notch radius plus wall away from the
         // neighbouring pocket outline (the outline, not its bbox: the round
         // pocket corners pull well inside the bbox corners).
@@ -130,6 +136,39 @@ describe('auto placement', () => {
 });
 
 describe('resolution and blocking', () => {
+  it('rectangular mode: notches land on the tool outline, not the pocket rectangle', () => {
+    const s = settings({ rectPockets: true, thumbNotches: false });
+    const a = part({ poly: rect(60, 40), depth: 20 });
+    const first = solve([a], s);
+    const tray0 = first.trays[0];
+    const pair = autoPlacePair({ tray: tray0, part: tray0.parts[0], settings: s })!;
+    expect(pair).not.toBeNull();
+    a.fingerNotches = [{ instance: 0, ...pair }];
+
+    const res = solve([a], s);
+    const placed = res.trays[0].parts[0];
+    const dist = (ring: typeof placed.poly[0], pt: [number, number]) => {
+      let min = Infinity;
+      for (let i = 0; i < ring.length; i++) {
+        const q = ring[i];
+        const r2 = ring[(i + 1) % ring.length];
+        const dx = r2[0] - q[0], dy = r2[1] - q[1];
+        const len2 = dx * dx + dy * dy;
+        const u = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((pt[0] - q[0]) * dx + (pt[1] - q[1]) * dy) / len2));
+        min = Math.min(min, Math.hypot(pt[0] - (q[0] + dx * u), pt[1] - (q[1] + dy * u)));
+      }
+      return min;
+    };
+    for (const n of placed.fingerNotches!) {
+      expect(n.valid).toBe(true);
+      // On the tool outline...
+      expect(dist(placed.rawPoly[0], [n.x, n.y])).toBeLessThan(0.01);
+      // ...and clearly off the pocket rectangle.
+      expect(dist(placed.poly[0], [n.x, n.y])).toBeGreaterThan(3);
+    }
+  });
+
+  
   it('keeps an invalid hand-placed notch and blocks the tray', () => {
     const s = settings({ thumbNotches: false });
     const a = part({ poly: rect(60, 40), name: 'left', depth: 20 });
@@ -145,7 +184,7 @@ describe('resolution and blocking', () => {
     const towards: [number, number] = [
       right.bbox.x + right.bbox.w / 2, right.bbox.y + right.bbox.h / 2,
     ];
-    const tBad = nearestT(left.poly[0], towards);
+    const tBad = nearestT(left.rawPoly[0], towards);
     a.fingerNotches = [{ instance: 0, a: tBad, b: (tBad + 0.5) % 1 }];
 
     const res = solve([a, b], s);

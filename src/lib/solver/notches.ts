@@ -111,6 +111,16 @@ export interface NotchContext {
 }
 
 /**
+ * The ring a finger notch lives on: the tool outline itself, not the pocket.
+ * A notch exists to pinch the tool out, so its scallop must straddle the
+ * tool's edge - on a rectangular pocket the pocket ring can be far from the
+ * tool, which would put the notch uselessly out in the TPU block.
+ */
+export function notchRing(part: PlacedPart): Ring {
+  return (part.rawPoly?.[0]?.length ?? 0) >= 3 ? part.rawPoly[0] : part.poly[0];
+}
+
+/**
  * Why a notch cannot sit at this point, or null when it can.
  *
  * There is deliberately no tray-edge rule: trays are sized snugly, so pocket
@@ -146,7 +156,7 @@ const angDiff = (a: number, b: number) => {
 interface Sample { t: number; p: Vec2; ang: number }
 
 function sampleValid(ctx: NotchContext): Sample[] {
-  const ring = ctx.part.poly[0];
+  const ring = notchRing(ctx.part);
   const per = ringPerimeter(ring);
   const count = Math.max(48, Math.min(360, Math.round(per / 2)));
   const c = ringCentroid(ring);
@@ -196,7 +206,7 @@ export function autoPlacePair(ctx: NotchContext): { a: number; b: number } | nul
  * spots. Null when nowhere across the shape is valid.
  */
 export function alignOppositeT(ctx: NotchContext, t: number): number | null {
-  const ring = ctx.part.poly[0];
+  const ring = notchRing(ctx.part);
   const c = ringCentroid(ring);
   const p = pointAtT(ring, t);
   const target = Math.atan2(p[1] - c[1], p[0] - c[0]) + Math.PI;
@@ -228,7 +238,7 @@ export function resolveTrayNotches(tray: Tray, parts: PartInput[], s: Settings):
       continue;
     }
     const ctx: NotchContext = { tray, part: placed, settings: s };
-    const ring = placed.poly[0];
+    const ring = notchRing(placed);
     const resolved: ResolvedNotch[] = (['a', 'b'] as const).map((key) => {
       const t = wrap01(pair[key]);
       const [x, y] = pointAtT(ring, t);

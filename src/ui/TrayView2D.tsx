@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { PlacedPart, Ring, Settings, Tray, Vec2 } from '../types';
 import { REG } from '../lib/cad/profile';
-import { nearestT, notchProblemAt, pointAtT } from '../lib/solver/notches';
+import { nearestT, notchProblemAt, notchRing, pointAtT } from '../lib/solver/notches';
 import { placementProblemAt } from '../lib/solver/placement';
 
 export interface TrayView2DProps {
@@ -77,14 +77,14 @@ export function TrayView2D({
     if (!drag) return null;
     const part = tray.parts.find((p) => p.partId === drag.partId && p.instance === drag.instance);
     if (!part) return null;
-    const pt = pointAtT(part.poly[0], drag.t);
+    const pt = pointAtT(notchRing(part), drag.t);
     return notchProblemAt({ tray, part, settings: s }, pt);
   }, [drag, tray, s]);
 
   function notchesFor(part: PlacedPart) {
     return (part.fingerNotches ?? []).map((n) => {
       if (drag && drag.partId === part.partId && drag.instance === part.instance && drag.key === n.key) {
-        const [x, y] = pointAtT(part.poly[0], drag.t);
+        const [x, y] = pointAtT(notchRing(part), drag.t);
         return { ...n, x, y, valid: !dragProblem, live: true };
       }
       return { ...n, live: false };
@@ -94,7 +94,7 @@ export function TrayView2D({
   const onMove = (e: React.PointerEvent) => {
     if (drag) {
       const part = tray.parts.find((p) => p.partId === drag.partId && p.instance === drag.instance);
-      if (part) setDrag({ ...drag, t: nearestT(part.poly[0], toWorld(e)) });
+      if (part) setDrag({ ...drag, t: nearestT(notchRing(part), toWorld(e)) });
     } else if (partDrag) {
       const w = toWorld(e);
       const at: Vec2 = [partDrag.from[0] + w[0] - partDrag.grab[0], partDrag.from[1] + w[1] - partDrag.grab[1]];
