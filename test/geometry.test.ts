@@ -155,7 +155,9 @@ describe('exports', () => {
     const res = solve([part()], s);
     const mesh = buildTrayMesh(res.trays[0], s);
 
-    const stl = meshToStl(mesh);
+    const stl = meshToStl(mesh, 'clr2 w2');
+    const head = new TextDecoder().decode(stl.slice(0, 80));
+    expect(head).toContain('clr2');
     const tris = new DataView(stl.buffer, stl.byteOffset).getUint32(80, true);
     expect(tris).toBe(mesh.indices.length / 3);
     expect(stl.byteLength).toBe(84 + tris * 50);

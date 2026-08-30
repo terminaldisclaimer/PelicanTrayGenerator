@@ -101,6 +101,12 @@ export default function App() {
     }
   }, [ready, project]);
 
+  /** Compact settings fingerprint stamped into every exported file. */
+  const settingsStamp = useMemo(() => {
+    const s = project.settings;
+    return `clr${s.clearance} tr${s.traceOffset} w${s.wall} f${s.floor} fit${s.insertFit} bw${s.insertWall} sq${s.insertSqueeze}`;
+  }, [project.settings]);
+
   const fileBase = useMemo(
     () => (project.name || 'trays').replace(/[^\w.-]+/g, '_'),
     [project.name],
@@ -117,9 +123,9 @@ export default function App() {
     }
     const mesh = meshes.get(tray.id);
     if (!mesh) return;
-    if (format === 'stl') download(meshToStl(mesh), `${name}.stl`, 'model/stl');
+    if (format === 'stl') download(meshToStl(mesh, settingsStamp), `${name}.stl`, 'model/stl');
     else download(meshTo3mf(mesh, tray.name), `${name}.3mf`, 'model/3mf');
-  }, [meshes, inserts, fileBase]);
+  }, [meshes, inserts, fileBase, settingsStamp]);
 
   const exportAll = useCallback(() => {
     if (!result) return;
@@ -129,20 +135,20 @@ export default function App() {
       if (!mesh) continue;
       const name = tray.name.replace(/\s+/g, '');
       files[`petg-trays/3mf/${name}.3mf`] = meshTo3mf(mesh, tray.name);
-      files[`petg-trays/stl/${name}.stl`] = meshToStl(mesh);
+      files[`petg-trays/stl/${name}.stl`] = meshToStl(mesh, settingsStamp);
 
       const set = inserts.get(tray.id);
       if (set?.length) {
         files[`tpu-liners/3mf/${name}-liners.3mf`] = meshesTo3mf(set, `${tray.name} liners`);
         for (const liner of set) {
-          files[`tpu-liners/stl/${name}-${liner.name}.stl`] = meshToStl(liner.mesh);
+          files[`tpu-liners/stl/${name}-${liner.name}.stl`] = meshToStl(liner.mesh, settingsStamp);
         }
       }
     }
     files['print-notes.txt'] = new TextEncoder().encode(printNotes(project, result));
     files['project.traygen.json'] = new TextEncoder().encode(JSON.stringify(project, null, 2));
     download(zipFiles(files), `${fileBase}.zip`, 'application/zip');
-  }, [result, meshes, inserts, project, fileBase]);
+  }, [result, meshes, inserts, project, fileBase, settingsStamp]);
 
   /** Rebuild one tray's mesh and liners after a notch edit. */
   const rebuildTray = useCallback(async (tray: Tray, parts: Project['parts'], s: Settings) => {

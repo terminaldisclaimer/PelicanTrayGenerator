@@ -1,12 +1,16 @@
 import type { TriMesh } from '../cad/manifold';
 
-/** Binary STL. Units are whatever the mesh is in, i.e. millimetres. */
-export function meshToStl(mesh: TriMesh): Uint8Array {
+/**
+ * Binary STL, millimetres. The 80-byte header carries the settings that
+ * generated the mesh, so a stray file on disk stays diagnosable: read the
+ * first 80 bytes and the clearance, wall and liner numbers are right there.
+ */
+export function meshToStl(mesh: TriMesh, stamp = ''): Uint8Array {
   const triCount = mesh.indices.length / 3;
   const buf = new ArrayBuffer(84 + triCount * 50);
   const view = new DataView(buf);
   const bytes = new Uint8Array(buf);
-  const header = 'Pelican Tray Generator - binary STL - millimetres';
+  const header = `PelicanTray mm ${stamp}`.slice(0, 79);
   for (let i = 0; i < header.length; i++) bytes[i] = header.charCodeAt(i);
   view.setUint32(80, triCount, true);
 
