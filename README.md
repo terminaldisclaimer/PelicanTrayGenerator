@@ -12,8 +12,10 @@ the Library) and pick poses from pictures, or leave parts on Auto. Enter the
 case's inside size; **Generate tray** then arranges the parts (choosing
 poses for Auto parts, rotating in 90° steps, overflowing into extra trays),
 cuts form-fit pockets with finger cutouts, and **Download STL** exports each
-tray. Still to come: dragging parts by hand in a 2D layout view, tiered
-pockets, 3MF export, the TPU liner (see the SPEC milestones).
+tray. When the parts do not fit in one tray, shallow parts are stacked in tiered
+pockets within the depth the deepest part sets. Projects are saved on the
+device. Still to come: dragging parts by hand in a 2D layout view, 3MF
+export, the TPU liner (see the SPEC milestones).
 
 ## Development
 

@@ -16,6 +16,8 @@ export type WorkerRequest =
   | { id: number; type: 'remove'; partId: number }
   /** Choose which sides of the pocket get a finger cutout, or 'auto'. */
   | { id: number; type: 'finger'; partId: number; fingers: Side[] | 'auto' }
+  /** Allow or forbid putting this part in a stack. */
+  | { id: number; type: 'stackable'; partId: number; on: boolean }
   /** Everything needed to rebuild the current parts later (for saving). */
   | { id: number; type: 'export' }
   /** Replace all parts with previously saved ones. */
@@ -42,12 +44,14 @@ export interface ParsedPart {
   fingers: Side[];
   /** True while the app picks the cutouts (they then depend on the pose). */
   fingerAuto: boolean;
+  /** False = this part is never put in a stack. */
+  stackable: boolean;
   suggestInches: boolean;
   large: boolean;
 }
 
 /** Generated trays, plus every part as it now lies (Auto parts may have been re-posed). */
-export interface TrayInfo { trays: Tray[]; length: number; width: number; parts: ParsedPart[] }
+export interface TrayInfo { trays: Tray[]; stacks: number; length: number; width: number; parts: ParsedPart[] }
 
 /** A part as stored in a saved project: its mesh in mm plus the user's choices. */
 export interface SavedPart {
@@ -59,6 +63,7 @@ export interface SavedPart {
   /** Rotation matrix (row-major 3×3), used when the pose is a custom one. */
   rotation: number[];
   fingers: Side[] | 'auto';
+  stackable?: boolean;
 }
 
 export type WorkerResponse =

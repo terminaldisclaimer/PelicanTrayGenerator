@@ -26,6 +26,8 @@ export interface TrayOptions {
   /** Swept: a smooth bowl that curves up to the surface, instead of a straight-sided hole. */
   fingerSwept: boolean;
   pocket: PocketOptions;
+  /** Stack shallow parts on top of each other when everything will not fit in one tray. */
+  stacking: boolean;
   /** Packing effort (orderings tried) and time limit. */
   packAttempts?: number;
   /** Step for spinning parts about Z when packing (degrees; default 15). */
@@ -35,7 +37,7 @@ export interface TrayOptions {
 
 export const DEFAULT_TRAY: TrayOptions = {
   length: 300, width: 200, depth: null, maxDepth: null, floor: 2, wall: 3, edge: 4, cornerRadius: 4,
-  fingerDiameter: 20, fingerExtraDepth: 0, fingerSwept: true, pocket: DEFAULT_POCKET,
+  fingerDiameter: 20, fingerExtraDepth: 0, fingerSwept: true, stacking: true, pocket: DEFAULT_POCKET,
 };
 
 /** One way a part may lie in the tray. */
@@ -51,6 +53,8 @@ export interface TrayPart {
   poses: TrayPose[];
   /** Finger cutouts: explicit sides, or 'auto' to decide per pose. */
   fingers: Side[] | 'auto';
+  /** False = never put this part in a stack. Default true. */
+  stackable?: boolean;
 }
 
 /**
@@ -70,9 +74,13 @@ export interface Placement {
   pocketDepth: number;
   formFit: boolean;
   fingers: Side[];
+  /** Position in a stack: 0 = top (or not stacked); 1 = directly under the top part, … */
+  level: number;
+  /** Number of parts in this part's stack (1 = not stacked). */
+  stackSize: number;
 }
 export interface Tray { mesh: TriMesh; depth: number; placements: Placement[]; volume: number }
-export interface TrayResult { trays: Tray[] }
+export interface TrayResult { trays: Tray[]; /** Number of stacks that were formed. */ stacks: number }
 
 /** User-facing problem with the request (shown as a message, not a crash). */
 export class TrayError extends Error {}
@@ -112,7 +120,17 @@ export function fingerCentre(silhouette: Silhouette, clearance: number, side: Si
   return horizontal ? [edge, mid] : [mid, edge];
 }
 
-/** Build trays: choose poses and positions with the packer, then cut every pocket. */
+/**
+ * Build trays.
+ *
+ * 1. The deepest part sets the pocket depth D of the tray (each part in the
+ *    lowest pose that fits the tray at all). No pose deeper than D is used.
+ * 2. Pack everything side by side. If it fits in one tray, done.
+ * 3. Otherwise stack parts — a shallower part in an upper pocket above another
+ *    — wherever the combined depth still fits within D, one stack at a time,
+ *    best space saving first, and stop as soon as everything fits in one tray.
+ * 4. If it still does not fit, the parts overflow into more trays.
+ */
 export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, onProgress?: (fraction: number, label: string) => void): TrayResult {
   if (!parts.length) throw new TrayError('Add at least one part first.');
   const fitsBed = (o.length <= BED.x && o.width <= BED.y) || (o.length <= BED.y && o.width <= BED.x);
@@ -121,15 +139,16 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
 
   const trash: { delete(): void }[] = [];
   const keep = <T extends { delete(): void }>(x: T): T => { trash.push(x); return x; };
+  type CS = ReturnType<typeof k.CrossSection.circle>;
   try {
     const sidesFor = (part: TrayPart, pose: TrayPose) => (part.fingers === 'auto' ? autoFingers(pose.height) : part.fingers);
     const pocketDepth = (pose: TrayPose) => pose.height + o.pocket.floorClearance + o.pocket.topMargin;
+    const extra = Math.max(0, o.fingerExtraDepth);
     /** Depth a part needs below the tray surface: its pocket, or its finger holes if they go deeper. */
-    const neededDepth = (part: TrayPart, pose: TrayPose) => pocketDepth(pose) + (sidesFor(part, pose).length ? Math.max(0, o.fingerExtraDepth) : 0);
+    const neededDepth = (part: TrayPart, pose: TrayPose) => pocketDepth(pose) + (sidesFor(part, pose).length ? extra : 0);
     const fingerR = o.fingerDiameter / 2;
-    /** All finger scoops of a pose as one 2D shape, or null if it has none. */
-    const scoops = (part: TrayPart, pose: TrayPose) => {
-      let all: ReturnType<typeof k.CrossSection.circle> | null = null;
+    const scoops = (part: TrayPart, pose: TrayPose): CS | null => {
+      let all: CS | null = null;
       for (const side of sidesFor(part, pose)) {
         const [fx, fy] = fingerCentre(pose.silhouette, o.pocket.clearance, side);
         const c = keep(keep(k.CrossSection.circle(fingerR, 32)).translate(fx, fy));
@@ -137,73 +156,161 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
       }
       return all;
     };
+    /** Pocket opening plus finger holes: everything the part takes from the tray surface. */
+    const shapeOf = (part: TrayPart, pose: TrayPose): CS => {
+      const open = keep(keep(k.CrossSection.ofPolygons(pose.silhouette, 'Positive')).offset(o.pocket.clearance, 'Round', 2, 16));
+      const holes = scoops(part, pose);
+      return holes ? keep(open.add(holes)) : open;
+    };
+    const grown = (shape: CS) => keep(keep(shape.offset(o.wall / 2 + RASTER_SLACK + POLYGON_SLACK, 'Round', 2, 12)).simplify(0.1)).toPolygons() as Pt[][];
 
-    // 1. Footprint of every allowed pose: pocket opening (+ finger scoop), grown by half a wall.
+    // Footprints already carry half a wall, so the usable region is the tray
+    // shrunk by (edge − wall/2) on every side.
+    const inset = Math.max(0, o.edge - o.wall / 2 - RASTER_SLACK);
+    const region = { width: o.length - 2 * inset, height: o.width - 2 * inset };
+    const packWith = (items: PackItem[], quick: boolean) =>
+      pack(items, { ...region, attempts: quick ? 9 : o.packAttempts ?? 30, timeBudgetMs: quick ? 700 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep });
+
+    // ---- 1. Allowed poses and the depth the deepest part sets ----
     onProgress?.(0.03, 'Measuring parts');
     const limit = Math.min(o.depth ?? Infinity, o.maxDepth ?? Infinity);
-    const maxPocket = limit - o.floor;
-    const tooDeep: string[] = [];
-    const items: PackItem[] = [];
+    interface Choice { pose: TrayPose; depth: number; shape: CS; footprint: Pt[][]; area: number }
+    interface Layer { part: TrayPart; choice: Choice; rot: number }
+    interface Unit { id: number; choices: Choice[]; part: TrayPart | null; stack: Layer[] | null; footprint: Pt[][] | null; depth: number; shape: CS }
+    const tooDeep: string[] = [], tooBig: string[] = [];
+    const units: Unit[] = [];
     for (const part of parts) {
-      const options = part.poses.filter((pose) => neededDepth(part, pose) <= maxPocket + 1e-9).map((pose) => {
-        let shape = keep(keep(k.CrossSection.ofPolygons(pose.silhouette, 'Positive')).offset(o.pocket.clearance, 'Round', 2, 16));
-        const holes = scoops(part, pose);
-        if (holes) shape = keep(shape.add(holes));
-        const grown = keep(keep(shape.offset(o.wall / 2 + RASTER_SLACK + POLYGON_SLACK, 'Round', 2, 12)).simplify(0.1));
-        return { key: pose.poseIndex, depth: neededDepth(part, pose), footprint: grown.toPolygons() as Pt[][] };
-      });
-      if (!options.length) tooDeep.push(part.name);
-      else items.push({ id: part.partId, options });
+      const within = part.poses.filter((pose) => neededDepth(part, pose) <= limit - o.floor + 1e-9);
+      if (!within.length) { tooDeep.push(part.name); continue; }
+      const choices = within
+        .map((pose) => { const shape = shapeOf(part, pose); return { pose, depth: neededDepth(part, pose), shape, footprint: grown(shape), area: shape.area() }; })
+        // ...that can go in an empty tray at all, at some angle.
+        .filter((c) => !packWith([{ id: 0, options: [{ key: 0, depth: c.depth, footprint: c.footprint }] }], true).unplaced.length)
+        .sort((a, b) => a.depth - b.depth);
+      if (!choices.length) { tooBig.push(part.name); continue; }
+      units.push({ id: part.partId, choices, part, stack: null, footprint: null, depth: choices[0].depth, shape: choices[0].shape });
     }
     if (tooDeep.length)
       throw new TrayError(`${limit.toFixed(1)} mm is too shallow for: ${tooDeep.join(', ')}. Increase the tray depth or case height, or leave them empty.`);
+    if (tooBig.length)
+      throw new TrayError(`Too big for a ${o.length.toFixed(1)} × ${o.width.toFixed(1)} mm tray in any allowed pose: ${tooBig.join(', ')}.`);
+    // The deepest part (lying as low as it can) sets the depth; nothing may go deeper.
+    const D = o.depth !== null ? o.depth - o.floor : Math.max(...units.map((u) => u.depth));
+    for (const u of units) u.choices = u.choices.filter((c) => c.depth <= D + 1e-9);
 
-    // 2. Pack. Footprints already carry half a wall, so the usable region is the
-    //    tray shrunk by (edge − wall/2) on every side.
+    const items = (): PackItem[] => units.map((u) => ({
+      id: u.id,
+      options: u.stack ? [{ key: 0, depth: u.depth, footprint: u.footprint! }] : u.choices.map((c) => ({ key: c.pose.poseIndex, depth: c.depth, footprint: c.footprint })),
+    }));
+
+    // ---- 2. Side by side ----
     onProgress?.(0.1, 'Arranging parts');
-    const inset = Math.max(0, o.edge - o.wall / 2 - RASTER_SLACK);
-    const packed = pack(items, { width: o.length - 2 * inset, height: o.width - 2 * inset, attempts: o.packAttempts ?? 30, timeBudgetMs: o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep });
+    let packed = packWith(items(), false);
+
+    // ---- 3. Stack until it fits ----
+    let stacks = 0;
+    if (o.stacking && packed.trays.length > 1) {
+      const flat = { packed, units: units.map((u) => ({ ...u })) };
+      const regionArea = region.width * region.height;
+      const layersOf = (u: Unit): Layer[] => u.stack ?? [{ part: u.part!, choice: u.choices[0], rot: 0 }];
+      const canStack = (u: Unit) => layersOf(u).every((l) => l.part.stackable !== false);
+      const turned = (l: Layer, rot: number) => (rot ? keep(l.choice.shape.rotate(rot)) : l.choice.shape);
+      /** Stack two units: biggest footprint on top; each layer squared up to hide under it as well as it can. */
+      const merge = (a: Unit, b: Unit) => {
+        const layers = [...layersOf(a), ...layersOf(b)].map((l) => ({ ...l })).sort((p, q) => q.choice.area - p.choice.area);
+        let shape = turned(layers[0], 0);
+        layers[0].rot = 0;
+        for (const l of layers.slice(1)) {
+          const s0 = keep(shape.add(turned(l, 0))), s90 = keep(shape.add(turned(l, 90)));
+          l.rot = s90.area() < s0.area() - 1e-6 ? 90 : 0;
+          shape = l.rot ? s90 : s0;
+        }
+        const pockets = layers.reduce((sum, l) => sum + pocketDepth(l.choice.pose), 0);
+        const depth = pockets + (layers.some((l) => sidesFor(l.part, l.choice.pose).length) ? extra : 0);
+        return { layers, shape, depth, saving: a.shape.area() + b.shape.area() - shape.area() };
+      };
+      for (let round = 0; round < parts.length && packed.trays.length > 1; round++) {
+        onProgress?.(0.1 + 0.05 * Math.min(1, round / 4), 'Stacking parts to fit');
+        let best: { i: number; j: number; m: ReturnType<typeof merge> } | null = null;
+        for (let i = 0; i < units.length; i++)
+          for (let j = i + 1; j < units.length; j++) {
+            if (!canStack(units[i]) || !canStack(units[j])) continue;
+            if (units[i].depth + units[j].depth > D + extra + 1e-9) continue;
+            const m = merge(units[i], units[j]);
+            if (m.depth <= D + 1e-9 && m.saving > 1 && (!best || m.saving > best.m.saving)) best = { i, j, m };
+          }
+        if (!best) break;
+        const merged: Unit = { id: units[best.i].id, choices: [], part: null, stack: best.m.layers, footprint: grown(best.m.shape), depth: best.m.depth, shape: best.m.shape };
+        units.splice(best.j, 1);
+        units[best.i] = merged;
+        stacks = units.filter((u) => u.stack).length;
+        // Only worth packing once the footprints could plausibly fit one tray.
+        if (units.reduce((a, u) => a + u.shape.area(), 0) > regionArea) continue;
+        packed = packWith(items(), true);
+      }
+      packed = packWith(items(), false);
+      // If stacking did not reduce the number of trays, keep the simpler unstacked layout.
+      if (packed.unplaced.length || packed.trays.length >= flat.packed.trays.length) {
+        units.splice(0, units.length, ...flat.units);
+        packed = flat.packed;
+        stacks = 0;
+      }
+    }
     if (packed.unplaced.length) {
-      const names = packed.unplaced.map((id) => parts.find((p) => p.partId === id)!.name);
+      const names = packed.unplaced.map((id) => parts.find((p) => p.partId === id)?.name ?? '?');
       throw new TrayError(`Too big for a ${o.length.toFixed(1)} × ${o.width.toFixed(1)} mm tray in any allowed pose: ${names.join(', ')}.`);
     }
 
-    // 3. Cut each tray.
+    // ---- 4. Cut each tray ----
     const r = Math.max(0, Math.min(o.cornerRadius, o.length / 2 - 1, o.width / 2 - 1));
     const core = keep(k.CrossSection.square([o.length - 2 * r, o.width - 2 * r], true));
     const outline = r > 0 ? keep(core.offset(r, 'Round', 2, 32)) : core;
     const trays: Tray[] = [];
+    const total = parts.length;
     let done = 0;
     for (let t = 0; t < packed.trays.length; t++) {
-      const here = packed.placements.filter((p) => p.tray === t);
       const depth = o.depth ?? packed.trays[t].depth + o.floor;
       const placements: Placement[] = [];
       const cuts: Manifold[] = [];
-      for (const pl of here) {
-        const part = parts.find((p) => p.partId === pl.id)!;
-        const pose = part.poses.find((p) => p.poseIndex === pl.key)!;
-        onProgress?.(0.15 + (0.75 * done++) / packed.placements.length, `Cutting pocket: ${part.name}`);
-        const c = buildCavity(k, pose.mesh, pose.silhouette, pose.height, o.pocket);
-        let solid = keep(c.solid);
-        const sides = sidesFor(part, pose);
-        if (sides.length) {
-          // Finger holes reach the pocket floor, plus any extra depth asked for.
-          const d = c.depth + Math.max(0, o.fingerExtraDepth);
-          if (o.fingerSwept) {
-            // A bowl: full depth at the pocket edge, curving up to the surface.
-            for (const side of sides) {
-              const [fx, fy] = fingerCentre(pose.silhouette, o.pocket.clearance, side);
-              const bowl = keep(keep(keep(k.Manifold.sphere(1, 28)).scale([fingerR, fingerR, d])).translate(fx, fy, c.top));
-              solid = keep(solid.add(bowl));
-            }
-          } else {
-            const holes = scoops(part, pose)!;
-            solid = keep(solid.add(keep(keep(holes.extrude(d + 1)).translate(0, 0, c.top - d))));
+      for (const pl of packed.placements.filter((p) => p.tray === t)) {
+        const unit = units.find((u) => u.id === pl.id)!;
+        const layers: Layer[] = unit.stack ?? [{ part: unit.part!, choice: unit.choices.find((c) => c.pose.poseIndex === pl.key)!, rot: 0 }];
+        const x = pl.tx - o.length / 2 + inset, y = pl.ty - o.width / 2 + inset;
+        let offset = 0; // how far this layer's pocket top sits below the tray surface
+        let solid: Manifold | null = null;
+        layers.forEach((l, level) => {
+          const { part } = l, pose = l.choice.pose;
+          onProgress?.(0.15 + (0.75 * done++) / total, `Cutting pocket: ${part.name}`);
+          const c = buildCavity(k, pose.mesh, pose.silhouette, pose.height, o.pocket);
+          // Part coordinates -> unit coordinates with the tray surface at z = 0.
+          let piece = keep(keep(c.solid).translate(0, 0, -offset - c.top));
+          if (offset > 0) {
+            // Open shaft above a lower pocket so its part can be lifted out.
+            const shaft = keep(keep(keep(k.CrossSection.ofPolygons(c.opening, 'Positive')).extrude(offset + 1)).translate(0, 0, -offset));
+            piece = keep(piece.add(shaft));
           }
-        }
-        const x = pl.tx - o.length / 2 + inset, y = pl.ty - o.width / 2 + inset, z = depth - c.top;
-        cuts.push(keep(keep(solid.rotate([0, 0, pl.angle])).translate(x, y, z)));
-        placements.push({ partId: part.partId, poseIndex: pose.poseIndex, fingers: sides, angle: pl.angle, x, y, z, pocketDepth: c.depth, formFit: c.formFit });
+          const sides = sidesFor(part, pose);
+          if (sides.length) {
+            // Finger holes run from the tray surface to this pocket's floor (plus any extra).
+            const d = offset + c.depth + extra;
+            if (o.fingerSwept) {
+              for (const side of sides) {
+                const [fx, fy] = fingerCentre(pose.silhouette, o.pocket.clearance, side);
+                piece = keep(piece.add(keep(keep(keep(k.Manifold.sphere(1, 28)).scale([fingerR, fingerR, d])).translate(fx, fy, 0))));
+              }
+            } else {
+              piece = keep(piece.add(keep(keep(scoops(part, pose)!.extrude(d + 1)).translate(0, 0, -d))));
+            }
+          }
+          if (l.rot) piece = keep(piece.rotate([0, 0, l.rot]));
+          solid = solid ? keep((solid as Manifold).add(piece)) : piece;
+          placements.push({
+            partId: part.partId, poseIndex: pose.poseIndex, fingers: sides, angle: pl.angle + l.rot, x, y, z: depth - offset - c.top,
+            pocketDepth: c.depth, formFit: c.formFit, level, stackSize: layers.length,
+          });
+          offset += c.depth;
+        });
+        cuts.push(keep(keep((solid as unknown as Manifold).rotate([0, 0, pl.angle])).translate(x, y, depth)));
       }
       onProgress?.(0.92, `Building tray ${t + 1}`);
       const block = keep(outline.extrude(depth));
@@ -212,7 +319,7 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
       if (tray.isEmpty()) throw new Error('Tray geometry came out empty');
       trays.push({ mesh: toTriMesh(tray, `tray-${t + 1}`), depth, placements, volume: tray.volume() });
     }
-    return { trays };
+    return { trays, stacks };
   } finally {
     for (const t of trash) t.delete();
   }

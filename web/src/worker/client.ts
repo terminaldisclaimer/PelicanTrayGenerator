@@ -56,6 +56,9 @@ export class GeometryClient {
   finger(partId: number, fingers: Side[] | 'auto') {
     return this.call({ type: 'finger', partId, fingers }).then((r) => r[0]);
   }
+  stackable(partId: number, on: boolean) {
+    return this.call({ type: 'stackable', partId, on }).then((r) => r[0]);
+  }
   exportParts() {
     return this.call<SavedPart[]>({ type: 'export' });
   }

@@ -14,7 +14,7 @@ const post = (msg: WorkerResponse, transfer: Transferable[] = []) =>
   (self as unknown as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
 
 /** Originals stay in the worker so re-posing never re-sends the mesh. */
-interface Stored { original: TriMesh; candidates: PoseCandidate[]; rotation: Mat3; poseIndex: number; locked: boolean; fingers: Side[] | 'auto'; inchesChecked: boolean }
+interface Stored { original: TriMesh; candidates: PoseCandidate[]; rotation: Mat3; poseIndex: number; locked: boolean; fingers: Side[] | 'auto'; stackable: boolean; inchesChecked: boolean }
 const parts = new Map<number, Stored>();
 let nextPartId = 1;
 
@@ -28,7 +28,7 @@ async function describe(partId: number, candidate?: number): Promise<ParsedPart>
   return {
     partId, ...posed, triangles,
     poseIndex: candidate ?? s.poseIndex, poseCount: s.candidates.length, poseLocked: s.locked,
-    fingers: s.fingers === 'auto' ? autoFingers(posed.height) : s.fingers, fingerAuto: s.fingers === 'auto',
+    fingers: s.fingers === 'auto' ? autoFingers(posed.height) : s.fingers, fingerAuto: s.fingers === 'auto', stackable: s.stackable,
     suggestInches: !s.inchesChecked && looksLikeInches(meshBounds(s.original)),
     large: triangles > LARGE_MESH_TRIANGLES,
   };
@@ -41,7 +41,7 @@ async function add(mesh: TriMesh): Promise<number> {
     throw new Error(`${mesh.name}: ${triangles.toLocaleString()} triangles exceeds the ${MAX_MESH_TRIANGLES.toLocaleString()} limit`);
   const candidates = poseCandidates(k, mesh);
   const id = nextPartId++;
-  parts.set(id, { original: mesh, candidates, rotation: candidates[0].rotation, poseIndex: 0, locked: false, fingers: 'auto', inchesChecked: false });
+  parts.set(id, { original: mesh, candidates, rotation: candidates[0].rotation, poseIndex: 0, locked: false, fingers: 'auto', stackable: true, inchesChecked: false });
   return id;
 }
 
@@ -97,7 +97,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     } else if (req.type === 'export') {
       // Copies (not transfers): the worker keeps its meshes.
       const out = [...parts.values()].map((s) => ({
-        name: s.original.name, positions: s.original.positions, poseIndex: s.poseIndex, locked: s.locked, rotation: [...s.rotation], fingers: s.fingers,
+        name: s.original.name, positions: s.original.positions, poseIndex: s.poseIndex, locked: s.locked, rotation: [...s.rotation], fingers: s.fingers, stackable: s.stackable,
       }));
       post({ id: req.id, type: 'saved', parts: out });
     } else if (req.type === 'restore') {
@@ -110,12 +110,18 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         const s = parts.get(id)!;
         s.inchesChecked = true;
         s.fingers = sp.fingers;
+        s.stackable = sp.stackable !== false;
         s.locked = sp.locked;
         if (sp.poseIndex >= 0 && sp.poseIndex < s.candidates.length) { s.poseIndex = sp.poseIndex; s.rotation = s.candidates[sp.poseIndex].rotation; }
         else if (sp.rotation.length === 9) { s.poseIndex = -1; s.rotation = sp.rotation as Mat3; }
         out.push(await describe(id));
       }
       reply(req.id, out);
+    } else if (req.type === 'stackable') {
+      const s = parts.get(req.partId);
+      if (!s) throw new Error('Unknown part');
+      s.stackable = req.on;
+      reply(req.id, [await describe(req.partId)]);
     } else if (req.type === 'finger') {
       const s = parts.get(req.partId);
       if (!s) throw new Error('Unknown part');
@@ -138,7 +144,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
             if (!same && poses.length < AUTO_POSES) poses.push(p);
           }
         }
-        return { partId, name: s.original.name, fingers: s.fingers, poses };
+        return { partId, name: s.original.name, fingers: s.fingers, stackable: s.stackable, poses };
       });
       const result = buildTrays(k, list, req.options, (fraction, label) => post({ id: req.id, type: 'progress', fraction, label }));
       // Auto parts take the pose the packer chose (still unlocked).
@@ -150,7 +156,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const now: ParsedPart[] = [];
       for (const id of parts.keys()) now.push(await describe(id));
       post(
-        { id: req.id, type: 'tray', tray: { trays: result.trays, length: req.options.length, width: req.options.width, parts: now } },
+        { id: req.id, type: 'tray', tray: { trays: result.trays, stacks: result.stacks, length: req.options.length, width: req.options.width, parts: now } },
         [...result.trays.map((t) => t.mesh.positions.buffer as ArrayBuffer), ...now.map((p) => p.mesh.positions.buffer as ArrayBuffer)],
       );
     } else if (req.type === 'remove') {

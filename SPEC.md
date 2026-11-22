@@ -99,14 +99,29 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   side; tap to add or remove a cutout. Presets: Auto, None, Pinch pair.
 - The packer treats the scoops as part of the part's footprint.
 
-### 3.5 Tiered pockets
-- Part B (shallow) sits above part A's pocket: B's pocket is cut from the
-  top, and A's pocket continues below B's pocket floor.
-- Valid when `D_A + D_B + floor ≤ tray depth` and B rests stably. "Stable"
-  means B's contact footprint, minus the opening of A's pocket, leaves ledges
-  totalling ≥ 25 % of B's area spread across its centroid. B's finger cutout
-  also gives access to A.
-- The packer proposes tiers; you can pin or unpin them.
+### 3.5 Stacking (tiered pockets)
+- A stack is two or more parts sharing one footprint: the top part in a
+  normal pocket at the tray surface, each lower part in its own pocket
+  beneath the floor of the one above. You lift the top part out to reach
+  the next.
+- **When it happens (as built):**
+  1. The deepest part, lying as low as it can, sets the tray's pocket depth.
+     No other part is stood up in a way that would need more depth.
+  2. Everything is packed side by side. If it fits in one tray, nothing is
+     stacked.
+  3. Otherwise parts are stacked one pair at a time, taking the pair that
+     saves the most tray area first, but only where the combined pocket
+     depths fit within the depth from step 1. After each stack the parts are
+     packed again, and stacking stops as soon as they fit in one tray.
+  4. If they still do not fit, the stacks are undone and the parts overflow
+     into more trays.
+- The part with the larger footprint goes on top, so it rests on the ledge
+  around the lower pocket; where there is no ledge it rests on the part
+  below. Lower parts are centred under the top one, turned 90° if that hides
+  them better.
+- A lower part's finger holes run from the tray surface down to its floor.
+- Settings: "Stack parts if they don't all fit" (on by default), and each
+  part has "Stacking: allowed / never".
 
 ### 3.6 Tray
 - Footprint: case interior L × W − 2 × case clearance (default 1 mm), with

@@ -247,6 +247,69 @@ describe('tray', () => {
     expect(trays.reduce((n, t) => n + t.placements.length, 0)).toBe(3);
   });
 
+  it('stacking: only when needed, within the depth the deepest part sets, until everything fits', () => {
+    const A = trayPart(boxMesh(80, 60, 30, 'deep'), 1), B = trayPart(boxMesh(80, 60, 10, 'wide'), 2), C = trayPart(boxMesh(70, 50, 12, 'small'), 3);
+    // Plenty of room: side by side, nothing stacked.
+    const roomy = buildTrays(k, [A, B, C], { ...FAST, length: 100, width: 220 });
+    expect(roomy.trays).toHaveLength(1);
+    expect(roomy.stacks).toBe(0);
+    expect(roomy.trays[0].placements.every((p) => p.stackSize === 1)).toBe(true);
+
+    // Room for two footprints only: the two shallow parts share one, the tray is no deeper.
+    const tight = { ...FAST, length: 100, width: 140 };
+    const r = buildTrays(k, [A, B, C], tight);
+    expect(r.trays).toHaveLength(1);
+    expect(r.stacks).toBe(1);
+    const t = r.trays[0];
+    expect(t.depth).toBeCloseTo(30.2 + 2); // still set by the deepest part
+    const at = (id: number) => t.placements.find((p) => p.partId === id)!;
+    expect(at(1).stackSize).toBe(1);
+    expect([at(2).level, at(3).level]).toEqual([0, 1]); // bigger footprint on top
+    expect(at(2).z).toBeCloseTo(t.depth - 10); // top part flush with the surface
+    expect(at(3).z).toBeCloseTo(t.depth - 10.2 - 12); // lower part under the top pocket's floor
+    expect(at(3).x).toBeCloseTo(at(2).x); expect(at(3).y).toBeCloseTo(at(2).y);
+    const solid = toManifold(k, t.mesh)!;
+    expect(solid).not.toBeNull();
+    // Material removed = three pockets (the lower one sits entirely under the upper one).
+    const corners = (4 - Math.PI) * 0.25; // rounded pocket corners, r = 0.5
+    const pockets = (81 * 61 - corners) * 30.2 + (81 * 61 - corners) * 10.2 + (71 * 51 - corners) * 12.2;
+    const block = 100 * 140 * 32.2 - (4 - Math.PI) * 16 * 32.2;
+    expect(t.volume / (block - pockets)).toBeCloseTo(1, 3);
+    // Half-way down the lower pocket there are two openings: the deep part's and the small part's.
+    const open = 100 * 140 - (4 - Math.PI) * 16 - solid.slice(t.depth - 10.2 - 6).area();
+    expect(open / (81 * 61 + 71 * 51)).toBeCloseTo(1, 2);
+    solid.delete();
+
+    // Stacking switched off, or a part marked "never stack": overflow into a second tray instead.
+    expect(buildTrays(k, [A, B, C], { ...tight, stacking: false }).trays).toHaveLength(2);
+    const fixed = buildTrays(k, [A, B, { ...C, stackable: false }], tight);
+    expect(fixed.trays).toHaveLength(2);
+    expect(fixed.stacks).toBe(0);
+
+    // No room in depth: three equally deep parts cannot stack, so they overflow.
+    const same = [1, 2, 3].map((i) => trayPart(boxMesh(80, 60, 20, `p${i}`), i));
+    const flat = buildTrays(k, same, tight);
+    expect(flat.stacks).toBe(0);
+    expect(flat.trays.length).toBe(2);
+  });
+
+  it('the deepest part sets the depth: other parts are not stood on end to squeeze in', () => {
+    // A 20 mm deep block sets the depth. Two long plates would fit one tray if stood on edge (40 deep),
+    // but that would deepen the tray, so they stay flat and stack instead.
+    const plate = (id: number): TrayPart => {
+      const flat = posed(boxMesh(100, 40, 8)), edge = posed(boxMesh(100, 8, 40));
+      return { partId: id, name: `plate${id}`, fingers: [], poses: [
+        { poseIndex: 0, mesh: flat.mesh, silhouette: flat.silhouette, height: flat.height },
+        { poseIndex: 1, mesh: edge.mesh, silhouette: edge.silhouette, height: edge.height },
+      ] };
+    };
+    const r = buildTrays(k, [trayPart(boxMesh(100, 40, 20, 'block'), 1), plate(2), plate(3)], { ...FAST, length: 110, width: 100 });
+    expect(r.trays).toHaveLength(1);
+    expect(r.trays[0].depth).toBeCloseTo(22.2);
+    expect(r.trays[0].placements.every((p) => p.poseIndex === 0)).toBe(true);
+    expect(r.stacks).toBe(1);
+  });
+
   it('exports as a valid binary STL', () => {
     const t = buildTrays(k, [trayPart(boxMesh(60, 40, 25), 1, 'auto')], FAST).trays[0];
     const back = parseSTL(writeSTL(t.mesh));

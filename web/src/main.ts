@@ -262,7 +262,9 @@ function renderList() {
       const meta = document.createElement('div');
       meta.className = 'meta';
       const pose = !p.poseLocked ? 'auto pose' : p.poseIndex >= 0 ? `pose ${p.poseIndex + 1} (locked)` : 'custom pose (locked)';
-      meta.textContent = `${fmtDims(p.size, units)} · ${pose}`;
+      const placed = tray?.trays.flatMap((t) => t.placements).find((q) => q.partId === p.partId);
+      const where = placed && placed.stackSize > 1 ? (placed.level === 0 ? ' · top of a stack' : ' · under another part') : '';
+      meta.textContent = `${fmtDims(p.size, units)} · ${pose}${where}`;
       const actions = document.createElement('div');
       actions.className = 'actions';
       const del = document.createElement('button');
@@ -295,6 +297,16 @@ function renderList() {
       mainRow.className = 'pose-row main-row';
       mainRow.append(choose, finger);
       li.append(mainRow);
+      const stack = document.createElement('button');
+      stack.className = 'btn small-btn';
+      stack.textContent = p.stackable ? 'Stacking: allowed' : 'Stacking: never';
+      stack.setAttribute('aria-pressed', String(!p.stackable));
+      stack.setAttribute('aria-label', `${p.mesh.name}: ${p.stackable ? 'may be stacked with other parts; tap to forbid' : 'never stacked; tap to allow'}`);
+      stack.onclick = () => update(p, geo.stackable(p.partId, !p.stackable));
+      const stackRow = document.createElement('div');
+      stackRow.className = 'pose-row';
+      stackRow.append(stack);
+      li.append(stackRow);
       if (fingerOpen === p.partId) li.append(fingerPicker(p));
 
       if (picker?.partId === p.partId) {
@@ -358,8 +370,8 @@ const toMM = (v: number) => (units === 'mm' ? v : v * MM_PER_IN);
 const fromMM = (v: number, digits = units === 'mm' ? 2 : 3) => String(+(units === 'mm' ? v : v / MM_PER_IN).toFixed(digits));
 
 /** Case inside size and fit settings (mm). The tray is the case size minus the gap on every side. */
-interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; clearance: number; split: number; fingerExtra: number; fingerSwept: boolean }
-let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, clearance: DEFAULT_TRAY.pocket.clearance, split: DEFAULT_TRAY.pocket.split, fingerExtra: 0, fingerSwept: true };
+interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; clearance: number; split: number; fingerExtra: number; fingerSwept: boolean; stacking: boolean }
+let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, clearance: DEFAULT_TRAY.pocket.clearance, split: DEFAULT_TRAY.pocket.split, fingerExtra: 0, fingerSwept: true, stacking: true };
 try { traySettings = { ...traySettings, ...JSON.parse(localStorage.getItem('tray') || '{}') }; } catch { /* ignore */ }
 let tray: TrayInfo | null = null;
 let showPartsInTray = true;
@@ -374,6 +386,7 @@ function fillTrayInputs() {
   num('#tray-split').value = String(Math.round(traySettings.split * 100));
   num('#tray-finger-extra').value = fromMM(traySettings.fingerExtra);
   document.querySelectorAll<HTMLButtonElement>('[data-swept]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.swept === '1') === traySettings.fingerSwept)));
+  document.querySelectorAll<HTMLButtonElement>('[data-stack]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.stack === '1') === traySettings.stacking)));
   document.querySelectorAll('.u').forEach((e) => (e.textContent = units));
 }
 
@@ -392,7 +405,7 @@ function readTrayInputs(): TraySettings | string {
   if (!(split >= 0 && split <= 1)) return 'Form-fit must be between 0 and 100 %.';
   const fingerExtra = toMM(val('#tray-finger-extra') || 0);
   if (!(fingerExtra >= 0 && fingerExtra <= 30)) return 'Finger hole extra depth must be between 0 and 30 mm.';
-  return { length, width, height, gap, depth, clearance, split, fingerExtra, fingerSwept: traySettings.fingerSwept };
+  return { length, width, height, gap, depth, clearance, split, fingerExtra, fingerSwept: traySettings.fingerSwept, stacking: traySettings.stacking };
 }
 
 function renderExport() {
@@ -439,6 +452,21 @@ function showTray() {
   if (tray) viewer.setTrays(tray.trays, tray.width, parts, showPartsInTray);
 }
 
+/** Plain-words summary of which parts ended up stacked. */
+function stackNote(result: TrayInfo): string {
+  if (!result.stacks) return '';
+  const name = (id: number) => parts.find((p) => p.partId === id)?.mesh.name ?? 'part';
+  const lines: string[] = [];
+  for (const t of result.trays) {
+    const tops = t.placements.filter((p) => p.stackSize > 1 && p.level === 0);
+    for (const top of tops) {
+      const under = t.placements.filter((p) => p.stackSize > 1 && p.level > 0 && p.x === top.x && p.y === top.y).sort((a, b) => a.level - b.level);
+      lines.push(`${name(top.partId)} on top of ${under.map((u) => name(u.partId)).join(', then ')}`);
+    }
+  }
+  return ` Stacked to fit: ${lines.join('; ')}.`;
+}
+
 async function generateTray() {
   const s = readTrayInputs();
   if (typeof s === 'string') { $('#tray-status').textContent = s; return; }
@@ -447,7 +475,7 @@ async function generateTray() {
   scheduleSave();
   const options: TrayOptions = {
     ...DEFAULT_TRAY, length: s.length - 2 * s.gap, width: s.width - 2 * s.gap, depth: s.depth, maxDepth: s.height,
-    fingerExtraDepth: s.fingerExtra, fingerSwept: s.fingerSwept,
+    fingerExtraDepth: s.fingerExtra, fingerSwept: s.fingerSwept, stacking: s.stacking,
     pocket: { ...DEFAULT_TRAY.pocket, clearance: s.clearance, split: s.split },
   };
   const btn = $<HTMLButtonElement>('#tray-build');
@@ -466,6 +494,7 @@ async function generateTray() {
     $('#tray-status').textContent =
       `${n === 1 ? '1 tray' : `${n} trays`} of ${fmtDims([result.length, result.width, 0], units).replace(/ × [\d.]+ (mm|in)$/, ' $1')}, ${count} pocket${count === 1 ? '' : 's'}. ` +
       result.trays.map((t, i) => `Tray ${i + 1}: ${t.placements.length} part${t.placements.length === 1 ? '' : 's'}, ${fmtLen(t.depth, units)} ${units} deep.`).join(' ') +
+      stackNote(result) +
       ` About ${(volume / 1000).toFixed(0)} cm³ of material before infill.` +
       (s.height !== null && stack > s.height + 1e-6 ? ` Note: stacked, the trays are ${fmtLen(stack, units)} ${units} tall — more than the case height of ${fmtLen(s.height, units)} ${units}.` : n > 1 ? ` Stacked height ${fmtLen(stack, units)} ${units}.` : '');
     $('#tray-view-row').hidden = false;
@@ -478,6 +507,14 @@ async function generateTray() {
   }
 }
 $('#tray-build').addEventListener('click', generateTray);
+
+document.querySelectorAll<HTMLButtonElement>('[data-stack]').forEach((b) =>
+  b.addEventListener('click', () => {
+    traySettings.stacking = b.dataset.stack === '1';
+    document.querySelectorAll<HTMLButtonElement>('[data-stack]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+    if (tray) generateTray();
+  }),
+);
 
 document.querySelectorAll<HTMLButtonElement>('[data-swept]').forEach((b) =>
   b.addEventListener('click', () => {
