@@ -54,9 +54,13 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   resting face that is not square to those axes. The spin about the vertical
   axis is not part of the pose; the packer chooses it.
 - **Automatic turning:** unless a part's pose is locked, the layout may turn
-  it into any of its 90° orientations to make things fit — any that need no
-  more depth than the deepest part sets, and, when a case height is given
-  and the parts still do not fit one tray, any that fit within that height.
+  it into any of its 90° orientations to make things fit. It first uses only
+  orientations that need no more depth than the deepest part needs lying as
+  low as it can. If the parts then do not fit one tray, it steps the depth up
+  through the next deeper orientations (of any part, including the deepest
+  one), committing the part to that orientation at each step, and keeps the
+  first depth that needs the fewest trays. The steps stop at the case height
+  if one is given, otherwise at one and a half times the starting depth.
   Until a layout is run, an unlocked part shows its lowest orientation;
   afterwards it shows the one the layout chose.
 - **Lock pose:** each part has a "Lock pose" tick box. Ticked, the part

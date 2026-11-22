@@ -374,7 +374,7 @@ describe('tray', () => {
     expect(locked.trays.length).toBeGreaterThan(1);
     expect(locked.trays.flatMap((t) => t.placements).filter((p) => p.partId !== 1).every((p) => p.poseIndex === 0)).toBe(true);
 
-    // Without a deep part, standing up would deepen the tray: only done when a case height allows it.
+    // Without a deep part, standing up would deepen the tray a lot (8 -> 40 mm): only done when a case height allows it.
     const two = [plate(2), plate(3)];
     const shallow = { ...FAST, length: 110, width: 50 };
     expect(buildTrays(k, two, shallow).trays).toHaveLength(2); // stay flat (8.2 deep), one per tray
@@ -382,6 +382,25 @@ describe('tray', () => {
     expect(tall.trays).toHaveLength(1);
     expect(tall.trays[0].depth).toBeCloseTo(42.2);
     expect(buildTrays(k, two, { ...shallow, maxDepth: 30 }).trays).toHaveLength(2); // 42.2 would not fit a 30 mm case
+  });
+
+  it('lets the deepest part use a slightly taller orientation when that is what makes everything fit', () => {
+    // The big part lies lowest as 100×60×30, but turned over it is 100×50×33: 10 mm narrower, 3 mm taller.
+    // Only the narrower way leaves room for the second part beside it in one tray.
+    const low = posed(boxMesh(100, 60, 30)), narrow = posed(boxMesh(100, 50, 33));
+    const big: TrayPart = { partId: 1, name: 'big', fingers: [], stackable: false, poses: [
+      { poseIndex: 0, mesh: low.mesh, silhouette: low.silhouette, height: low.height },
+      { poseIndex: 1, mesh: narrow.mesh, silhouette: narrow.silhouette, height: narrow.height },
+    ] };
+    const other = { ...trayPart(boxMesh(100, 40, 20, 'other'), 2), stackable: false };
+    const r = buildTrays(k, [big, other], { ...FAST, length: 110, width: 106 });
+    expect(r.trays).toHaveLength(1);
+    expect(r.trays[0].placements.find((p) => p.partId === 1)!.poseIndex).toBe(1);
+    expect(r.trays[0].depth).toBeCloseTo(33.2 + 2);
+    // When the low pose fits anyway, it is kept and the tray stays shallower.
+    const roomy = buildTrays(k, [big, other], { ...FAST, length: 110, width: 130 });
+    expect(roomy.trays[0].placements.find((p) => p.partId === 1)!.poseIndex).toBe(0);
+    expect(roomy.trays[0].depth).toBeCloseTo(30.2 + 2);
   });
 
   it('exports as a valid binary STL', () => {
