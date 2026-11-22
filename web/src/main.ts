@@ -4,6 +4,7 @@ import { initSheet } from './ui/sheet';
 import { GeometryClient } from './worker/client';
 import type { ParsedPart, FileKind, TrayInfo } from './worker/protocol';
 import { DEFAULT_TRAY, fingerCentre, SIDES, type Side, type TrayOptions } from './geom/tray';
+import { DEFAULT_SHELL, shellExtraHeight, shellPitch, shellProblem, trayInsideShell, type Footprint, type ShellOptions } from './geom/shell';
 import { writeSTL } from './mesh/stl';
 import { cloudDelete, cloudList, cloudLoad, cloudName, cloudSave, deleteProject, listProjects, loadProject, saveProject, type Project } from './storage';
 import { LARGE_MESH_TRIANGLES } from './mesh/bounds';
@@ -394,10 +395,12 @@ const toMM = (v: number) => (units === 'mm' ? v : v * MM_PER_IN);
 const fromMM = (v: number, digits = units === 'mm' ? 2 : 3) => String(+(units === 'mm' ? v : v / MM_PER_IN).toFixed(digits));
 
 /** Case inside size and fit settings (mm). The tray is the case size minus the gap on every side. */
-interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; clearance: number; split: number; fingerExtra: number; fingerSwept: boolean; stacking: boolean }
-let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, clearance: DEFAULT_TRAY.pocket.clearance, split: DEFAULT_TRAY.pocket.split, fingerExtra: 0, fingerSwept: true, stacking: true };
+interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; clearance: number; split: number; fingerExtra: number; fingerSwept: boolean; stacking: boolean; shell: boolean; shellWall: number; shellRim: number; shellPlug: number; shellGap: number }
+let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, clearance: DEFAULT_TRAY.pocket.clearance, split: DEFAULT_TRAY.pocket.split, fingerExtra: 0, fingerSwept: true, stacking: true, shell: true, shellWall: DEFAULT_SHELL.wall, shellRim: DEFAULT_SHELL.rim, shellPlug: DEFAULT_SHELL.plug, shellGap: DEFAULT_SHELL.gap };
 try { traySettings = { ...traySettings, ...JSON.parse(localStorage.getItem('tray') || '{}') }; } catch { /* ignore */ }
 let tray: TrayInfo | null = null;
+/** Shell settings and outside footprint (tray + shell) used for the tray on screen; null = no shell. */
+let trayShell: { outer: Footprint; options: ShellOptions } | null = null;
 let showPartsInTray = true;
 
 function fillTrayInputs() {
@@ -411,6 +414,12 @@ function fillTrayInputs() {
   num('#tray-finger-extra').value = fromMM(traySettings.fingerExtra);
   document.querySelectorAll<HTMLButtonElement>('[data-swept]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.swept === '1') === traySettings.fingerSwept)));
   document.querySelectorAll<HTMLButtonElement>('[data-stack]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.stack === '1') === traySettings.stacking)));
+  num('#shell-wall').value = fromMM(traySettings.shellWall);
+  num('#shell-rim').value = fromMM(traySettings.shellRim);
+  num('#shell-plug').value = fromMM(traySettings.shellPlug);
+  num('#shell-gap').value = fromMM(traySettings.shellGap);
+  document.querySelectorAll<HTMLButtonElement>('[data-shell]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.shell === '1') === traySettings.shell)));
+  $('#shell-rows').hidden = !traySettings.shell;
   document.querySelectorAll('.u').forEach((e) => (e.textContent = units));
 }
 
@@ -429,8 +438,21 @@ function readTrayInputs(): TraySettings | string {
   if (!(split >= 0 && split <= 1)) return 'Form-fit must be between 0 and 100 %.';
   const fingerExtra = toMM(val('#tray-finger-extra') || 0);
   if (!(fingerExtra >= 0 && fingerExtra <= 30)) return 'Finger hole extra depth must be between 0 and 30 mm.';
-  return { length, width, height, gap, depth, clearance, split, fingerExtra, fingerSwept: traySettings.fingerSwept, stacking: traySettings.stacking };
+  const shell = traySettings.shell;
+  // With the shell off its boxes are hidden, so keep whatever was set before.
+  const sv = (id: string, old: number) => (shell ? toMM(val(id)) : old);
+  const shellWall = sv('#shell-wall', traySettings.shellWall), shellRim = sv('#shell-rim', traySettings.shellRim), shellPlug = sv('#shell-plug', traySettings.shellPlug), shellGap = sv('#shell-gap', traySettings.shellGap);
+  if (shell) {
+    const o = shellOptions({ shellWall, shellRim, shellPlug, shellGap });
+    if (![shellWall, shellRim, shellPlug, shellGap].every(Number.isFinite)) return 'Enter the shell wall, rim, bottom step and gap, or switch the shell off.';
+    const problem = shellProblem({ length: length - 2 * gap, width: width - 2 * gap, cornerRadius: DEFAULT_TRAY.cornerRadius }, o);
+    if (problem) return problem;
+    if (height !== null && height - shellExtraHeight(o) <= DEFAULT_TRAY.floor) return `The case height leaves no room for a tray inside the shell (the shell alone takes ${fmtLen(shellExtraHeight(o), units)} ${units}).`;
+  }
+  return { length, width, height, gap, depth, clearance, split, fingerExtra, fingerSwept: traySettings.fingerSwept, stacking: traySettings.stacking, shell, shellWall, shellRim, shellPlug, shellGap };
 }
+
+const shellOptions = (s: Pick<TraySettings, 'shellWall' | 'shellRim' | 'shellPlug' | 'shellGap'>): ShellOptions => ({ ...DEFAULT_SHELL, wall: s.shellWall, rim: s.shellRim, plug: s.shellPlug, gap: s.shellGap });
 
 function renderExport() {
   const list = $('#export-list');
@@ -439,27 +461,45 @@ function renderExport() {
     $('#export-status').textContent = 'Generate a tray first (Trays tab).';
     return;
   }
-  const info = tray;
+  const info = tray, outer = trayShell?.outer;
+  const one = info.trays.length === 1;
+  const button = (label: string, file: string, positions: () => Float32Array) => {
+    const b = document.createElement('button');
+    b.className = 'btn primary wide';
+    b.textContent = label;
+    b.onclick = () => {
+      const url = URL.createObjectURL(new Blob([writeSTL({ name: file.split('-')[0], positions: positions() })], { type: 'model/stl' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = `${file}.stl`;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    };
+    return b;
+  };
+  const size = (l: number, w: number, h: number) => `${Math.round(l)}x${Math.round(w)}x${Math.round(h)}`;
   list.replaceChildren(
-    ...info.trays.map((t, i) => {
-      const b = document.createElement('button');
-      b.className = 'btn primary wide';
-      b.textContent = info.trays.length === 1 ? 'Download STL' : `Download tray ${i + 1} STL`;
-      b.onclick = () => {
-        const name = `tray${info.trays.length === 1 ? '' : `-${i + 1}`}-${Math.round(info.length)}x${Math.round(info.width)}x${Math.round(t.depth)}.stl`;
-        const url = URL.createObjectURL(new Blob([writeSTL({ name: 'tray', positions: t.mesh.positions })], { type: 'model/stl' }));
-        const a = document.createElement('a');
-        a.href = url; a.download = name;
-        document.body.append(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      };
-      return b;
+    ...info.trays.flatMap((t, i) => {
+      const n = one ? '' : `-${i + 1}`;
+      const out = [button(one ? (info.shells ? 'Download tray STL' : 'Download STL') : `Download tray ${i + 1} STL`, `tray${n}-${size(info.length, info.width, t.depth)}`, () => t.mesh.positions)];
+      const shell = info.shells?.[i];
+      if (shell && outer)
+        out.push(button(one ? 'Download shell STL' : `Download shell ${i + 1} STL`, `shell${n}-${size(outer.length, outer.width, shell.height)}`, () => {
+          // The shell is held in the tray's coordinates (its floor and step are below zero); stand it on the bed.
+          const p = shell.mesh.positions.slice();
+          for (let j = 2; j < p.length; j += 3) p[j] += shell.below;
+          return p;
+        }));
+      return out;
     }),
   );
   $('#export-status').textContent = info.trays
-    .map((t, i) => `Tray ${i + 1}: ${fmtDims([info.length, info.width, t.depth], units)}, ${(t.mesh.positions.length / 9).toLocaleString()} triangles.`)
+    .map((t, i) => {
+      const shell = info.shells?.[i];
+      return `Tray ${i + 1}: ${fmtDims([info.length, info.width, t.depth], units)}, ${(t.mesh.positions.length / 9).toLocaleString()} triangles.` +
+        (shell && outer ? ` Shell ${i + 1}: ${fmtDims([outer.length, outer.width, shell.height], units)}.` : '');
+    })
     .join(' ');
 }
 
@@ -473,7 +513,8 @@ function clearTray() {
 }
 
 function showTray() {
-  if (tray) viewer.setTrays(tray.trays, tray.width, parts, showPartsInTray);
+  const info = tray;
+  if (info) viewer.setTrays(info.trays.map((t, i) => ({ ...t, shell: info.shells?.[i].mesh })), trayShell?.outer.width ?? info.width, parts, showPartsInTray);
 }
 
 /** Plain-words summary of which parts ended up stacked. */
@@ -493,8 +534,13 @@ async function generateTray() {
   traySettings = s;
   try { localStorage.setItem('tray', JSON.stringify(s)); } catch { /* private mode */ }
   scheduleSave();
+  // The case sets the outside size. With a shell, the tray is what is left inside it.
+  const outer: Footprint = { length: s.length - 2 * s.gap, width: s.width - 2 * s.gap, cornerRadius: DEFAULT_TRAY.cornerRadius };
+  const shell = s.shell ? { outer, options: shellOptions(s) } : null;
+  const inside = shell ? trayInsideShell(outer, shell.options) : outer;
   const options: TrayOptions = {
-    ...DEFAULT_TRAY, length: s.length - 2 * s.gap, width: s.width - 2 * s.gap, depth: s.depth, maxDepth: s.height,
+    ...DEFAULT_TRAY, ...inside, depth: s.depth,
+    maxDepth: s.height === null ? null : s.height - (shell ? shellExtraHeight(shell.options) : 0),
     fingerExtraDepth: s.fingerExtra, fingerSwept: s.fingerSwept, stacking: s.stacking,
     pocket: { ...DEFAULT_TRAY.pocket, clearance: s.clearance, split: s.split },
   };
@@ -502,7 +548,8 @@ async function generateTray() {
   btn.disabled = true;
   try {
     showProgress(0.02, 'Generating tray');
-    const result = await geo.tray(options, showProgress);
+    const result = await geo.tray(options, shell, showProgress);
+    trayShell = shell;
     parts = result.parts; // Auto parts now lie the way the layout chose
     picker = null;
     tray = result;
@@ -510,12 +557,16 @@ async function generateTray() {
     showTray();
     const n = result.trays.length, count = result.trays.reduce((c, t) => c + t.placements.length, 0);
     const volume = result.trays.reduce((v, t) => v + t.volume, 0);
-    const stack = result.trays.reduce((v, t) => v + t.depth, 0);
+    const so = shell?.options;
+    // In a stack each shell's bottom step sits inside the rim below, so only the lowest step adds height.
+    const stack = so ? result.trays.reduce((v, t) => v + shellPitch(t.depth, so), so.plug) : result.trays.reduce((v, t) => v + t.depth, 0);
+    const shellVolume = result.shells?.reduce((v, x) => v + x.volume, 0) ?? 0;
+    const dims = (l: number, w: number) => fmtDims([l, w, 0], units).replace(/ × [\d.]+ (mm|in)$/, ' $1');
     $('#tray-status').textContent =
-      `${n === 1 ? '1 tray' : `${n} trays`} of ${fmtDims([result.length, result.width, 0], units).replace(/ × [\d.]+ (mm|in)$/, ' $1')}, ${count} pocket${count === 1 ? '' : 's'}. ` +
-      result.trays.map((t, i) => `Tray ${i + 1}: ${t.placements.length} part${t.placements.length === 1 ? '' : 's'}, ${fmtLen(t.depth, units)} ${units} deep.`).join(' ') +
+      `${n === 1 ? '1 tray' : `${n} trays`} of ${dims(outer.length, outer.width)}${so ? ` with the shell (tray inside ${dims(result.length, result.width)})` : ''}, ${count} pocket${count === 1 ? '' : 's'}. ` +
+      result.trays.map((t, i) => `Tray ${i + 1}: ${t.placements.length} part${t.placements.length === 1 ? '' : 's'}, ${fmtLen(t.depth, units)} ${units} deep${result.shells ? `, ${fmtLen(result.shells[i].height, units)} ${units} tall in its shell` : ''}.`).join(' ') +
       stackNote(result) +
-      ` About ${(volume / 1000).toFixed(0)} cm³ of material before infill.` +
+      ` About ${(volume / 1000).toFixed(0)} cm³ of material before infill` + (so ? `, plus ${(shellVolume / 1000).toFixed(0)} cm³ for the shell.` : '.') +
       (s.height !== null && stack > s.height + 1e-6 ? ` Note: stacked, the trays are ${fmtLen(stack, units)} ${units} tall — more than the case height of ${fmtLen(s.height, units)} ${units}.` : n > 1 ? ` Stacked height ${fmtLen(stack, units)} ${units}.` : '');
     $('#tray-view-row').hidden = false;
     renderExport();
@@ -532,6 +583,15 @@ document.querySelectorAll<HTMLButtonElement>('[data-stack]').forEach((b) =>
   b.addEventListener('click', () => {
     traySettings.stacking = b.dataset.stack === '1';
     document.querySelectorAll<HTMLButtonElement>('[data-stack]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+    if (tray) generateTray();
+  }),
+);
+
+document.querySelectorAll<HTMLButtonElement>('[data-shell]').forEach((b) =>
+  b.addEventListener('click', () => {
+    traySettings.shell = b.dataset.shell === '1';
+    document.querySelectorAll<HTMLButtonElement>('[data-shell]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+    $('#shell-rows').hidden = !traySettings.shell;
     if (tray) generateTray();
   }),
 );

@@ -148,7 +148,7 @@ export class Viewer {
    * (or pass null to go back to the loose-parts view).
    */
   setTrays(
-    trays: { mesh: TriMesh; placements: { partId: number; angle: number; x: number; y: number; z: number }[] }[] | null,
+    trays: { mesh: TriMesh; shell?: TriMesh; placements: { partId: number; angle: number; x: number; y: number; z: number }[] }[] | null,
     width = 0,
     parts: (ViewPart & { partId: number })[] = [],
     showParts = true,
@@ -162,6 +162,12 @@ export class Viewer {
       geo.setAttribute('position', new THREE.BufferAttribute(tray.mesh.positions, 3));
       geo.computeVertexNormals();
       group.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x8a94a3, roughness: 0.8, flatShading: true })));
+      if (tray.shell) {
+        const sg = new THREE.BufferGeometry();
+        sg.setAttribute('position', new THREE.BufferAttribute(tray.shell.positions, 3));
+        sg.computeVertexNormals();
+        group.add(new THREE.Mesh(sg, new THREE.MeshStandardMaterial({ color: 0x3d4654, roughness: 0.6, flatShading: true })));
+      }
       if (showParts)
         for (const pl of tray.placements) {
           const i = parts.findIndex((p) => p.partId === pl.partId);

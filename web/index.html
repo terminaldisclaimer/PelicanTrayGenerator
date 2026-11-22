@@ -77,6 +77,19 @@
               <button role="radio" data-stack="0" aria-checked="false">Off</button>
             </div>
           </div>
+          <div class="row">
+            <span>Rigid shell around the tray (PLA / PETG)</span>
+            <div class="seg" role="radiogroup" aria-label="Rigid shell around the tray">
+              <button role="radio" data-shell="1" aria-checked="true">On</button>
+              <button role="radio" data-shell="0" aria-checked="false">Off</button>
+            </div>
+          </div>
+          <div id="shell-rows">
+            <label class="row"><span>Shell wall thickness (<span class="u">mm</span>)</span><input class="num" id="shell-wall" inputmode="decimal" autocomplete="off" /></label>
+            <label class="row"><span>Shell rim above the tray top (<span class="u">mm</span>)</span><input class="num" id="shell-rim" inputmode="decimal" autocomplete="off" /></label>
+            <label class="row"><span>Shell bottom step, drops into the rim below (<span class="u">mm</span>)</span><input class="num" id="shell-plug" inputmode="decimal" autocomplete="off" /></label>
+            <label class="row"><span>Gap between tray and shell, per side (<span class="u">mm</span>)</span><input class="num" id="shell-gap" inputmode="decimal" autocomplete="off" /></label>
+          </div>
           <button id="tray-build" class="btn primary wide">Generate tray</button>
           <p id="tray-status" class="muted small">Enter the inside size of your case, then generate.</p>
           <div class="row" id="tray-view-row" hidden>
@@ -90,7 +103,7 @@
         <div class="panel" data-panel="export" hidden>
           <div id="export-list"></div>
           <p id="export-status" class="muted small">Generate a tray first (Trays tab).</p>
-          <p class="muted small">Print with the pockets facing up. 3MF export arrives in a later version.</p>
+          <p class="muted small">Print with the pockets facing up. The shell prints open side up and needs supports under the ledge around its bottom step. 3MF export arrives in a later version.</p>
         </div>
         <div class="panel" data-panel="settings" hidden>
           <h2 class="section">Project</h2>
