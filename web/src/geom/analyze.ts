@@ -145,9 +145,10 @@ function centroid(verts: Float32Array, tris: Uint32Array): Vec3 {
  * Candidate resting poses, best first. Each flat face of the convex hull is a
  * way the part could sit on a table; a face is "stable" when the centre of
  * mass is above it. For a tray we prefer the *lowest* stable pose (shallowest
- * pocket, thinnest tray); ties go to the larger support face. The list then
- * always includes that pose turned 90° in every direction. Each rotation also
- * spins the part so its bounding rectangle is axis-aligned, long side on X.
+ * pocket, thinnest tray). The list always holds the six axis-aligned
+ * orientations (each of the model's ±X, ±Y, ±Z faces down); other flat resting
+ * faces follow. Each rotation also spins the part so its bounding rectangle is
+ * axis-aligned, long side on X (the packer chooses the final spin).
  */
 export function poseCandidates(k: ManifoldToplevel, original: TriMesh, max = 8): PoseCandidate[] {
   const welded = weld(original.positions);
@@ -208,31 +209,37 @@ export function poseCandidates(k: ManifoldToplevel, original: TriMesh, max = 8):
     return b.supportArea - a.supportArea;
   });
 
-  // The list always starts with the best pose, then that pose turned 90° every
-  // way (upside down, on each side, on each end), so "standing up" and "on its
-  // side" are always on offer. Other distinct resting faces fill what is left.
+  // The list is: the part resting on each of its six sides — its own X, Y and
+  // Z axes pointing up or down, i.e. every 90° turn in every direction — plus
+  // any other flat resting face that is not square to those axes. Best first.
   const finish = (r: Mat3) => {
     const flat: Pt[] = hullVerts.map((p) => { const q = apply(r, p); return [q[0], q[1]] as Pt; });
     return mul(rotZ(minAreaRectAngle(flat)), r);
   };
-  const best = cands[0];
-  const R = finish(best.r); // rows = the posed part's X, Y, Z axes in model coordinates
-  const axes: Vec3[] = [
-    [R[6], R[7], R[8]], // upside down
-    [R[3], R[4], R[5]], [-R[3], -R[4], -R[5]], // on its long sides
-    [R[0], R[1], R[2]], [-R[0], -R[1], -R[2]], // on its ends
-  ];
-  const picked: typeof cands = [best];
-  for (const n of axes) {
-    const face = cands.find((c) => dot(c.n, n) > 0.985);
-    if (face) { if (!picked.includes(face)) picked.push(face); continue; }
+  const order = (a: (typeof cands)[0], b: (typeof cands)[0]) => {
+    if (a.stable !== b.stable) return a.stable ? -1 : 1;
+    const tol = 0.02 * Math.max(a.height, b.height);
+    if (Math.abs(a.height - b.height) > tol) return a.height - b.height;
+    return b.supportArea - a.supportArea;
+  };
+  const axes: Vec3[] = [[0, 0, -1], [0, 0, 1], [0, -1, 0], [0, 1, 0], [-1, 0, 0], [1, 0, 0]];
+  const six = axes.map((n) => {
+    const face = cands.find((c) => dot(c.n, n) > 0.9995);
+    if (face) return face;
     let lo = Infinity, hi = -Infinity;
     for (const p of hullVerts) { const d = dot(p, n); if (d < lo) lo = d; if (d > hi) hi = d; }
-    picked.push({ n, r: rotationToDown(n), height: hi - lo, supportArea: 0, stable: false });
-  }
-  for (const c of cands) {
+    return { n, r: rotationToDown(n), height: hi - lo, supportArea: 0, stable: false };
+  });
+  // A side with no flat face (a round bar on its side) still holds in a pocket:
+  // rank the six by height alone, lowest first.
+  six.sort((a, b) => a.height - b.height || b.supportArea - a.supportArea);
+  const extras = cands.filter((c) => c.stable && six.every((p) => dot(p.n, c.n) < 0.94)).sort(order);
+  const picked: typeof cands = [...six];
+  for (const c of extras) {
     if (picked.length >= max) break;
-    if (picked.every((p) => dot(p.n, c.n) < 0.5)) picked.push(c);
+    if (picked.slice(6).every((p) => dot(p.n, c.n) < 0.5)) picked.push(c);
   }
+  // If an off-axis face is clearly the lowest stable rest, offer it first.
+  if (picked.length > 6 && picked[6].height < picked[0].height * 0.9) picked.unshift(picked.splice(6, 1)[0]);
   return picked.map((c) => ({ rotation: finish(c.r), height: c.height, supportArea: c.supportArea, stable: c.stable }));
 }

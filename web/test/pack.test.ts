@@ -30,7 +30,7 @@ describe('rasterize', () => {
 describe('pack', () => {
   it('places everything inside the tray without overlaps', () => {
     const sizes: [number, number][] = [[60, 20], [40, 40], [30, 10], [25, 25], [50, 15], [20, 20], [35, 12]];
-    const r = pack(sizes.map(([w, h], i) => item(i, w, h)), { width: 100, height: 120 });
+    const r = pack(sizes.map(([w, h], i) => item(i, w, h)), { width: 100, height: 120, angleStep: 90 });
     expect(r.unplaced).toEqual([]);
     expect(r.trays).toHaveLength(1);
     const boxes = r.placements.map((p) => ({ id: p.id, ...placedBox(p, ...sizes[p.id]) }));
@@ -53,6 +53,16 @@ describe('pack', () => {
     const r = pack([{ id: 0, options: [{ key: 0, depth: 5, footprint: L }] }, item(1, 30, 30)], { width: 40, height: 40 });
     expect(r.unplaced).toEqual([]);
     expect(r.trays).toHaveLength(1);
+  });
+
+  it('turns a part to any angle about Z when square-on does not fit', () => {
+    // A 100×10 bar cannot lie square in an 80×80 tray, but fits on the diagonal.
+    expect(pack([item(0, 100, 10)], { width: 80, height: 80, angleStep: 90 }).unplaced).toEqual([0]);
+    const r = pack([item(0, 100, 10)], { width: 80, height: 80 });
+    expect(r.unplaced).toEqual([]);
+    expect(r.placements[0].angle % 90).not.toBe(0);
+    // ...and stays square when that works.
+    expect(pack([item(0, 60, 10)], { width: 80, height: 80 }).placements[0].angle % 90).toBe(0);
   });
 
   it('overflows into more trays, and reports parts that can never fit', () => {

@@ -94,6 +94,28 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       if (req.factor !== 1) s.original = scaleMesh(s.original, req.factor);
       s.inchesChecked = true;
       reply(req.id, [await describe(req.partId)]);
+    } else if (req.type === 'export') {
+      // Copies (not transfers): the worker keeps its meshes.
+      const out = [...parts.values()].map((s) => ({
+        name: s.original.name, positions: s.original.positions, poseIndex: s.poseIndex, locked: s.locked, rotation: [...s.rotation], fingers: s.fingers,
+      }));
+      post({ id: req.id, type: 'saved', parts: out });
+    } else if (req.type === 'restore') {
+      parts.clear();
+      const out: ParsedPart[] = [];
+      for (let i = 0; i < req.parts.length; i++) {
+        const sp = req.parts[i];
+        post({ id: req.id, type: 'progress', fraction: i / req.parts.length, label: `Opening ${sp.name}` });
+        const id = await add({ name: sp.name, positions: sp.positions });
+        const s = parts.get(id)!;
+        s.inchesChecked = true;
+        s.fingers = sp.fingers;
+        s.locked = sp.locked;
+        if (sp.poseIndex >= 0 && sp.poseIndex < s.candidates.length) { s.poseIndex = sp.poseIndex; s.rotation = s.candidates[sp.poseIndex].rotation; }
+        else if (sp.rotation.length === 9) { s.poseIndex = -1; s.rotation = sp.rotation as Mat3; }
+        out.push(await describe(id));
+      }
+      reply(req.id, out);
     } else if (req.type === 'finger') {
       const s = parts.get(req.partId);
       if (!s) throw new Error('Unknown part');

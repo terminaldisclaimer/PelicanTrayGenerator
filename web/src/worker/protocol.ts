@@ -16,6 +16,10 @@ export type WorkerRequest =
   | { id: number; type: 'remove'; partId: number }
   /** Choose which sides of the pocket get a finger cutout, or 'auto'. */
   | { id: number; type: 'finger'; partId: number; fingers: Side[] | 'auto' }
+  /** Everything needed to rebuild the current parts later (for saving). */
+  | { id: number; type: 'export' }
+  /** Replace all parts with previously saved ones. */
+  | { id: number; type: 'restore'; parts: SavedPart[] }
   /** Arrange every loaded part into trays and cut the pockets. */
   | { id: number; type: 'tray'; options: TrayOptions };
 
@@ -45,9 +49,22 @@ export interface ParsedPart {
 /** Generated trays, plus every part as it now lies (Auto parts may have been re-posed). */
 export interface TrayInfo { trays: Tray[]; length: number; width: number; parts: ParsedPart[] }
 
+/** A part as stored in a saved project: its mesh in mm plus the user's choices. */
+export interface SavedPart {
+  name: string;
+  positions: Float32Array;
+  /** Index into the automatic pose list, and whether the user chose it. */
+  poseIndex: number;
+  locked: boolean;
+  /** Rotation matrix (row-major 3×3), used when the pose is a custom one. */
+  rotation: number[];
+  fingers: Side[] | 'auto';
+}
+
 export type WorkerResponse =
   | { id: number; type: 'progress'; fraction: number; label: string }
   | { id: number; type: 'result'; parts: ParsedPart[] }
   | { id: number; type: 'tray'; tray: TrayInfo }
+  | { id: number; type: 'saved'; parts: SavedPart[] }
   /** `expected` = a problem to explain to the user (e.g. parts do not fit), not a bug. */
   | { id: number; type: 'error'; message: string; expected?: boolean };

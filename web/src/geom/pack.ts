@@ -1,7 +1,7 @@
 /**
  * 2D packing of irregular footprints into equal-sized trays (pure TypeScript,
- * no kernel). Footprints are rasterised on a 1 mm grid at 0/90/180/270° and
- * placed first-fit, lowest row first. Several orderings are tried and the
+ * no kernel). Footprints are rasterised on a 1 mm grid at a set of angles about
+ * the vertical axis (every 15° by default) and placed first-fit, lowest row first. Several orderings are tried and the
  * best result kept: fewest trays, then least total stacked height (pocket
  * depth plus floor, summed over trays), then most compact.
  */
@@ -30,19 +30,21 @@ export interface PackSettings {
   attempts?: number;
   seed?: number;
   timeBudgetMs?: number;
+  /** Rotation step about Z in degrees (default 15; 90 = axis-aligned only). */
+  angleStep?: number;
   /** Height every tray adds on top of its deepest pocket (the floor), mm. */
   trayOverhead?: number;
 }
 
-const ANGLES = [0, 90, 180, 270];
 
 interface Shape { runs: Int32Array; w: number; h: number; minX: number; minY: number; cells: number }
-interface Opt { key: number; depth: number; shapes: Shape[] }
+interface Opt { key: number; depth: number; shapes: Shape[]; angles: number[] }
 interface Prepared { id: number; opts: Opt[]; area: number; maxDim: number; minDepth: number }
 
 function rotate(loops: Pt[][], deg: number): Pt[][] {
   if (deg === 0) return loops;
-  const c = Math.round(Math.cos((deg * Math.PI) / 180)), s = Math.round(Math.sin((deg * Math.PI) / 180));
+  let c = Math.cos((deg * Math.PI) / 180), s = Math.sin((deg * Math.PI) / 180);
+  if (deg % 90 === 0) { c = Math.round(c); s = Math.round(s); } // exact quarter turns
   return loops.map((l) => l.map(([x, y]) => [x * c - y * s, x * s + y * c] as Pt));
 }
 
@@ -144,21 +146,26 @@ function attempt(order: Prepared[], W: number, H: number, cell: number, depthWei
     let done = false;
     for (let b = 0; b <= bins.length && !done; b++) {
       const bin = b < bins.length ? bins[b] : new Bin(W, H);
-      let best: { cost: number; opt: Opt; a: number; px: number; py: number } | null = null;
-      for (const opt of item.opts)
-        for (let a = 0; a < opt.shapes.length; a++) {
-          const s = opt.shapes[a];
-          const pos = bin.find(s);
-          if (!pos) continue;
-          // Low and left is good; making the tray deeper is expensive.
-          const cost = pos[1] + s.h + pos[0] * 1e-3 + depthWeight * Math.max(0, opt.depth - bin.depth);
-          if (!best || cost < best.cost) best = { cost, opt, a, px: pos[0], py: pos[1] };
-        }
+      let best = null as { cost: number; opt: Opt; a: number; px: number; py: number } | null;
+      // Quarter turns first; other angles only if the part will not go in square
+      // (so skewing is used to save a tray, and the common case stays fast).
+      for (const [from, to] of [[0, 4], [4, Infinity]]) {
+        for (const opt of item.opts)
+          for (let a = from; a < Math.min(to, opt.shapes.length); a++) {
+            const s = opt.shapes[a];
+            const pos = bin.find(s);
+            if (!pos) continue;
+            // Low and left is good; making the tray deeper is expensive.
+            const cost = pos[1] + s.h + pos[0] * 1e-3 + depthWeight * Math.max(0, opt.depth - bin.depth);
+            if (!best || cost < best.cost) best = { cost, opt, a, px: pos[0], py: pos[1] };
+          }
+        if (best) break;
+      }
       if (!best) continue;
       if (b === bins.length) bins.push(bin);
       const s = best.opt.shapes[best.a];
       bin.place(s, best.px, best.py, best.opt.depth);
-      placements.push({ id: item.id, tray: b, key: best.opt.key, angle: ANGLES[best.a], tx: best.px * cell - s.minX, ty: best.py * cell - s.minY, depth: best.opt.depth });
+      placements.push({ id: item.id, tray: b, key: best.opt.key, angle: best.opt.angles[best.a], tx: best.px * cell - s.minX, ty: best.py * cell - s.minY, depth: best.opt.depth });
       done = true;
     }
     if (!done) unplaced.push(item.id);
@@ -181,8 +188,12 @@ const better = (a: Solution, b: Solution) => {
 export function pack(items: PackItem[], settings: PackSettings): PackResult {
   const cell = settings.cell ?? 1;
   const W = Math.floor(settings.width / cell + 1e-9), H = Math.floor(settings.height / cell + 1e-9);
+  const step = Math.min(90, Math.max(1, settings.angleStep ?? 15));
+  // Quarter turns first so they are preferred on equal cost.
+  const angles: number[] = [0, 90, 180, 270];
+  for (let a = step; a < 360; a += step) if (a % 90 !== 0) angles.push(a);
   const prepared: Prepared[] = items.map((it) => {
-    const opts = it.options.map((o) => ({ key: o.key, depth: o.depth, shapes: ANGLES.map((a) => rasterize(rotate(o.footprint, a), cell)) }));
+    const opts = it.options.map((o) => ({ key: o.key, depth: o.depth, angles, shapes: angles.map((a) => rasterize(rotate(o.footprint, a), cell)) }));
     const first = opts[0].shapes[0];
     return { id: it.id, opts, area: first.cells, maxDim: Math.max(first.w, first.h), minDepth: Math.min(...opts.map((o) => o.depth)) };
   });
@@ -199,7 +210,7 @@ export function pack(items: PackItem[], settings: PackSettings): PackResult {
   const start = Date.now();
   let best: Solution | null = null;
   for (let i = 0; i < attempts; i++) {
-    if (i >= orders.length * 3 && settings.timeBudgetMs && Date.now() - start > settings.timeBudgetMs) break;
+    if (i >= 3 && settings.timeBudgetMs && Date.now() - start > settings.timeBudgetMs) break;
     let order: Prepared[];
     if (i < orders.length * 3) order = orders[Math.floor(i / 3)];
     else {

@@ -1,5 +1,5 @@
 import type { Side, TrayOptions } from '../geom/tray';
-import type { FileKind, ParsedPart, PoseAction, TrayInfo, WorkerRequest, WorkerResponse } from './protocol';
+import type { FileKind, ParsedPart, PoseAction, SavedPart, TrayInfo, WorkerRequest, WorkerResponse } from './protocol';
 
 type Progress = (fraction: number, label: string) => void;
 type Body = WorkerRequest extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never;
@@ -20,6 +20,7 @@ export class GeometryClient {
         this.pending.delete(msg.id);
         if (msg.type === 'result') p.resolve(msg.parts);
         else if (msg.type === 'tray') p.resolve(msg.tray);
+        else if (msg.type === 'saved') p.resolve(msg.parts);
         else p.reject(new Error(msg.message));
       }
     };
@@ -54,6 +55,12 @@ export class GeometryClient {
   }
   finger(partId: number, fingers: Side[] | 'auto') {
     return this.call({ type: 'finger', partId, fingers }).then((r) => r[0]);
+  }
+  exportParts() {
+    return this.call<SavedPart[]>({ type: 'export' });
+  }
+  restore(parts: SavedPart[], progress?: Progress) {
+    return this.call({ type: 'restore', parts }, [], progress);
   }
   tray(options: TrayOptions, progress?: Progress) {
     return this.call<TrayInfo>({ type: 'tray', options }, [], progress);

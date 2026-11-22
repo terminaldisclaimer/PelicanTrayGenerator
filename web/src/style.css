@@ -91,3 +91,6 @@ label.row { cursor: text; }
 .main-row { overflow: visible; }
 .main-row .btn { flex: 1 1 0; padding: 0 8px; }
 .done-btn { margin-left: auto; background: var(--panel); border: 1px solid #56606b; }
+.section { font-size: 15px; margin: 14px 0 4px; color: var(--muted); font-weight: 600; }
+.section:first-child { margin-top: 0; }
+#project-list { margin: 8px 0; }

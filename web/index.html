@@ -40,11 +40,11 @@
       </nav>
       <div class="sheet-body">
         <div class="panel" data-panel="parts">
-          <p id="empty" class="muted">Add STL or 3MF files from Files, Drive, or drag them here. Files stay on this device.</p>
+          <p id="empty" class="muted">Add STL or 3MF files from Files, Drive, or drag them here. They are also kept in your Library.</p>
           <ul id="parts" class="parts"></ul>
           <section id="library" hidden>
             <div class="row"><h2>Library</h2><button id="library-refresh" class="btn">Refresh</button></div>
-            <p id="library-empty" class="muted small">No uploaded parts yet. Files sent by the Fusion 360 script appear here.</p>
+            <p id="library-empty" class="muted small">No parts yet. Parts you add, and files sent by the Fusion 360 add-in, appear here.</p>
             <ul id="library-list" class="parts"></ul>
           </section>
         </div>
@@ -80,6 +80,15 @@
           <p class="muted small">Print with the pockets facing up. 3MF export arrives in a later version.</p>
         </div>
         <div class="panel" data-panel="settings" hidden>
+          <h2 class="section">Project</h2>
+          <p class="muted small" id="project-status">Not saved yet.</p>
+          <div class="pose-row main-row">
+            <button class="btn" id="project-save-as">Save as…</button>
+            <button class="btn" id="project-new">New project</button>
+          </div>
+          <ul id="project-list" class="parts"></ul>
+          <p class="muted small">Projects are saved automatically on this device as you work. They are not uploaded.</p>
+          <h2 class="section">Display</h2>
           <div class="row">
             <span>Units</span>
             <div class="seg" role="radiogroup" aria-label="Units">

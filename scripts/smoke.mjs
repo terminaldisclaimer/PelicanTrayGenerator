@@ -45,19 +45,17 @@ try {
   await page.setInputFiles('#file-input', 'test-results/box.stl');
   await page.waitForSelector('.part .name');
   const meta = await page.textContent('.part .meta');
-  // Manual re-pose: tipping the 60×40×25 box forwards makes it 60×25×40.
   await page.tap('#sheet-handle');
   await page.waitForTimeout(400);
-  await page.tap('.pose-row button:has-text("Tip ↕")');
-  await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('custom'));
-  const tipped = await page.textContent('.part .meta');
   // Visual pose picker: thumbnails for every automatic pose, pick one, then hand back to Auto.
   await page.tap('.pose-row button:has-text("Choose pose")');
   await page.waitForSelector('.pose-option img');
   const options = await page.$$eval('.pose-option img', (els) => els.filter((e) => e.naturalWidth > 0).length);
   await page.screenshot({ path: 'test-results/mobile-picker.png' });
-  await page.tap('.pose-option:nth-child(3)');
-  await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('pose 2 (locked)'));
+  // Third picture = the box standing on its 60×25 side: 60 × 25 footprint, 40 tall.
+  await page.tap('.pose-option:nth-child(4)');
+  await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('(locked)'));
+  const tipped = await page.textContent('.part .meta');
   await page.tap('.pose-row button:has-text("Choose pose")');
   await page.tap('.pose-option:first-child');
   await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('auto pose'));
@@ -86,7 +84,7 @@ try {
   page.once('dialog', (d) => d.dismiss());
   await page.tap('.part .icon-btn');
   await page.waitForTimeout(200);
-  const kept = await page.$$eval('.part', (e) => e.length);
+  const kept = await page.$$eval('#parts .part', (e) => e.length);
   const fingersText = await page.textContent('.pose-row button:has-text("Finger cutouts")');
   // Generate a tray and download it as STL.
   await page.tap('.tab[data-tab="trays"]');
@@ -102,8 +100,12 @@ try {
   const stl = readFileSync('test-results/smoke-tray.stl');
   const stlOk = stl.length > 84 && stl.length === 84 + stl.readUInt32LE(80) * 50;
   await page.tap('.tab[data-tab="parts"]');
-  await page.tap('#sheet-handle'); await page.waitForTimeout(300);
-  await page.tap('#sheet-handle'); await page.waitForTimeout(400); // back to peek
+  // Saved automatically: after a reload the part, its cutouts and the case size are back.
+  await page.waitForTimeout(1200);
+  await page.reload();
+  await page.waitForSelector('.part .name');
+  const restored = { name: await page.textContent('.part .name'), fingers: await page.textContent('.pose-row button:nth-child(2)'), length: await page.inputValue('#tray-length') };
+
   // Tap targets ≥ 44px for visible buttons
   const small = await page.$$eval('button:not(.sheet-handle), label.btn', (els) =>
     els.filter((e) => e.offsetParent).map((e) => [e.textContent.trim(), e.getBoundingClientRect().height]).filter(([, h]) => h < 44));
@@ -112,8 +114,8 @@ try {
   await page.waitForTimeout(400);
   await page.screenshot({ path: 'test-results/mobile-half.png' });
   const sw = await page.evaluate(async () => !!(await navigator.serviceWorker?.getRegistration()));
-  console.log({ width, overflow, meta, tipped, options, fingersAuto, fingersText, trayStatus, stl: download.suggestedFilename(), stlOk, small, serviceWorker: sw, errors });
-  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · auto pose') || !tipped?.includes('60.0 × 25.0 × 40.0') || !picked || fingersAuto !== 2 || kept !== 1 || !noneHint.startsWith('No finger cutouts') || noneDrawn !== 0 || holesDrawn !== 2 || !mainVisible || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
+  console.log({ width, overflow, meta, tipped, options, restored, fingersAuto, fingersText, trayStatus, stl: download.suggestedFilename(), stlOk, small, serviceWorker: sw, errors });
+  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · auto pose') || !tipped?.includes('60.0 × 25.0 × 40.0 mm · pose 3 (locked)') || !picked || restored.name !== 'box' || !restored.fingers.includes('Finger cutouts: 2') || restored.fingers.includes('auto') || restored.length !== '120' || fingersAuto !== 2 || kept !== 1 || !noneHint.startsWith('No finger cutouts') || noneDrawn !== 0 || holesDrawn !== 2 || !mainVisible || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
 } finally {
   await browser.close();
   server.kill();

@@ -2,9 +2,10 @@
 
 A client-side, installable PWA. Upload STL or 3MF models of parts, and it
 generates 3D-printable trays with form-fit pockets for a Bambu Lab H3C.
-Files you add from your device never leave the browser. The optional
-**Library** holds parts uploaded to your own Cloudflare account by the
-Fusion 360 script in [`fusion/`](fusion/README.md), behind the same login. The design is in [`SPEC.md`](SPEC.md).
+All geometry is computed in the browser. Parts you add are also kept in
+the **Library**, stored in your own Cloudflare account behind the same
+login, together with parts sent by the Fusion 360 add-in in
+[`fusion/`](fusion/README.md). Projects are saved on the device. The design is in [`SPEC.md`](SPEC.md).
 
 **Status:** M3 mostly done. Upload STL/3MF (file picker, drag-and-drop, or
 the Library) and pick poses from pictures, or leave parts on Auto. Enter the

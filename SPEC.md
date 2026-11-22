@@ -49,23 +49,16 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   like inches — scale ×25.4?" (you confirm).
 - Large-mesh warning above 500k triangles (offer decimation) and a hard cap
   of 3M.
-- Auto pose: each flat face of the part's convex hull is a candidate resting
-  face. A candidate is stable when the centre of mass is above the face.
-  Among stable candidates the **lowest** pose wins (shallowest pocket,
-  thinnest tray); ties go to the larger support face. The pose list always
-  contains that best pose turned 90° every way (upside down, on each long
-  side, on each end), plus any other distinct resting faces, up to 8. Each
-  pose is also spun so the part's bounding rectangle is axis-aligned, long
-  side along X. The part is then translated so it rests at z = 0.
-- **Choosing a pose:** each part has a picker showing a picture of every
-  candidate pose with its footprint and depth. Picking one **locks** it;
-  Flip, Tip 90° (two axes) and Spin 90° fine-tune and also lock. "Auto"
-  hands the choice back to the app.
-- **Auto orientation for tray use:** parts left on Auto are oriented by the
-  layout step (§3.7), which tries each part's candidate poses and spin
-  angles and keeps the combination that makes best use of the tray. Until a
-  layout is run, Auto shows the lowest stable pose. Locked parts are never
-  re-oriented (only spun on the bed, unless that is locked too).
+- **Pose = which way up.** Every part offers its six 90° orientations (each
+  of the model's ±X, ±Y, ±Z faces down), lowest first, plus any other flat
+  resting face that is not square to those axes. The spin about the vertical
+  axis is not part of the pose; the packer chooses it.
+- **Auto pose:** until a layout is run, Auto shows the lowest orientation the
+  part can rest in. When trays are generated, parts on Auto may be given any
+  of their three lowest distinct orientations.
+- **Choosing a pose:** the picker shows a picture of each orientation with
+  its footprint and depth. Picking one locks which way up the part is; the
+  packer still spins it. "Auto" hands the choice back.
 
 ### 3.2 Silhouette
 - `S = union(project(part))` onto the XY plane (manifold-3d `project()`,
@@ -132,7 +125,9 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   offline. Sending part geometry to an LLM would also break the rule that
   files never leave the browser.
 - **As built:** each footprint (pocket opening + finger scoop, grown by half
-  the wall) is rasterised on a 1 mm grid at 0/90/180/270°. Parts are placed
+  the wall) is rasterised on a 1 mm grid at every 15° about the vertical
+  axis. Square-on placements are tried first; other angles are used when a
+  part will not otherwise fit in the tray being filled. Parts are placed
   first-fit, lowest row first, into the first tray with room; a new tray of
   the same footprint is opened when none has. Up to 24 orderings are tried
   (by area, by longest side, by depth, then seeded shuffles) within a time
@@ -148,8 +143,17 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 - **Case inside height** (optional setting) caps how deep any tray may be,
   which rules out poses that would not fit in the case. If the trays stacked
   together are taller than the case, the result says so.
-- **Not yet built:** finer rotation steps, manual drag/rotate/lock in a 2D
+- **Not yet built:** manual drag/rotate/lock in a 2D
   tray view, moving a part to another tray by hand.
+
+### 3.8 Saving
+- The current project (parts with their meshes, poses, finger cutouts, and
+  the case settings) is saved automatically in the browser's IndexedDB on
+  the device and reopened on the next visit.
+- Settings tab: Save as…, New project, and a list of saved projects to open
+  or delete. Generated trays are not stored; they are regenerated.
+- Parts added from the device are also copied to the Library (the owner's
+  Cloudflare account, behind Access), so they can be reused on other devices.
 
 ## 4. Export (Bambu H3C)
 - **STL**: one binary STL per tray, in mm.

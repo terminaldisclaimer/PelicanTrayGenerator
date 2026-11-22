@@ -38,6 +38,8 @@ export interface Cavity {
 
 const OVERCUT = 1; // mm above the tray surface
 const CIRCULAR_SEGMENTS = 24;
+/** How far (mm) a form-fit wall may sit outside the true part surface before a new step is cut. */
+const SLAB_TOLERANCE = 0.08;
 
 /**
  * Build the pocket for one posed part.
@@ -68,12 +70,15 @@ export function buildCavity(k: ManifoldToplevel, mesh: TriMesh, silhouette: Silh
       const n = Math.max(1, Math.round(zm / o.sliceStep));
       const dz = zm / n;
       let cumulative: CrossSection | null = null;
-      let slabStart = -o.floorClearance; // z where the current (unchanged) section began
-      let slabSection: CrossSection | null = null;
-      let slabArea = -1;
-      const flush = (z: number) => {
-        if (slabSection && z > slabStart) {
-          slabs.push(keep(keep(grow(slabSection).extrude(z - slabStart)).translate(0, 0, slabStart)));
+      let slabStart = -o.floorClearance; // z where the current slab began
+      let slabArea = -1; // section area when the current slab began
+      let previous: CrossSection | null = null; // running union up to the previous step
+      // A slab ends when the section has grown noticeably (its edge moved by
+      // roughly SLAB_TOLERANCE). Each slab is cut with the *largest* section
+      // inside it, so the pocket never pinches the part.
+      const flush = (z: number, section: CrossSection | null) => {
+        if (section && z > slabStart) {
+          slabs.push(keep(keep(grow(section).extrude(z - slabStart)).translate(0, 0, slabStart)));
           steps++;
         }
         slabStart = z;
@@ -83,16 +88,22 @@ export function buildCavity(k: ManifoldToplevel, mesh: TriMesh, silhouette: Silh
         // Sample mid-step and just below the top of the step.
         for (const z of [z0 + dz / 2, z1 - 1e-3]) {
           const s = keep(part.slice(z));
-          cumulative = cumulative ? keep(cumulative.add(s)) : s;
+          // Simplify as we go: curved parts otherwise pile up thousands of
+          // near-duplicate vertices in the running union and slow to a crawl.
+          if (cumulative) {
+            const joined: CrossSection = keep((cumulative as CrossSection).add(s));
+            cumulative = keep(joined.simplify(0.005));
+          } else cumulative = s;
         }
         const area = cumulative!.area();
-        if (Math.abs(area - slabArea) > 1e-4 * Math.max(1, area)) {
-          flush(z0 === 0 ? -o.floorClearance : z0); // section changed: close the previous slab
-          slabSection = cumulative;
+        if (slabArea < 0) slabArea = area;
+        else if (area - slabArea > SLAB_TOLERANCE * Math.sqrt(4 * Math.PI * Math.max(area, 1))) {
+          flush(z0, previous); // close the slab below with everything up to z0
           slabArea = area;
         }
+        previous = cumulative;
       }
-      flush(zm);
+      flush(zm, cumulative);
       lowerTop = cumulative;
     }
 

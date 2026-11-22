@@ -28,6 +28,8 @@ export interface TrayOptions {
   pocket: PocketOptions;
   /** Packing effort (orderings tried) and time limit. */
   packAttempts?: number;
+  /** Step for spinning parts about Z when packing (degrees; default 15). */
+  packAngleStep?: number;
   packTimeMs?: number;
 }
 
@@ -160,7 +162,7 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
     //    tray shrunk by (edge − wall/2) on every side.
     onProgress?.(0.1, 'Arranging parts');
     const inset = Math.max(0, o.edge - o.wall / 2 - RASTER_SLACK);
-    const packed = pack(items, { width: o.length - 2 * inset, height: o.width - 2 * inset, attempts: o.packAttempts ?? 30, timeBudgetMs: o.packTimeMs ?? 2500, trayOverhead: o.floor });
+    const packed = pack(items, { width: o.length - 2 * inset, height: o.width - 2 * inset, attempts: o.packAttempts ?? 30, timeBudgetMs: o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep });
     if (packed.unplaced.length) {
       const names = packed.unplaced.map((id) => parts.find((p) => p.partId === id)!.name);
       throw new TrayError(`Too big for a ${o.length.toFixed(1)} × ${o.width.toFixed(1)} mm tray in any allowed pose: ${names.join(', ')}.`);
@@ -191,7 +193,7 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
             // A bowl: full depth at the pocket edge, curving up to the surface.
             for (const side of sides) {
               const [fx, fy] = fingerCentre(pose.silhouette, o.pocket.clearance, side);
-              const bowl = keep(keep(keep(k.Manifold.sphere(1, 48)).scale([fingerR, fingerR, d])).translate(fx, fy, c.top));
+              const bowl = keep(keep(keep(k.Manifold.sphere(1, 28)).scale([fingerR, fingerR, d])).translate(fx, fy, c.top));
               solid = keep(solid.add(bowl));
             }
           } else {

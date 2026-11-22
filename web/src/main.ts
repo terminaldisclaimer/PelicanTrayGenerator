@@ -2,9 +2,10 @@ import './style.css';
 import { Viewer, renderThumbnail } from './viewer';
 import { initSheet } from './ui/sheet';
 import { GeometryClient } from './worker/client';
-import type { ParsedPart, FileKind, PoseAction, TrayInfo } from './worker/protocol';
+import type { ParsedPart, FileKind, TrayInfo } from './worker/protocol';
 import { DEFAULT_TRAY, fingerCentre, SIDES, type Side, type TrayOptions } from './geom/tray';
 import { writeSTL } from './mesh/stl';
+import { deleteProject, listProjects, loadProject, saveProject } from './storage';
 import { LARGE_MESH_TRIANGLES } from './mesh/bounds';
 import { fmtDims, fmtLen, MM_PER_IN, type Units } from './units';
 
@@ -61,7 +62,24 @@ function kindOf(name: string): FileKind | null {
   return n.endsWith('.stl') ? 'stl' : n.endsWith('.3mf') ? '3mf' : null;
 }
 
-async function addFiles(files: Iterable<File>) {
+/** Library names allow letters, digits, spaces and _.()+,- only. */
+function libraryName(fileName: string): string {
+  const m = /^(.*)\.(stl|3mf)$/i.exec(fileName);
+  const base = (m ? m[1] : fileName).replace(/[^\w .()+,\-]/g, '_').trim().slice(0, 110) || 'part';
+  return `${base}.${(m ? m[2] : 'stl').toLowerCase()}`;
+}
+
+/** Keep a copy of a part added from this device in the library (best effort). */
+async function uploadToLibrary(file: File, buf: ArrayBuffer) {
+  if (buf.byteLength > 25 * 1024 * 1024) { toast(`${file.name} is over 25 MB, so it was not added to the library.`); return; }
+  try {
+    const res = await fetch(`/api/parts/${encodeURIComponent(libraryName(file.name))}`, { method: 'PUT', body: buf, headers: { 'content-type': 'application/octet-stream' } });
+    if (res.ok) loadLibrary();
+    else if (res.headers.get('content-type')?.includes('json')) toast(`${file.name} was not added to the library: ${(await res.json()).error ?? res.status}`);
+  } catch { /* offline or no library: the part still works locally */ }
+}
+
+async function addFiles(files: Iterable<File>, fromLibrary = false) {
   const list = [...files];
   for (let i = 0; i < list.length; i++) {
     const f = list[i];
@@ -71,7 +89,9 @@ async function addFiles(files: Iterable<File>) {
     try {
       showProgress(0.02, `${prefix}Loading ${f.name}`);
       const buf = await f.arrayBuffer();
+      const copy = fromLibrary ? null : buf.slice(0); // the worker takes ownership of `buf`
       const result = await geo.parse(f.name, kind, buf, (fr, label) => showProgress(fr, prefix + label));
+      if (copy) uploadToLibrary(f, copy);
       parts.push(...result);
       if (result.some((p) => p.large))
         toast(`Large mesh (> ${LARGE_MESH_TRIANGLES.toLocaleString()} triangles): processing may be slow on phones.`);
@@ -103,6 +123,7 @@ window.addEventListener('drop', (e) => {
 
 // ---------- list ----------
 function refresh(reframe = true) {
+  scheduleSave();
   clearTray(); // any change to the parts makes the generated tray stale
   viewer.setParts(parts, reframe);
   renderList();
@@ -228,13 +249,6 @@ function fingerPicker(p: PartState): HTMLElement {
   return wrap;
 }
 
-const POSE_BUTTONS: [PoseAction, string, string][] = [
-  ['flip', 'Flip', 'Turn upside down'],
-  ['x90', 'Tip ↕', 'Tip 90° forwards'],
-  ['y90', 'Tip ↔', 'Tip 90° sideways'],
-  ['z90', 'Spin', 'Spin 90° on the bed'],
-];
-
 function renderList() {
   const ul = $('#parts');
   $('#empty').hidden = parts.length > 0;
@@ -267,8 +281,6 @@ function renderList() {
       actions.append(del);
       li.append(name, actions, meta);
 
-      const poseRow = document.createElement('div');
-      poseRow.className = 'pose-row';
       const choose = document.createElement('button');
       choose.className = 'btn small-btn';
       choose.textContent = picker?.partId === p.partId ? 'Close poses' : 'Choose pose';
@@ -283,15 +295,6 @@ function renderList() {
       mainRow.className = 'pose-row main-row';
       mainRow.append(choose, finger);
       li.append(mainRow);
-      for (const [action, label, title] of POSE_BUTTONS) {
-        const b = document.createElement('button');
-        b.className = 'btn small-btn';
-        b.textContent = label;
-        b.setAttribute('aria-label', `${title}: ${p.mesh.name}`);
-        b.onclick = () => update(p, geo.pose(p.partId, action));
-        poseRow.append(b);
-      }
-      li.append(poseRow);
       if (fingerOpen === p.partId) li.append(fingerPicker(p));
 
       if (picker?.partId === p.partId) {
@@ -441,6 +444,7 @@ async function generateTray() {
   if (typeof s === 'string') { $('#tray-status').textContent = s; return; }
   traySettings = s;
   try { localStorage.setItem('tray', JSON.stringify(s)); } catch { /* private mode */ }
+  scheduleSave();
   const options: TrayOptions = {
     ...DEFAULT_TRAY, length: s.length - 2 * s.gap, width: s.width - 2 * s.gap, depth: s.depth, maxDepth: s.height,
     fingerExtraDepth: s.fingerExtra, fingerSwept: s.fingerSwept,
@@ -491,6 +495,116 @@ document.querySelectorAll<HTMLButtonElement>('[data-show]').forEach((b) =>
   }),
 );
 
+// ---------- projects (saved on this device) ----------
+let projectName = '';
+try { projectName = localStorage.getItem('project') || ''; } catch { /* private mode */ }
+if (!projectName) projectName = 'My tray';
+let saveTimer = 0;
+let restoring = false;
+
+function scheduleSave() {
+  if (restoring) return;
+  clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(saveNow, 600);
+}
+
+async function saveNow() {
+  try {
+    const saved = await geo.exportParts();
+    await saveProject({ name: projectName, savedAt: new Date().toISOString(), settings: { ...traySettings }, parts: saved });
+    try { localStorage.setItem('project', projectName); } catch { /* private mode */ }
+    $('#project-status').textContent = `“${projectName}” — saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} (${saved.length} part${saved.length === 1 ? '' : 's'}).`;
+    renderProjects();
+  } catch (e) {
+    $('#project-status').textContent = `Could not save: ${e instanceof Error ? e.message : e}`;
+  }
+}
+
+async function openProject(name: string) {
+  const p = await loadProject(name);
+  if (!p) return false;
+  restoring = true;
+  try {
+    projectName = name;
+    try { localStorage.setItem('project', name); } catch { /* private mode */ }
+    traySettings = { ...traySettings, ...(p.settings as Partial<TraySettings>) };
+    fillTrayInputs();
+    picker = null; fingerOpen = null;
+    if (p.parts.length) showProgress(0.02, `Opening “${name}”`);
+    parts = await geo.restore(p.parts, showProgress);
+    hideProgress();
+    clearTray();
+    viewer.setParts(parts);
+    renderList();
+    $('#project-status').textContent = `“${name}” — opened (${parts.length} part${parts.length === 1 ? '' : 's'}).`;
+  } catch (e) {
+    hideProgress();
+    toast(`Could not open “${name}”: ${e instanceof Error ? e.message : e}`);
+  } finally {
+    restoring = false;
+  }
+  renderProjects();
+  return true;
+}
+
+async function renderProjects() {
+  let list: Awaited<ReturnType<typeof listProjects>> = [];
+  try { list = await listProjects(); } catch { /* storage unavailable */ }
+  $('#project-list').replaceChildren(
+    ...list.map((it) => {
+      const li = document.createElement('li');
+      li.className = 'part';
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = it.name + (it.name === projectName ? ' (open)' : '');
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `${it.parts} part${it.parts === 1 ? '' : 's'} · ${new Date(it.savedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      if (it.name !== projectName) {
+        const open = document.createElement('button');
+        open.className = 'btn';
+        open.textContent = 'Open';
+        open.onclick = async () => { await saveNow(); openProject(it.name); };
+        actions.append(open);
+      }
+      const del = document.createElement('button');
+      del.className = 'icon-btn';
+      del.textContent = '🗑';
+      del.setAttribute('aria-label', `Delete project ${it.name}`);
+      del.onclick = async () => {
+        if (!confirm(`Delete the saved project “${it.name}”? This cannot be undone.`)) return;
+        await deleteProject(it.name);
+        if (it.name === projectName) $('#project-status').textContent = 'Not saved yet.';
+        renderProjects();
+      };
+      actions.append(del);
+      li.append(name, actions, meta);
+      return li;
+    }),
+  );
+}
+
+$('#project-save-as').addEventListener('click', async () => {
+  const name = prompt('Save this project as:', projectName)?.trim();
+  if (!name) return;
+  projectName = name.slice(0, 60);
+  await saveNow();
+});
+
+$('#project-new').addEventListener('click', async () => {
+  const name = prompt('Name for the new project:', 'New tray')?.trim();
+  if (!name) return;
+  await saveNow(); // keep the current one
+  projectName = name.slice(0, 60);
+  for (const p of parts) geo.remove(p.partId);
+  parts = [];
+  picker = null; fingerOpen = null;
+  refresh();
+  await saveNow();
+});
+
 // ---------- library (parts uploaded to this site, e.g. by the Fusion script) ----------
 interface LibraryItem { name: string; size?: number; uploaded?: string; version?: string }
 
@@ -525,7 +639,7 @@ async function loadLibrary() {
           showProgress(0.02, `Downloading ${it.name}`);
           const res = await fetch(`/api/parts/${encodeURIComponent(it.name)}`);
           if (!res.ok) throw new Error(`download failed (${res.status})`);
-          await addFiles([new File([await res.blob()], it.name)]);
+          await addFiles([new File([await res.blob()], it.name)], true);
         } catch (e) {
           hideProgress();
           toast(`${it.name}: ${e instanceof Error ? e.message : e}`);
@@ -552,3 +666,4 @@ loadLibrary();
 $('#version').textContent = `Version ${__APP_VERSION__}`;
 setUnits(units);
 viewer.setParts([]);
+openProject(projectName).then((found) => { if (!found) renderProjects(); });
