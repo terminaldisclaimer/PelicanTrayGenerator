@@ -268,7 +268,7 @@ function renderList() {
       name.textContent = p.mesh.name;
       const meta = document.createElement('div');
       meta.className = 'meta';
-      const pose = !p.poseLocked ? 'auto pose' : p.poseIndex >= 0 ? `pose ${p.poseIndex + 1} (locked)` : 'custom pose (locked)';
+      const pose = p.poseLocked ? 'pose locked' : 'pose may be turned to fit';
       const placed = tray?.trays.flatMap((t) => t.placements).find((q) => q.partId === p.partId);
       const above = tray?.trays.flatMap((t) => t.placements).some((q) => q.under.includes(p.partId));
       const where = placed?.under.length ? ' · tucked under another part' : above ? ' · has a part beneath it' : '';
@@ -311,9 +311,17 @@ function renderList() {
       stack.setAttribute('aria-pressed', String(!p.stackable));
       stack.setAttribute('aria-label', `${p.mesh.name}: ${p.stackable ? 'may be stacked with other parts; tap to forbid' : 'never stacked; tap to allow'}`);
       stack.onclick = () => update(p, geo.stackable(p.partId, !p.stackable));
+      const lock = document.createElement('label');
+      lock.className = 'check';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = p.poseLocked;
+      box.setAttribute('aria-label', `Lock the pose of ${p.mesh.name}`);
+      box.onchange = () => update(p, geo.lock(p.partId, box.checked));
+      lock.append(box, 'Lock pose');
       const stackRow = document.createElement('div');
-      stackRow.className = 'pose-row';
-      stackRow.append(stack);
+      stackRow.className = 'pose-row main-row';
+      stackRow.append(lock, stack);
       li.append(stackRow);
       if (fingerOpen === p.partId) li.append(fingerPicker(p));
 
@@ -321,16 +329,10 @@ function renderList() {
         const grid = document.createElement('div');
         grid.className = 'pose-grid';
         const pick = (index: number) => { picker = null; update(p, geo.select(p.partId, index)); };
-        const auto = document.createElement('button');
-        auto.className = 'pose-option';
-        auto.setAttribute('aria-pressed', String(!p.poseLocked));
-        auto.innerHTML = '<span class="pose-auto">Auto</span><span>App decides</span><span class="muted">best use of tray</span>';
-        auto.onclick = () => pick(-1);
-        grid.append(auto);
         for (const o of picker.options) {
           const b = document.createElement('button');
           b.className = 'pose-option';
-          b.setAttribute('aria-pressed', String(p.poseLocked && p.poseIndex === o.index));
+          b.setAttribute('aria-pressed', String(p.poseIndex === o.index));
           b.setAttribute('aria-label', `Pose ${o.index + 1}: ${fmtDims(o.size, units)}`);
           const img = document.createElement('img');
           img.src = o.url; img.alt = ''; img.width = 96; img.height = 96;

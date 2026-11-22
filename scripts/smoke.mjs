@@ -53,12 +53,14 @@ try {
   const options = await page.$$eval('.pose-option img', (els) => els.filter((e) => e.naturalWidth > 0).length);
   await page.screenshot({ path: 'test-results/mobile-picker.png' });
   // Third picture = the box standing on its 60×25 side: 60 × 25 footprint, 40 tall.
-  await page.tap('.pose-option:nth-child(4)');
-  await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('(locked)'));
+  await page.tap('.pose-option:nth-child(3)');
+  await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('pose locked'));
   const tipped = await page.textContent('.part .meta');
-  await page.tap('.pose-row button:has-text("Choose pose")');
-  await page.tap('.pose-option:first-child');
-  await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('auto pose'));
+  // Picking a pose ticks "Lock pose"; unticking lets the layout turn the part again.
+  const lockedBox = await page.isChecked('.check input');
+  await page.tap('.check');
+  await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('may be turned'));
+  const unlockedBox = await page.isChecked('.check input');
   const picked = options >= 2;
   // Finger cutouts: auto gives this 25 mm tall box a pinch pair; tap one circle off, then add an end.
   await page.tap('.pose-row button:has-text("Finger cutouts")');
@@ -120,7 +122,7 @@ try {
   await page.screenshot({ path: 'test-results/mobile-half.png' });
   const sw = await page.evaluate(async () => !!(await navigator.serviceWorker?.getRegistration()));
   console.log({ width, overflow, meta, tipped, options, restored, fingersAuto, fingersText, trayStatus, stl: download.suggestedFilename(), stlOk, small, serviceWorker: sw, errors });
-  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · auto pose') || !tipped?.includes('60.0 × 25.0 × 40.0 mm · pose 3 (locked)') || !picked || !saveVisible || !/saved \d/.test(saveState) || restored.name !== 'box' || !restored.fingers.includes('Finger cutouts: 2') || restored.fingers.includes('auto') || restored.length !== '120' || fingersAuto !== 2 || kept !== 1 || !noneHint.startsWith('No finger cutouts') || noneDrawn !== 0 || holesDrawn !== 2 || !mainVisible || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
+  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · pose may be turned') || !tipped?.includes('60.0 × 25.0 × 40.0 mm · pose locked') || !lockedBox || unlockedBox || !picked || !saveVisible || !/saved \d/.test(saveState) || restored.name !== 'box' || !restored.fingers.includes('Finger cutouts: 2') || restored.fingers.includes('auto') || restored.length !== '120' || fingersAuto !== 2 || kept !== 1 || !noneHint.startsWith('No finger cutouts') || noneDrawn !== 0 || holesDrawn !== 2 || !mainVisible || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
 } finally {
   await browser.close();
   server.kill();

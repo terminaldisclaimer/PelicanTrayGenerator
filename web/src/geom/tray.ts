@@ -126,7 +126,9 @@ export function fingerCentre(silhouette: Silhouette, clearance: number, side: Si
  * Build trays.
  *
  * 1. The deepest part sets the pocket depth D of the tray (each part in the
- *    lowest pose that fits the tray at all). No pose deeper than D is used.
+ *    lowest pose that fits the tray at all). Parts whose pose is not locked
+ *    may be turned into any of their 90° orientations that need no more
+ *    than D.
  * 2. Pack everything side by side. If it fits in one tray, done.
  * 3. Otherwise stack, always within D. First try tucking the parts that did
  *    not fit partly or wholly under the ones that did (each goes just below
@@ -134,9 +136,22 @@ export function fingerCentre(silhouette: Silhouette, clearance: number, side: Si
  *    underneath. If that fails, stack whole parts on
  *    top of each other, one pair at a time, best space saving first, stopping
  *    as soon as everything fits in one tray.
- * 4. If it still does not fit, the parts overflow into more trays.
+ * 4. If it still does not fit and a case height is given, try again letting
+ *    parts stand in poses up to that height. Otherwise the parts overflow
+ *    into more trays.
  */
 export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, onProgress?: (fraction: number, label: string) => void): TrayResult {
+  const first = buildOnce(k, parts, o, null, onProgress);
+  // Still more than one tray: if a case height is given, parts may also be
+  // turned into poses deeper than the deepest part needs, up to that height.
+  if (first.trays.length > 1 && o.depth === null && o.maxDepth !== null && first.deeperPosesExist) {
+    const second = buildOnce(k, parts, o, o.maxDepth - o.floor, onProgress);
+    if (second.trays.length < first.trays.length) return { trays: second.trays, stacks: second.stacks };
+  }
+  return { trays: first.trays, stacks: first.stacks };
+}
+
+function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depthCap: number | null, onProgress?: (fraction: number, label: string) => void): TrayResult & { deeperPosesExist: boolean } {
   if (!parts.length) throw new TrayError('Add at least one part first.');
   const fitsBed = (o.length <= BED.x && o.width <= BED.y) || (o.length <= BED.y && o.width <= BED.x);
   if (!fitsBed) throw new TrayError(`A ${o.length.toFixed(1)} × ${o.width.toFixed(1)} mm tray does not fit the ${BED.x} × ${BED.y} mm print bed.`);
@@ -200,7 +215,8 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
     if (tooBig.length)
       throw new TrayError(`Too big for a ${o.length.toFixed(1)} × ${o.width.toFixed(1)} mm tray in any allowed pose: ${tooBig.join(', ')}.`);
     // The deepest part (lying as low as it can) sets the depth; nothing may go deeper.
-    const D = o.depth !== null ? o.depth - o.floor : Math.max(...units.map((u) => u.depth));
+    const D = depthCap ?? (o.depth !== null ? o.depth - o.floor : Math.max(...units.map((u) => u.depth)));
+    const deeperPosesExist = units.some((u) => u.choices.some((c) => c.depth > D + 1e-9));
     for (const u of units) u.choices = u.choices.filter((c) => c.depth <= D + 1e-9);
 
     const items = (): PackItem[] => units.map((u) => ({
@@ -412,7 +428,7 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
       if (tray.isEmpty()) throw new Error('Tray geometry came out empty');
       trays.push({ mesh: toTriMesh(tray, `tray-${t + 1}`), depth, placements, volume: tray.volume() });
     }
-    return { trays, stacks };
+    return { trays, stacks, deeperPosesExist };
   } finally {
     for (const t of trash) t.delete();
   }

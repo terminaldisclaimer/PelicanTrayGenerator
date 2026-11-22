@@ -53,12 +53,16 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   of the model's ±X, ±Y, ±Z faces down), lowest first, plus any other flat
   resting face that is not square to those axes. The spin about the vertical
   axis is not part of the pose; the packer chooses it.
-- **Auto pose:** until a layout is run, Auto shows the lowest orientation the
-  part can rest in. When trays are generated, parts on Auto may be given any
-  of their three lowest distinct orientations.
-- **Choosing a pose:** the picker shows a picture of each orientation with
-  its footprint and depth. Picking one locks which way up the part is; the
-  packer still spins it. "Auto" hands the choice back.
+- **Automatic turning:** unless a part's pose is locked, the layout may turn
+  it into any of its 90° orientations to make things fit — any that need no
+  more depth than the deepest part sets, and, when a case height is given
+  and the parts still do not fit one tray, any that fit within that height.
+  Until a layout is run, an unlocked part shows its lowest orientation;
+  afterwards it shows the one the layout chose.
+- **Lock pose:** each part has a "Lock pose" tick box. Ticked, the part
+  keeps exactly the orientation shown (the layout still spins it about the
+  vertical axis). Picking an orientation in the pose picker ticks it;
+  unticking hands the choice back to the layout.
 
 ### 3.2 Silhouette
 - `S = union(project(part))` onto the XY plane (manifold-3d `project()`,

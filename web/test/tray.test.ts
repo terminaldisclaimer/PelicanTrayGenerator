@@ -353,6 +353,37 @@ describe('tray', () => {
     expect(r.stacks).toBe(1);
   });
 
+  it('turns unlocked parts to any 90° pose that fits the depth; with a case height, deeper ones too', () => {
+    const plate = (id: number, locked = false): TrayPart => {
+      const flat = posed(boxMesh(100, 40, 8)), edge = posed(boxMesh(100, 8, 40));
+      const poses = [
+        { poseIndex: 0, mesh: flat.mesh, silhouette: flat.silhouette, height: flat.height },
+        { poseIndex: 1, mesh: edge.mesh, silhouette: edge.silhouette, height: edge.height },
+      ];
+      return { partId: id, name: `plate${id}`, fingers: [], stackable: false, poses: locked ? poses.slice(0, 1) : poses };
+    };
+    const block = trayPart(boxMesh(100, 30, 40, 'block'), 1); // 40 deep: sets the depth
+    const o = { ...FAST, length: 110, width: 70 };
+    // The block needs 40.2; the plates may stand on edge (also 40.2) and then all three fit.
+    const r = buildTrays(k, [block, plate(2), plate(3)], o);
+    expect(r.trays).toHaveLength(1);
+    expect(r.trays[0].depth).toBeCloseTo(42.2);
+    expect(r.trays[0].placements.filter((p) => p.poseIndex === 1).length).toBe(2);
+    // A plate whose pose is locked flat stays flat, so they no longer fit one tray.
+    const locked = buildTrays(k, [block, plate(2, true), plate(3, true)], o);
+    expect(locked.trays.length).toBeGreaterThan(1);
+    expect(locked.trays.flatMap((t) => t.placements).filter((p) => p.partId !== 1).every((p) => p.poseIndex === 0)).toBe(true);
+
+    // Without a deep part, standing up would deepen the tray: only done when a case height allows it.
+    const two = [plate(2), plate(3)];
+    const shallow = { ...FAST, length: 110, width: 50 };
+    expect(buildTrays(k, two, shallow).trays).toHaveLength(2); // stay flat (8.2 deep), one per tray
+    const tall = buildTrays(k, two, { ...shallow, maxDepth: 60 });
+    expect(tall.trays).toHaveLength(1);
+    expect(tall.trays[0].depth).toBeCloseTo(42.2);
+    expect(buildTrays(k, two, { ...shallow, maxDepth: 30 }).trays).toHaveLength(2); // 42.2 would not fit a 30 mm case
+  });
+
   it('exports as a valid binary STL', () => {
     const t = buildTrays(k, [trayPart(boxMesh(60, 40, 25), 1, 'auto')], FAST).trays[0];
     const back = parseSTL(writeSTL(t.mesh));

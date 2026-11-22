@@ -16,6 +16,8 @@ export type WorkerRequest =
   | { id: number; type: 'remove'; partId: number }
   /** Choose which sides of the pocket get a finger cutout, or 'auto'. */
   | { id: number; type: 'finger'; partId: number; fingers: Side[] | 'auto' }
+  /** Lock the part in its current pose (true), or let the layout turn it (false). */
+  | { id: number; type: 'lock'; partId: number; on: boolean }
   /** Allow or forbid putting this part in a stack. */
   | { id: number; type: 'stackable'; partId: number; on: boolean }
   /** Everything needed to rebuild the current parts later (for saving). */

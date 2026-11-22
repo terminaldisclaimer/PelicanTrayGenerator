@@ -117,6 +117,11 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         out.push(await describe(id));
       }
       reply(req.id, out);
+    } else if (req.type === 'lock') {
+      const s = parts.get(req.partId);
+      if (!s) throw new Error('Unknown part');
+      s.locked = req.on;
+      reply(req.id, [await describe(req.partId)]);
     } else if (req.type === 'stackable') {
       const s = parts.get(req.partId);
       if (!s) throw new Error('Unknown part');
@@ -130,9 +135,8 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     } else if (req.type === 'tray') {
       const k = await initKernel(wasmUrl);
       post({ id: req.id, type: 'progress', fraction: 0.01, label: 'Preparing parts' });
-      // Locked parts keep their pose. Parts on Auto offer the packer their few
-      // lowest poses that actually differ (a flipped part packs the same).
-      const AUTO_POSES = 3;
+      // Locked parts keep their pose. Unlocked parts offer the packer every 90°
+      // orientation that actually differs (a flipped part packs the same).
       const list: TrayPart[] = [...parts].map(([partId, s]) => {
         const pose = (poseIndex: number, r: Mat3) => { const p = posePart(k, s.original, r); return { poseIndex, mesh: p.mesh, silhouette: p.silhouette, height: p.height, size: p.size }; };
         let poses = [pose(-1, s.rotation)];
@@ -141,7 +145,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
           poses = [];
           for (const p of all) {
             const same = poses.some((q) => Math.abs(q.height - p.height) < 0.5 && Math.abs(q.size[0] - p.size[0]) < 0.5 && Math.abs(q.size[1] - p.size[1]) < 0.5);
-            if (!same && poses.length < AUTO_POSES) poses.push(p);
+            if (!same) poses.push(p);
           }
         }
         return { partId, name: s.original.name, fingers: s.fingers, stackable: s.stackable, poses };
