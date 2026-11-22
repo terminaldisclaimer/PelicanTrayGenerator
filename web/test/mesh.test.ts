@@ -3,6 +3,7 @@ import { parseSTL, writeSTL } from '../src/mesh/stl';
 import { parse3MF } from '../src/mesh/threemf';
 import { centerOnBed, looksLikeInches, meshBounds, scaleMesh, size } from '../src/mesh/bounds';
 import { asciiSTL, box3MF, boxMesh } from './fixtures';
+import { cloudName, decodeProject, encodeProject } from '../src/storage';
 
 describe('STL', () => {
   it('round-trips binary STL', () => {
@@ -69,5 +70,28 @@ describe('bounds & units', () => {
     const mm = scaleMesh(tiny, 25.4);
     expect(looksLikeInches(meshBounds(mm))).toBe(false);
     expect(size(meshBounds(mm))[0]).toBeCloseTo(50.8);
+  });
+});
+
+describe('project file', () => {
+  it('round-trips settings, choices and meshes', () => {
+    const a = boxMesh(10, 20, 30).positions, b = boxMesh(1, 2, 3).positions;
+    const project = {
+      name: 'My tray', savedAt: '2026-11-22T10:00:00Z', settings: { length: 112.52, width: 238.76, stacking: true },
+      parts: [
+        { name: 'bubbler', positions: a, poseIndex: 2, locked: true, rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], fingers: 'auto' as const, stackable: true },
+        { name: 'pen', positions: b, poseIndex: 0, locked: false, rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], fingers: ['top' as const], stackable: false },
+      ],
+    };
+    const back = decodeProject(encodeProject(project));
+    expect(back.settings).toEqual(project.settings);
+    expect(back.parts.map((p) => [p.name, p.poseIndex, p.locked, p.fingers, p.stackable])).toEqual([['bubbler', 2, true, 'auto', true], ['pen', 0, false, ['top'], false]]);
+    expect(Array.from(back.parts[0].positions)).toEqual(Array.from(a));
+    expect(Array.from(back.parts[1].positions)).toEqual(Array.from(b));
+    expect(() => decodeProject(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]).buffer)).toThrow();
+  });
+  it('makes cloud-safe names', () => {
+    expect(cloudName('My tray #2 / "test"')).toBe('My tray _2 _ _test_');
+    expect(cloudName('')).toBe('project');
   });
 });

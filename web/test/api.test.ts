@@ -48,4 +48,18 @@ describe('parts API', () => {
     expect((await handleApi(req('PUT', '/api/parts/a.3mf', { body: 'x', headers: { Origin: 'https://evil.example' } }), env)).status).toBe(403);
     expect(env.PARTS.store.size).toBe(0);
   });
+
+  it('stores and lists saved projects separately from parts', async () => {
+    const env = { PARTS: fakeKV() };
+    await handleApi(req('PUT', '/api/parts/a.3mf', { body: new Uint8Array([1]) }), env);
+    const put = await handleApi(req('PUT', '/api/projects/My%20tray', { body: new Uint8Array([9, 9]), headers: { 'X-Project-Saved-At': '2026-11-22T10:00:00Z', 'X-Project-Parts': '4' } }), env);
+    expect(put.status).toBe(200);
+    expect(await (await handleApi(req('GET', '/api/projects'), env)).json()).toMatchObject([{ name: 'My tray', size: 2, savedAt: '2026-11-22T10:00:00Z', parts: 4 }]);
+    expect(await (await handleApi(req('GET', '/api/parts'), env)).json()).toHaveLength(1);
+    const got = await handleApi(req('GET', '/api/projects/My%20tray'), env);
+    expect(new Uint8Array(await got.arrayBuffer())).toEqual(new Uint8Array([9, 9]));
+    expect((await handleApi(req('PUT', '/api/projects/bad%2Fname', { body: 'x' }), env)).status).toBe(400);
+    await handleApi(req('DELETE', '/api/projects/My%20tray'), env);
+    expect(await (await handleApi(req('GET', '/api/projects'), env)).json()).toEqual([]);
+  });
 });

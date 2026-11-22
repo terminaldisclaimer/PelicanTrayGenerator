@@ -5,7 +5,7 @@ import { GeometryClient } from './worker/client';
 import type { ParsedPart, FileKind, TrayInfo } from './worker/protocol';
 import { DEFAULT_TRAY, fingerCentre, SIDES, type Side, type TrayOptions } from './geom/tray';
 import { writeSTL } from './mesh/stl';
-import { deleteProject, listProjects, loadProject, saveProject } from './storage';
+import { cloudDelete, cloudList, cloudLoad, cloudName, cloudSave, deleteProject, listProjects, loadProject, saveProject, type Project } from './storage';
 import { LARGE_MESH_TRIANGLES } from './mesh/bounds';
 import { fmtDims, fmtLen, MM_PER_IN, type Units } from './units';
 
@@ -552,16 +552,37 @@ function scheduleSave() {
   saveTimer = window.setTimeout(saveNow, 600);
 }
 
-async function saveNow() {
+let cloudTimer = 0;
+let lastProject: Project | null = null;
+
+/** Copy the project to the cloud (your Cloudflare account) so other devices can open it. */
+async function uploadProject() {
+  clearTimeout(cloudTimer);
+  if (!lastProject) return;
+  const p = lastProject;
+  const ok = await cloudSave(p);
+  if (p === lastProject) {
+    const time = new Date(p.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    $('#save-state').textContent = ok ? `${p.name} · saved ${time} · synced` : `${p.name} · saved ${time} on this device only`;
+  }
+  if (ok) renderProjects();
+}
+
+async function saveNow(uploadNow = false) {
   try {
     const saved = await geo.exportParts();
-    await saveProject({ name: projectName, savedAt: new Date().toISOString(), settings: { ...traySettings }, parts: saved });
+    const project: Project = { name: projectName, savedAt: new Date().toISOString(), settings: { ...traySettings }, parts: saved };
+    await saveProject(project);
+    lastProject = project;
     try { localStorage.setItem('project', projectName); } catch { /* private mode */ }
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     $('#project-status').textContent = `“${projectName}” — saved ${time} (${saved.length} part${saved.length === 1 ? '' : 's'}).`;
     $('#save-state').textContent = `${projectName} · saved ${time}`;
-    return true;
+    clearTimeout(cloudTimer);
+    if (uploadNow) await uploadProject();
+    else cloudTimer = window.setTimeout(uploadProject, 2500);
     renderProjects();
+    return true;
   } catch (e) {
     $('#project-status').textContent = `Could not save: ${e instanceof Error ? e.message : e}`;
     $('#save-state').textContent = 'Could not save';
@@ -569,24 +590,27 @@ async function saveNow() {
   }
 }
 
+/** Open a project from this device or the cloud, whichever copy is newer. */
 async function openProject(name: string) {
-  const p = await loadProject(name);
+  let p: Project | null | undefined = await loadProject(name).catch(() => undefined);
+  const cloud = (await cloudList())?.find((c) => c.name === cloudName(name));
+  if (cloud && (!p || (cloud.savedAt ?? '') > p.savedAt)) p = (await cloudLoad(name)) ?? p;
   if (!p) return false;
   restoring = true;
   try {
-    projectName = name;
-    try { localStorage.setItem('project', name); } catch { /* private mode */ }
+    projectName = p.name || name;
+    try { localStorage.setItem('project', projectName); } catch { /* private mode */ }
     traySettings = { ...traySettings, ...(p.settings as Partial<TraySettings>) };
     fillTrayInputs();
     picker = null; fingerOpen = null;
-    if (p.parts.length) showProgress(0.02, `Opening “${name}”`);
+    if (p.parts.length) showProgress(0.02, `Opening “${projectName}”`);
     parts = await geo.restore(p.parts, showProgress);
     hideProgress();
     clearTray();
     viewer.setParts(parts);
     renderList();
-    $('#project-status').textContent = `“${name}” — opened (${parts.length} part${parts.length === 1 ? '' : 's'}).`;
-    $('#save-state').textContent = `${name} · saved`;
+    $('#project-status').textContent = `“${projectName}” — opened (${parts.length} part${parts.length === 1 ? '' : 's'}).`;
+    $('#save-state').textContent = `${projectName} · saved`;
   } catch (e) {
     hideProgress();
     toast(`Could not open “${name}”: ${e instanceof Error ? e.message : e}`);
@@ -598,8 +622,18 @@ async function openProject(name: string) {
 }
 
 async function renderProjects() {
-  let list: Awaited<ReturnType<typeof listProjects>> = [];
-  try { list = await listProjects(); } catch { /* storage unavailable */ }
+  let local: Awaited<ReturnType<typeof listProjects>> = [];
+  try { local = await listProjects(); } catch { /* storage unavailable */ }
+  const cloud = (await cloudList()) ?? [];
+  interface Row { name: string; savedAt: string; parts: number; where: string }
+  const rows = new Map<string, Row>();
+  for (const it of local) rows.set(cloudName(it.name), { ...it, where: 'this device' });
+  for (const c of cloud) {
+    const r = rows.get(c.name);
+    if (r) { r.where = 'this device + cloud'; if ((c.savedAt ?? '') > r.savedAt) { r.savedAt = c.savedAt!; r.parts = c.parts ?? r.parts; } }
+    else rows.set(c.name, { name: c.name, savedAt: c.savedAt ?? '', parts: c.parts ?? 0, where: 'cloud' });
+  }
+  const list = [...rows.values()].sort((a, b) => b.savedAt.localeCompare(a.savedAt));
   $('#project-list').replaceChildren(
     ...list.map((it) => {
       const li = document.createElement('li');
@@ -609,14 +643,14 @@ async function renderProjects() {
       name.textContent = it.name + (it.name === projectName ? ' (open)' : '');
       const meta = document.createElement('div');
       meta.className = 'meta';
-      meta.textContent = `${it.parts} part${it.parts === 1 ? '' : 's'} · ${new Date(it.savedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
+      meta.textContent = `${it.parts} part${it.parts === 1 ? '' : 's'} · ${it.savedAt ? new Date(it.savedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : ''} · ${it.where}`;
       const actions = document.createElement('div');
       actions.className = 'actions';
       if (it.name !== projectName) {
         const open = document.createElement('button');
         open.className = 'btn';
         open.textContent = 'Open';
-        open.onclick = async () => { await saveNow(); openProject(it.name); };
+        open.onclick = async () => { await saveNow(true); openProject(it.name); };
         actions.append(open);
       }
       const del = document.createElement('button');
@@ -624,9 +658,10 @@ async function renderProjects() {
       del.textContent = '🗑';
       del.setAttribute('aria-label', `Delete project ${it.name}`);
       del.onclick = async () => {
-        if (!confirm(`Delete the saved project “${it.name}”? This cannot be undone.`)) return;
-        await deleteProject(it.name);
-        if (it.name === projectName) $('#project-status').textContent = 'Not saved yet.';
+        if (!confirm(`Delete the saved project “${it.name}” from this device and the cloud? This cannot be undone.`)) return;
+        await deleteProject(it.name).catch(() => undefined);
+        await cloudDelete(it.name);
+        if (it.name === projectName) { lastProject = null; $('#project-status').textContent = 'Not saved yet.'; }
         renderProjects();
       };
       actions.append(del);
@@ -639,7 +674,7 @@ async function renderProjects() {
 $('#save-now').addEventListener('click', async () => {
   clearTimeout(saveTimer);
   const btn = $<HTMLButtonElement>('#save-now');
-  const ok = await saveNow();
+  const ok = await saveNow(true);
   btn.textContent = ok ? 'Saved ✓' : 'Failed';
   setTimeout(() => (btn.textContent = 'Save'), 1500);
 });
