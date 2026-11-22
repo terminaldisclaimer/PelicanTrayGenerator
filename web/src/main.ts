@@ -213,7 +213,12 @@ function fingerPicker(p: PartState): HTMLElement {
   };
   preset('Auto', 'auto', p.fingerAuto);
   preset('None', [], !p.fingerAuto && p.fingers.length === 0);
+  const done = document.createElement('button');
+  done.className = 'btn small-btn done-btn';
+  done.textContent = 'Done';
+  done.onclick = () => { fingerOpen = null; renderList(); };
   preset('Pinch pair', ['top', 'bottom'], !p.fingerAuto && p.fingers.length === 2 && p.fingers.includes('top') && p.fingers.includes('bottom'));
+  row.append(done);
   const hint = document.createElement('p');
   hint.className = 'muted small';
   hint.textContent =
@@ -249,8 +254,10 @@ function renderList() {
       const del = document.createElement('button');
       del.className = 'icon-btn';
       del.setAttribute('aria-label', `Remove ${p.mesh.name}`);
-      del.textContent = '✕';
+      del.textContent = '🗑';
+      del.title = 'Remove this part';
       del.onclick = () => {
+        if (!confirm(`Remove "${p.mesh.name}" from the parts list?`)) return;
         if (picker?.partId === p.partId) picker = null;
         if (fingerOpen === p.partId) fingerOpen = null;
         geo.remove(p.partId);
