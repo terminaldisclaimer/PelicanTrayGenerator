@@ -1,26 +1,32 @@
 import type { Side, TrayOptions } from '../geom/tray';
-import type { FileKind, ParsedPart, PoseAction, SavedPart, ShellRequest, TrayInfo, WorkerRequest, WorkerResponse } from './protocol';
+import type { FileKind, ParsedPart, PoseAction, SavedPart, ShellRequest, Suggestion, TrayInfo, WorkerRequest, WorkerResponse } from './protocol';
 
-type Progress = (fraction: number, label: string) => void;
+type Progress = (fraction: number, label: string, suggestion?: Suggestion) => void;
 type Body = WorkerRequest extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never;
 
 /** Promise wrapper around the geometry worker. */
 export class GeometryClient {
-  private worker = new Worker(new URL('./geometry.worker.ts', import.meta.url), { type: 'module' });
+  private worker!: Worker;
   private nextId = 1;
   private pending = new Map<number, { resolve: (p: any) => void; reject: (e: Error) => void; progress?: Progress }>();
 
   constructor() {
+    this.start();
+  }
+
+  private start() {
+    this.worker = new Worker(new URL('./geometry.worker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
       const msg = ev.data;
       const p = this.pending.get(msg.id);
       if (!p) return;
-      if (msg.type === 'progress') p.progress?.(msg.fraction, msg.label);
+      if (msg.type === 'progress') p.progress?.(msg.fraction, msg.label, msg.suggestion);
       else {
         this.pending.delete(msg.id);
         if (msg.type === 'result') p.resolve(msg.parts);
         else if (msg.type === 'tray') p.resolve(msg.tray);
         else if (msg.type === 'saved') p.resolve(msg.parts);
+        else if (msg.type === 'suggestions') p.resolve({ list: msg.list, tried: msg.tried });
         else p.reject(new Error(msg.message));
       }
     };
@@ -28,6 +34,17 @@ export class GeometryClient {
       for (const p of this.pending.values()) p.reject(new Error(e.message || 'Geometry worker failed'));
       this.pending.clear();
     };
+  }
+
+  /**
+   * Stop whatever the worker is doing by replacing it. Everything it held is
+   * lost, so the caller must load the parts again (see `restore`).
+   */
+  restart() {
+    this.worker.terminate();
+    for (const p of this.pending.values()) p.reject(new Error('Stopped'));
+    this.pending.clear();
+    this.start();
   }
 
   private call<T = ParsedPart[]>(body: Body, transfer: Transferable[] = [], progress?: Progress): Promise<T> {
@@ -70,6 +87,9 @@ export class GeometryClient {
   }
   restore(parts: SavedPart[], progress?: Progress) {
     return this.call({ type: 'restore', parts }, [], progress);
+  }
+  suggest(options: TrayOptions, progress?: Progress) {
+    return this.call<{ list: Suggestion[]; tried: number }>({ type: 'suggest', options }, [], progress);
   }
   tray(options: TrayOptions, shell: ShellRequest | null, progress?: Progress) {
     return this.call<TrayInfo>({ type: 'tray', options, shell }, [], progress);

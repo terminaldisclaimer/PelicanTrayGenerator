@@ -2,7 +2,7 @@ import './style.css';
 import { Viewer, renderThumbnail } from './viewer';
 import { initSheet } from './ui/sheet';
 import { GeometryClient } from './worker/client';
-import type { ParsedPart, FileKind, TrayInfo } from './worker/protocol';
+import type { Change, ParsedPart, FileKind, Suggestion, TrayInfo } from './worker/protocol';
 import { DEFAULT_TRAY, fingerCentre, SIDES, type Side, type TrayOptions } from './geom/tray';
 import { DEFAULT_SHELL, shellExtraHeight, shellPitch, shellProblem, trayInsideShell, type Footprint, type ShellOptions } from './geom/shell';
 import { writeSTL } from './mesh/stl';
@@ -539,6 +539,7 @@ function clearTray() {
   viewer.setTrays(null);
   $('#tray-view-row').hidden = true;
   $('#tray-harder').hidden = true;
+  $('#tray-suggest').hidden = true;
   $('#tray-status').textContent = 'Parts changed — generate the tray again.';
   renderExport();
 }
@@ -559,9 +560,14 @@ function stackNote(result: TrayInfo): string {
   return ` Stacked to fit: ${lines.join('; ')}.`;
 }
 
-async function generateTray(hard = false) {
+type Effort = 'normal' | 'thorough' | 'hard';
+/** Search effort of the last layout, reused when a part edit regenerates it. */
+let lastEffort: Effort = 'normal';
+
+/** Read the Trays tab into a layout request, or return a message saying what is wrong. */
+function trayRequest(effort: Effort) {
   const s = readTrayInputs();
-  if (typeof s === 'string') { $('#tray-status').textContent = s; return; }
+  if (typeof s === 'string') return s;
   traySettings = s;
   try { localStorage.setItem('tray', JSON.stringify(s)); } catch { /* private mode */ }
   scheduleSave();
@@ -572,11 +578,20 @@ async function generateTray(hard = false) {
   const options: TrayOptions = {
     ...DEFAULT_TRAY, ...inside, depth: s.depth,
     edge: s.edge,
-    searchEffort: hard ? 'hard' : 'normal',
+    searchEffort: effort,
     maxDepth: s.height === null ? null : s.height - (shell ? shellExtraHeight(shell.options) : 0),
     fingerDiameter: s.fingerDia, fingerExtraDepth: s.fingerExtra, fingerSwept: s.fingerSwept, stacking: s.stacking, stackGap: s.stackGap,
     pocket: { ...DEFAULT_TRAY.pocket, clearance: s.clearance, split: s.split },
   };
+  return { s, shell, outer, options };
+}
+
+async function generateTray(effort: Effort = lastEffort) {
+  const req = trayRequest(effort);
+  if (typeof req === 'string') { $('#tray-status').textContent = req; return; }
+  const { s, shell, outer, options } = req;
+  const hard = effort === 'hard';
+  lastEffort = effort;
   const btn = $<HTMLButtonElement>('#tray-build');
   btn.disabled = true;
   try {
@@ -604,7 +619,9 @@ async function generateTray(hard = false) {
     $('#tray-view-row').hidden = false;
     // More than one tray: a longer search may still find a one-tray layout.
     $('#tray-harder').hidden = n <= 1 || hard;
-    if (n > 1) $('#tray-status').textContent += hard ? ' The longer search did not find a one-tray layout either.' : ' The normal search did not find a one-tray layout; a longer search sometimes does.';
+    $('#tray-suggest').hidden = n <= 1;
+    if (n <= 1) $('#suggest').hidden = true;
+    if (n > 1) $('#tray-status').textContent += hard ? ' The longer search did not find a one-tray layout either.' : ' This search did not find a one-tray layout; a longer search sometimes does.';
     renderExport();
   } catch (e) {
     $('#tray-status').textContent = e instanceof Error ? e.message : String(e);
@@ -613,8 +630,109 @@ async function generateTray(hard = false) {
     btn.disabled = false;
   }
 }
-$('#tray-build').addEventListener('click', () => generateTray());
-$('#tray-harder').addEventListener('click', () => generateTray(true));
+$('#tray-build').addEventListener('click', () => generateTray('normal'));
+$('#tray-harder').addEventListener('click', () => generateTray('hard'));
+
+// ---------- "what would make it fit one tray?" ----------
+let suggesting = false;
+
+function showSuggestion(sg: Suggestion) {
+  const li = document.createElement('li');
+  li.className = 'part';
+  const text = document.createElement('div');
+  text.className = 'suggest-text';
+  text.textContent = sg.text;
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = sg.stacks ? `One tray, with ${sg.stacks} part${sg.stacks === 1 ? '' : 's'} tucked under others.` : 'One tray, nothing stacked.';
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const apply = document.createElement('button');
+  apply.className = 'btn';
+  apply.textContent = sg.change.kind === 'effort' ? 'Use it' : 'Apply';
+  apply.onclick = () => applyChange(sg.change);
+  actions.append(apply);
+  li.append(text, actions, meta);
+  $('#suggest-list').append(li);
+}
+
+/** Make one suggested change, then lay the tray out again the same thorough way the suggestion was found. */
+async function applyChange(c: Change) {
+  if (suggesting) return;
+  const part = 'partId' in c ? parts.find((p) => p.partId === c.partId) : undefined;
+  const swap = (next: ParsedPart) => { parts = parts.map((q) => (q.partId === next.partId ? next : q)); };
+  if (c.kind === 'setting') {
+    if (c.key === 'fingerDiameter') traySettings.fingerDia = c.value as number;
+    else if (c.key === 'depth') traySettings.depth = c.value as number;
+    else if (c.key === 'stackGap') traySettings.stackGap = c.value as number;
+    else if (c.key === 'clearance') traySettings.clearance = c.value as number;
+    else if (c.key === 'edge') traySettings.edge = c.value as number;
+    else traySettings.stacking = c.value as boolean;
+    fillTrayInputs();
+  } else if (c.kind === 'part' && part) {
+    swap(await (c.change === 'unlock' ? geo.lock(part.partId, false) : c.change === 'allowStack' ? geo.stackable(part.partId, true) : geo.stackGap(part.partId, null)));
+  } else if (c.kind === 'fingers' && part) {
+    swap(await geo.finger(part.partId, c.fingers));
+  } else if (c.kind === 'remove' && part) {
+    if (!confirm(`Remove "${part.mesh.name}" from the parts list?`)) return;
+    await geo.remove(part.partId);
+    parts = parts.filter((q) => q.partId !== part.partId);
+  }
+  $('#suggest').hidden = true;
+  viewer.setParts(parts, false);
+  renderList();
+  scheduleSave();
+  await generateTray(c.kind === 'effort' ? 'hard' : 'thorough');
+}
+
+$('#tray-suggest').addEventListener('click', async () => {
+  const req = trayRequest('thorough');
+  if (typeof req === 'string') { $('#tray-status').textContent = req; return; }
+  suggesting = true;
+  $('#suggest').hidden = false;
+  $('#suggest-list').replaceChildren();
+  $('#suggest-status').textContent = 'Working… each change is tested with a full layout search. Suggestions appear here as they are found.';
+  for (const id of ['#tray-build', '#tray-harder', '#tray-suggest']) $<HTMLButtonElement>(id).disabled = true;
+  $('#tray-stop').hidden = false;
+  let count = 0;
+  try {
+    const r = await geo.suggest(req.options, (fraction, label, sg) => {
+      showProgress(fraction, label);
+      if (sg) { count++; showSuggestion(sg); }
+    });
+    $('#suggest-status').textContent = r.list.length
+      ? `${r.list.length} change${r.list.length === 1 ? '' : 's'} found after ${r.tried} trial${r.tried === 1 ? '' : 's'}. Each one is a single change; nothing has been applied.`
+      : `No single change made everything fit, after ${r.tried} trials. That is not proof none exists, and combinations of changes were not tried.`;
+  } catch (e) {
+    const stopped = e instanceof Error && e.message === 'Stopped';
+    $('#suggest-status').textContent = stopped ? `Stopped. ${count} change${count === 1 ? '' : 's'} found so far.` : `Could not finish: ${e instanceof Error ? e.message : e}`;
+  } finally {
+    suggesting = false;
+    hideProgress();
+    $('#tray-stop').hidden = true;
+    for (const id of ['#tray-build', '#tray-harder', '#tray-suggest']) $<HTMLButtonElement>(id).disabled = false;
+  }
+});
+
+// Stop a long run: the worker cannot be interrupted, so it is replaced and the parts loaded back into it.
+$('#tray-stop').addEventListener('click', async () => {
+  const saved = lastProject?.parts ?? [];
+  geo.restart();
+  hideProgress();
+  if (saved.length) {
+    restoring = true;
+    try {
+      const keep = tray;
+      parts = await geo.restore(saved, showProgress);
+      hideProgress();
+      tray = null; // part ids changed, so the old layout no longer matches
+      viewer.setTrays(null);
+      viewer.setParts(parts);
+      renderList();
+      if (keep) $('#tray-status').textContent = 'Stopped. Generate the tray again when ready.';
+    } finally { restoring = false; }
+  }
+});
 
 document.querySelectorAll<HTMLButtonElement>('[data-stack]').forEach((b) =>
   b.addEventListener('click', () => {

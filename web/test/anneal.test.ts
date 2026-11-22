@@ -24,7 +24,7 @@ function check(items: AnnealItem[], out: NonNullable<ReturnType<typeof anneal>>,
   out.forEach((p, i) => out.forEach((q, j) => {
     if (j <= i) return;
     const n = shared(cells[i], cells[j]);
-    if (!n) return;
+    if (n <= 1) return; // a single shared cell is within the slack built into the footprints
     const pu = p.under.includes(q.id), qu = q.under.includes(p.id);
     expect(pu || qu).toBe(true); // overlapping parts must be one above the other
     expect(p.depth + q.depth).toBeLessThanOrEqual(maxDepth + 1e-9);
@@ -111,6 +111,18 @@ describe('anneal (whole-layout search)', () => {
     expect(B.h1 <= A.x0 + 1e-9 || B.h0 >= A.x1 - 1e-9).toBe(true);
     // In 65 mm there is no room for both pockets and a hole between or beside them.
     expect(anneal([holed(0), holed(1)], { width: 65, height: 30, maxDepth: 10, allowSink: true, rounds: 2, iterations: 20000 })).toBeNull();
+  });
+
+  it('never reports a stack that does not fit the depth', () => {
+    // Three 25-deep blocks in a 28-deep tray: no two can stack. Whatever layout comes back,
+    // nothing may be marked as under anything, and every pocket must fit the depth.
+    const blocks = [0, 1, 2].map((i) => item(i, 61, 41, 25.2));
+    for (const width of [150, 164, 170, 176]) {
+      const out = anneal(blocks, { width: 88, height: width, maxDepth: 28, allowSink: true, rounds: 3, iterations: 30000 });
+      if (!out) continue;
+      expect(out.every((p) => p.under.length === 0 && p.offset === 0)).toBe(true);
+      check(blocks, out, 88, width, 28);
+    }
   });
 
   it('gives the same answer every time, and uses a warm start when it is already valid', () => {

@@ -203,6 +203,18 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   can miss a layout that exists, and stage 2 handles one tray only: if it
   fails, the parts are spread over several trays by stage 1 without
   stacking.
+- **What would make it fit?** When the result is more than one tray, a
+  button tests one relaxation at a time, each with a thorough search, and
+  lists every single change that gets everything into one tray: the longest
+  search with no change; smaller finger holes; a deeper tray; a smaller
+  stacking gap, edge thickness or clearance; unlocking a pose; allowing a
+  part to stack; one finger hole instead of two; leaving out the smallest
+  part that makes the rest fit. Suggestions appear as they are found, each
+  with Apply; nothing is changed until one is applied. Stop ends the run.
+- **Independent check.** After a tray is cut, every part is tested against
+  the finished solid (seated and lifted out) and the floor is tested for
+  breaks, separately from the layout search. A failure is reported as an
+  error instead of producing a tray.
 - **Search harder.** When the result is more than one tray, a button reruns
   stage 2 with many times the moves, from three different starting points,
   showing how close it has got. It can find layouts the normal search

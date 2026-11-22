@@ -2,6 +2,7 @@ import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import type { TriMesh } from '../mesh/types';
 import type { Silhouette } from './analyze';
 import { buildCavity, type PocketOptions, DEFAULT_POCKET } from './pocket';
+import { toManifold } from './analyze';
 import { pack, type PackItem } from './pack';
 import { anneal } from './anneal';
 import type { Pt } from './hull2d';
@@ -37,8 +38,11 @@ export interface TrayOptions {
   searchIterations?: number;
   searchRounds?: number;
   searchSeed?: number;
-  /** 'hard' = many times the normal search effort, from several starting points (slow). */
-  searchEffort?: 'normal' | 'hard';
+  /**
+   * 'thorough' = several times the normal search effort; 'hard' = many times,
+   * from several starting points (slow). Both are repeatable.
+   */
+  searchEffort?: 'normal' | 'thorough' | 'hard';
   /** Diagnostic: smallest rule violation the search reached (grid cells), per search run. */
   searchReport?: (violationCells: number, maxDepth: number) => void;
   /** Step for spinning parts about Z when packing (degrees; default 15). */
@@ -178,8 +182,18 @@ export function fingerCentre(silhouette: Silhouette, clearance: number, side: Si
  * 5. Failing that, the side-by-side packing over several trays is used.
  */
 export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, onProgress?: (fraction: number, label: string) => void): TrayResult {
+  return cutPlan(k, o, planBest(k, parts, o, onProgress), onProgress);
+}
+
+/** Lay the parts out without cutting anything: how many trays would it take? (Used to test "what if" changes.) */
+export function planTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, onProgress?: (fraction: number, label: string) => void): { trays: number; stacks: number; depths: number[] } {
+  const plan = planBest(k, parts, o, onProgress);
+  return { trays: plan.trayDepths.length, stacks: plan.stacks, depths: plan.trayDepths.map((d) => o.depth ?? d + o.floor) };
+}
+
+function planBest(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, onProgress?: (fraction: number, label: string) => void): Plan {
   const first = buildOnce(k, parts, o, null, onProgress);
-  if (first.trayDepths.length <= 1 || o.depth !== null) return cutPlan(k, o, first, onProgress);
+  if (first.trayDepths.length <= 1 || o.depth !== null) return first;
 
   // More than one tray at the depth the deepest part needs. Step the depth up
   // through the next deeper orientations of any part — to the case height if
@@ -197,7 +211,7 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
     if (next.trayDepths.length < best.trayDepths.length) best = next;
     if (best.trayDepths.length === 1) break;
   }
-  return cutPlan(k, o, best, onProgress);
+  return best;
 }
 
 /** One pocket to cut: a part in a pose, turned and positioned, possibly sunk below the surface. */
@@ -299,14 +313,14 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
         const p = start.get(u.id);
         return { id: u.id, stackable: u.part.stackable !== false, gap: Math.max(0, u.part.stackGap ?? o.stackGap), options: options(u), start: p && { key: p.key, angle: p.angle, tx: p.tx, ty: p.ty } };
       });
-      const hard = o.searchEffort === 'hard';
+      const hard = o.searchEffort === 'hard', thorough = o.searchEffort === 'thorough';
       // Normal: one run. Hard: far more moves per run, from several different starting points.
       const seeds = o.searchSeed !== undefined ? [o.searchSeed] : hard ? [1, 2, 3] : [1];
       let found: ReturnType<typeof anneal> = null;
       for (let k2 = 0; k2 < seeds.length && !found; k2++) {
         found = anneal(annealItems, {
           ...region, softMargin, maxDepth: D, allowSink: o.stacking, angleStep: o.packAngleStep,
-          iterations: o.searchIterations ?? (hard ? 400000 : undefined), rounds: o.searchRounds ?? (hard ? 12 : undefined), seed: seeds[k2],
+          iterations: o.searchIterations ?? (hard ? 400000 : thorough ? 150000 : undefined), rounds: o.searchRounds ?? (hard ? 12 : thorough ? 8 : undefined), seed: seeds[k2],
           report: o.searchReport && ((v) => o.searchReport!(v, D)),
           progress: (round, rounds, v) => onProgress?.(
             0.12 + (0.8 * (k2 * rounds + round)) / (seeds.length * rounds),
@@ -353,6 +367,9 @@ function cutPlan(k: ManifoldToplevel, o: TrayOptions, plan: Plan, onProgress?: (
         const { part, pose } = e;
         onProgress?.(0.15 + (0.75 * done++) / plan.entries.length, `Cutting pocket: ${part.name}`);
         const c = buildCavity(k, pose.mesh, pose.silhouette, pose.height, o.pocket);
+        // Safety net: a pocket must never reach into the floor, whatever the layout search returned.
+        if (e.offset + c.depth > depth - o.floor + 0.05)
+          throw new Error(`Layout error: the pocket for ${part.name} would be ${(e.offset + c.depth).toFixed(1)} mm deep in a tray with ${(depth - o.floor).toFixed(1)} mm available.`);
         // Part coordinates -> the tray surface at z = 0, pocket top `offset` below it.
         let piece = keep(keep(c.solid).translate(0, 0, -e.offset - c.top));
         if (e.offset > 0) {
@@ -395,6 +412,23 @@ function cutPlan(k: ManifoldToplevel, o: TrayOptions, plan: Plan, onProgress?: (
       const allCuts = cuts.length === 1 ? cuts[0] : keep(k.Manifold.union(cuts));
       const tray = keep(block.subtract(allCuts));
       if (tray.isEmpty()) throw new Error('Tray geometry came out empty');
+      // Independent check, separate from the layout search: every part must sit in
+      // clear space in the finished tray and stay clear as it is lifted straight
+      // out, and the floor must be unbroken. A failure here is a bug, and the
+      // tray is not handed out.
+      onProgress?.(0.96, `Checking tray ${t + 1}`);
+      for (const pl of placements) {
+        const e = plan.entries.find((x) => x.tray === t && x.part.partId === pl.partId)!;
+        const solid = toManifold(k, e.pose.mesh);
+        if (!solid) continue; // not watertight: cannot be checked this way
+        keep(solid);
+        for (const lift of [0, 5, depth]) {
+          const clash = keep(keep(keep(solid.rotate([0, 0, pl.angle])).translate(pl.x, pl.y, pl.z + lift)).intersect(tray));
+          if (clash.volume() > 1) throw new Error(`Layout check failed: ${e.part.name} would collide with the tray (${clash.volume().toFixed(0)} mm³${lift ? ` when lifted ${lift.toFixed(0)} mm` : ''}). Please report this.`);
+        }
+      }
+      const floorArea = keep(tray.slice(Math.min(1, o.floor / 2))).area(), full = keep(block.slice(Math.min(1, o.floor / 2))).area();
+      if (floorArea < full * 0.9999) throw new Error('Layout check failed: a pocket or finger hole breaks through the tray floor. Please report this.');
       trays.push({ mesh: toTriMesh(tray, `tray-${t + 1}`), depth, placements, volume: tray.volume() });
     }
     return { trays, stacks: plan.stacks };

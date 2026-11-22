@@ -27,6 +27,8 @@ export type WorkerRequest =
   | { id: number; type: 'export' }
   /** Replace all parts with previously saved ones. */
   | { id: number; type: 'restore'; parts: SavedPart[] }
+  /** Try relaxing one rule at a time and report which changes let everything fit one tray. */
+  | { id: number; type: 'suggest'; options: TrayOptions }
   /** Arrange every loaded part into trays and cut the pockets. */
   | { id: number; type: 'tray'; options: TrayOptions; shell?: ShellRequest | null };
 
@@ -81,8 +83,24 @@ export interface SavedPart {
   stackGap?: number | null;
 }
 
+/** One change that would let everything fit in a single tray. */
+export type Change =
+  | { kind: 'effort' }
+  | { kind: 'setting'; key: 'fingerDiameter' | 'depth' | 'stackGap' | 'clearance' | 'edge' | 'stacking'; value: number | boolean }
+  | { kind: 'part'; partId: number; change: 'unlock' | 'allowStack' | 'clearGap' }
+  | { kind: 'fingers'; partId: number; fingers: Side[] }
+  | { kind: 'remove'; partId: number };
+export interface Suggestion {
+  /** What to change, in plain words. */
+  text: string;
+  change: Change;
+  /** Parts that end up stacked with this change. */
+  stacks: number;
+}
+
 export type WorkerResponse =
-  | { id: number; type: 'progress'; fraction: number; label: string }
+  | { id: number; type: 'progress'; fraction: number; label: string; suggestion?: Suggestion }
+  | { id: number; type: 'suggestions'; list: Suggestion[]; tried: number }
   | { id: number; type: 'result'; parts: ParsedPart[] }
   | { id: number; type: 'tray'; tray: TrayInfo }
   | { id: number; type: 'saved'; parts: SavedPart[] }

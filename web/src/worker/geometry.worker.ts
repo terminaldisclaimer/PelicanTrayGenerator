@@ -7,9 +7,9 @@ import type { TriMesh } from '../mesh/types';
 import { initKernel } from '../geom/kernel';
 import { poseCandidates, posePart, type PoseCandidate } from '../geom/analyze';
 import { FLIP, mul, ROT_X90, ROT_Y90, ROT_Z90, type Mat3 } from '../geom/vec';
-import { autoFingers, buildTrays, distinctPoses, TrayError, type Side, type TrayPart } from '../geom/tray';
+import { autoFingers, buildTrays, distinctPoses, planTrays, TrayError, type Side, type TrayOptions, type TrayPart } from '../geom/tray';
 import { buildShell, shellProblem } from '../geom/shell';
-import type { ParsedPart, PoseAction, WorkerRequest, WorkerResponse } from './protocol';
+import type { ParsedPart, PoseAction, Suggestion, WorkerRequest, WorkerResponse } from './protocol';
 
 const post = (msg: WorkerResponse, transfer: Transferable[] = []) =>
   (self as unknown as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
@@ -44,6 +44,143 @@ async function add(mesh: TriMesh): Promise<number> {
   const id = nextPartId++;
   parts.set(id, { original: mesh, candidates, rotation: candidates[0].rotation, poseIndex: 0, locked: false, fingers: 'auto', stackable: true, stackGap: null, inchesChecked: false });
   return id;
+}
+
+
+/** What-if overrides for one part when testing a change. */
+interface Override { unlock?: boolean; allowStack?: boolean; clearGap?: boolean; fingers?: Side[] }
+
+/**
+ * The loaded parts as the layout sees them. Locked parts keep their pose;
+ * unlocked parts offer every 90° orientation that actually differs.
+ */
+async function trayParts(overrides = new Map<number, Override>(), omit = -1): Promise<TrayPart[]> {
+  const k = await initKernel(wasmUrl);
+  return [...parts].filter(([partId]) => partId !== omit).map(([partId, s]) => {
+    const ov = overrides.get(partId) ?? {};
+    const pose = (poseIndex: number, r: Mat3) => { const p = posePart(k, s.original, r); return { poseIndex, mesh: p.mesh, silhouette: p.silhouette, height: p.height, size: p.size }; };
+    let poses = [pose(-1, s.rotation)];
+    if (!s.locked || ov.unlock) poses = distinctPoses(s.candidates.map((c, i) => pose(i, c.rotation)).sort((a, b) => a.height - b.height || a.poseIndex - b.poseIndex));
+    return {
+      partId, name: s.original.name, poses,
+      fingers: ov.fingers ?? s.fingers, stackable: ov.allowStack ? true : s.stackable, stackGap: ov.clearGap ? null : s.stackGap,
+    };
+  });
+}
+
+/**
+ * Relax one rule at a time and report every change that gets everything into
+ * one tray. Each trial is a full, thorough layout search; nothing is applied.
+ */
+async function suggest(id: number, base: TrayOptions): Promise<{ list: Suggestion[]; tried: number }> {
+  const k = await initKernel(wasmUrl);
+  const found: Suggestion[] = [];
+  const o: TrayOptions = { ...base, searchEffort: 'thorough' };
+  const normal = await trayParts();
+  const nameOf = (partId: number) => parts.get(partId)!.original.name;
+  const fits = (ps: TrayPart[], opts: TrayOptions): number | null => {
+    try { const r = planTrays(k, ps, opts); return r.trays === 1 ? r.stacks : null; } catch { return null; }
+  };
+  type Trial = { label: string; run: () => Promise<Suggestion | null> | Suggestion | null };
+  const trials: Trial[] = [];
+  const mm = (v: number) => `${+v.toFixed(1)} mm`;
+
+  // 0. No change at all, just the longest search.
+  trials.push({ label: 'your settings as they are, with the longest search', run: () => {
+    const st = fits(normal, { ...base, searchEffort: 'hard' });
+    return st === null ? null : { text: 'No change needed: a longer search finds a one-tray layout with your settings as they are.', change: { kind: 'effort' }, stacks: st };
+  } });
+
+  // 1. Global settings, smallest change first; stop at the first value that works.
+  const ladder = (label: string, values: number[], opts: (v: number) => TrayOptions, text: (v: number) => string, key: 'fingerDiameter' | 'depth' | 'stackGap' | 'clearance' | 'edge') => {
+    let done = false;
+    for (const v of values)
+      trials.push({ label: `${label} ${mm(v)}`, run: () => {
+        if (done) return null;
+        const st = fits(normal, opts(v));
+        if (st === null) return null;
+        done = true;
+        return { text: text(v), change: { kind: 'setting', key, value: v }, stacks: st };
+      } });
+  };
+  const d = base.fingerDiameter;
+  ladder('finger holes at', [d - 1, d - 2, d - 3, d - 4, d - 6, d - 8].filter((v) => v >= 10), (v) => ({ ...o, fingerDiameter: v }), (v) => `Finger holes ${mm(v)} across instead of ${mm(d)}.`, 'fingerDiameter');
+  if (base.depth !== null) {
+    const cap = base.maxDepth ?? base.depth + 12;
+    const dep = base.depth;
+    ladder('tray depth', [dep + 1, dep + 2, dep + 4, dep + 6, dep + 8, dep + 12].filter((v) => v <= cap + 1e-9), (v) => ({ ...o, depth: v }), (v) => `Tray ${mm(v)} deep instead of ${mm(dep)}.`, 'depth');
+  }
+  if (base.stackGap > 0) {
+    const g = base.stackGap;
+    ladder('gap between stacked parts', [g / 2, 0].filter((v, i, a) => a.indexOf(v) === i), (v) => ({ ...o, stackGap: v }), (v) => `Gap between stacked parts ${mm(v)} instead of ${mm(g)}.`, 'stackGap');
+  }
+  if (base.edge > 1.2) {
+    const e = base.edge;
+    ladder('tray edge thickness', [Math.max(1.2, e - 0.5), 1.2].filter((v, i, a) => v < e && a.indexOf(v) === i), (v) => ({ ...o, edge: v }), (v) => `Minimum tray thickness at the edge ${mm(v)} instead of ${mm(e)}.`, 'edge');
+  }
+  if (base.pocket.clearance > 0.3) {
+    const c = base.pocket.clearance;
+    ladder('clearance around parts', [0.3], (v) => ({ ...o, pocket: { ...o.pocket, clearance: v } }), (v) => `Clearance around parts ${mm(v)} instead of ${mm(c)} (a tighter fit).`, 'clearance');
+  }
+  if (!base.stacking)
+    trials.push({ label: 'stacking switched on', run: () => {
+      const st = fits(normal, { ...o, stacking: true });
+      return st === null ? null : { text: 'Switch on "Stack parts if they don\'t all fit".', change: { kind: 'setting', key: 'stacking', value: true }, stacks: st };
+    } });
+
+  // 2. One part's own choices.
+  for (const [partId, s] of parts) {
+    const one = async (ov: Override) => fits(await trayParts(new Map([[partId, ov]])), o);
+    if (s.locked)
+      trials.push({ label: `${nameOf(partId)} with its pose unlocked`, run: async () => {
+        const st = await one({ unlock: true });
+        return st === null ? null : { text: `Untick "Lock pose" on ${nameOf(partId)}, so it can be turned.`, change: { kind: 'part', partId, change: 'unlock' }, stacks: st };
+      } });
+    if (!s.stackable && base.stacking)
+      trials.push({ label: `${nameOf(partId)} allowed to stack`, run: async () => {
+        const st = await one({ allowStack: true });
+        return st === null ? null : { text: `Allow stacking on ${nameOf(partId)}.`, change: { kind: 'part', partId, change: 'allowStack' }, stacks: st };
+      } });
+    if (s.stackGap !== null && s.stackGap > base.stackGap)
+      trials.push({ label: `${nameOf(partId)} without its own stacking gap`, run: async () => {
+        const st = await one({ clearGap: true });
+        return st === null ? null : { text: `Remove the ${mm(s.stackGap!)} "Gap when stacked" on ${nameOf(partId)} (it then uses the tray's ${mm(base.stackGap)}).`, change: { kind: 'part', partId, change: 'clearGap' }, stacks: st };
+      } });
+    const mine = normal.find((p) => p.partId === partId)!;
+    const sides = s.fingers === 'auto' ? autoFingers(mine.poses[0].height) : s.fingers;
+    if (sides.length >= 2)
+      trials.push({ label: `${nameOf(partId)} with one finger hole`, run: async () => {
+        const st = await one({ fingers: [sides[0]] });
+        return st === null ? null : { text: `One finger hole instead of ${sides.length} on ${nameOf(partId)}.`, change: { kind: 'fingers', partId, fingers: [sides[0]] }, stacks: st };
+      } });
+  }
+
+  // 3. Leaving one part out: smallest first, stop at the first that works.
+  const bySize = [...normal].sort((a, b) => {
+    const area = (p: TrayPart) => { const [w, h] = (p.poses[0] as unknown as { size: number[] }).size; return w * h; };
+    return area(a) - area(b);
+  });
+  let left = false;
+  for (const p of bySize)
+    trials.push({ label: `everything except ${p.name}`, run: async () => {
+      if (left || normal.length < 2) return null;
+      const st = fits(await trayParts(new Map(), p.partId), o);
+      if (st === null) return null;
+      left = true;
+      return { text: `Leave out ${p.name} (the smallest part whose removal makes the rest fit).`, change: { kind: 'remove', partId: p.partId }, stacks: st };
+    } });
+
+  for (let i = 0; i < trials.length; i++) {
+    post({ id, type: 'progress', fraction: i / trials.length, label: `Trying ${i + 1} of ${trials.length}: ${trials[i].label}` });
+    const sug = await trials[i].run();
+    if (sug) {
+      found.push(sug);
+      post({ id, type: 'progress', fraction: (i + 1) / trials.length, label: `Found: ${sug.text}`, suggestion: sug });
+      // Your settings already fit with a longer search: nothing needs relaxing.
+      if (sug.change.kind === 'effort') return { list: found, tried: i + 1 };
+    }
+  }
+  return { list: found, tried: trials.length };
 }
 
 const reply = (id: number, list: ParsedPart[]) =>
@@ -144,16 +281,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const shellError = req.shell ? shellProblem(req.shell.outer, req.shell.options) : null;
       if (shellError) throw new TrayError(shellError);
       post({ id: req.id, type: 'progress', fraction: 0.01, label: 'Preparing parts' });
-      // Locked parts keep their pose. Unlocked parts offer the packer every 90°
-      // orientation that actually differs.
-      const list: TrayPart[] = [...parts].map(([partId, s]) => {
-        const pose = (poseIndex: number, r: Mat3) => { const p = posePart(k, s.original, r); return { poseIndex, mesh: p.mesh, silhouette: p.silhouette, height: p.height, size: p.size }; };
-        let poses = [pose(-1, s.rotation)];
-        if (!s.locked) {
-          poses = distinctPoses(s.candidates.map((c, i) => pose(i, c.rotation)).sort((a, b) => a.height - b.height || a.poseIndex - b.poseIndex));
-        }
-        return { partId, name: s.original.name, fingers: s.fingers, stackable: s.stackable, stackGap: s.stackGap, poses };
-      });
+      const list = await trayParts();
       const result = buildTrays(k, list, req.options, (fraction, label) => post({ id: req.id, type: 'progress', fraction, label }));
       // Auto parts take the pose the packer chose (still unlocked).
       for (const t of result.trays)
@@ -169,6 +297,9 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         { id: req.id, type: 'tray', tray: { trays: result.trays, stacks: result.stacks, length: req.options.length, width: req.options.width, parts: now, shells } },
         [...result.trays.map((t) => t.mesh.positions.buffer as ArrayBuffer), ...now.map((p) => p.mesh.positions.buffer as ArrayBuffer), ...(shells ?? []).map((s) => s.mesh.positions.buffer as ArrayBuffer)],
       );
+    } else if (req.type === 'suggest') {
+      const r = await suggest(req.id, req.options);
+      post({ id: req.id, type: 'suggestions', list: r.list, tried: r.tried });
     } else if (req.type === 'remove') {
       parts.delete(req.partId);
       reply(req.id, []);

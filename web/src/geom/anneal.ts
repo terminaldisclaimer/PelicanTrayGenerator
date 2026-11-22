@@ -183,6 +183,10 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
   /** Room to leave between two stacked parts: the larger of what each asks for. */
   const gapOf = (i: number, j: number) => Math.max(items[i].gap ?? 0, items[j].gap ?? 0);
 
+  /** Is `l` genuinely stacked beneath `u`: overlapping, allowed to stack, and fitting in the depth? */
+  const stackedUnder = (l: number, u: number) =>
+    sunk[l] === 1 && sunk[u] === 0 && ov[l * n + u] > 0 && items[u].stackable && items[l].stackable && depthOf(u) + gapOf(u, l) + depthOf(l) <= D;
+
   /** [rule violations in cells, secondary cost (stack count and tray depth)]. */
   const score = (): [number, number] => {
     let bad = 0;
@@ -196,7 +200,8 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
         // same finger-hole rule applies (a hole must not open into the other's pocket or shaft).
         if (!v) { bad += fv[i * n + j]; continue; }
         const u = sunk[i] ? j : i, l = sunk[i] ? i : j; // u on the surface, l beneath
-        if (!items[u].stackable || depthOf(u) + gapOf(u, l) + depthOf(l) > D) { bad += v; continue; }
+        // Not a permitted stack: every shared cell is a clash, and the finger-hole rule still applies.
+        if (!items[u].stackable || !items[l].stackable || depthOf(u) + gapOf(u, l) + depthOf(l) > D) { bad += v + fv[i * n + j]; continue; }
         if (v < sh[l].cells) { covered[u] += v; outside[u] += sh[l].cells - v; } // not hidden entirely: u loses that much floor
       }
     let stacked = 0, depth = 0;
@@ -211,7 +216,7 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
         depth = Math.max(depth, depthOf(i));
       } else {
         let offset = 0;
-        for (let j = 0; j < n; j++) if (!sunk[j] && ov[i * n + j]) offset = Math.max(offset, depthOf(j) + gapOf(i, j));
+        for (let j = 0; j < n; j++) if (stackedUnder(i, j)) offset = Math.max(offset, depthOf(j) + gapOf(i, j));
         if (offset) stacked++;
         depth = Math.max(depth, offset + depthOf(i));
       }
@@ -363,6 +368,14 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
     refresh(i);
     return false;
   };
+  // A part flagged as sunk that could just as well sit on the surface goes back there.
+  for (let i = 0; i < n; i++) {
+    if (!sunk[i]) continue;
+    sunk[i] = 0;
+    const next = score();
+    if (next[0] <= Math.max(cur[0], 0) + 1e-9 && next[0] <= TOLERANCE) cur = next;
+    else sunk[i] = 1;
+  }
   for (let pass = 0; pass < 3; pass++)
     for (let i = 0; i < n; i++) {
       let touching = false;
@@ -380,7 +393,8 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
   return items.map((it, i) => {
     const under: number[] = [];
     let offset = 0;
-    if (sunk[i]) for (let j = 0; j < n; j++) if (!sunk[j] && ov[i * n + j]) { under.push(items[j].id); offset = Math.max(offset, depthOf(j) + gapOf(i, j)); }
+    // Only genuine stacks count: a sliver of tolerated overlap does not put one part under another.
+    for (let j = 0; j < n; j++) if (j !== i && stackedUnder(i, j)) { under.push(items[j].id); offset = Math.max(offset, depthOf(j) + gapOf(i, j)); }
     return { id: it.id, key: it.options[opt[i]].key, angle: angles[ang[i]], tx: px[i] * cell - sh[i].minX, ty: py[i] * cell - sh[i].minY, depth: depthOf(i), offset, under };
   });
 }
