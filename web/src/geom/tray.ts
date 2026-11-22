@@ -130,7 +130,8 @@ export function fingerCentre(silhouette: Silhouette, clearance: number, side: Si
  * 2. Pack everything side by side. If it fits in one tray, done.
  * 3. Otherwise stack, always within D. First try tucking the parts that did
  *    not fit partly or wholly under the ones that did (each goes just below
- *    the floors of the pockets above it). If that fails, stack whole parts on
+ *    the floors of the pockets above it). Then search over which parts go
+ *    underneath. If that fails, stack whole parts on
  *    top of each other, one pair at a time, best space saving first, stopping
  *    as soon as everything fits in one tray.
  * 4. If it still does not fit, the parts overflow into more trays.
@@ -173,7 +174,7 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
     const inset = Math.max(0, o.edge - o.wall / 2 - RASTER_SLACK);
     const region = { width: o.length - 2 * inset, height: o.width - 2 * inset };
     const packWith = (items: PackItem[], quick: boolean) =>
-      pack(items, { ...region, attempts: quick ? 9 : o.packAttempts ?? 30, timeBudgetMs: quick ? 700 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep });
+      pack(items, { ...region, attempts: quick ? 6 : o.packAttempts ?? 30, timeBudgetMs: quick ? 400 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep });
 
     // ---- 1. Allowed poses and the depth the deepest part sets ----
     onProgress?.(0.03, 'Measuring parts');
@@ -233,35 +234,85 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
     let stacks = 0;
 
     if (o.stacking && packed.trays.length > 1) {
-      // 3a. Partial stacking: keep the first tray as laid out and tuck every
-      //     part that did not fit under (or between) the parts that did.
       onProgress?.(0.12, 'Stacking parts to fit');
-      const first = packed.placements.filter((p) => p.tray === 0), rest = packed.placements.filter((p) => p.tray > 0);
       const unitOf = (id: number) => units.find((u) => u.id === id)!;
-      if (rest.every((p) => unitOf(p.id).part!.stackable !== false)) {
+      /** Given a one-tray layout of surface parts, tuck the `lower` parts beneath/between them. */
+      const sinkInto = (surface: typeof packed, lower: Unit[]): boolean => {
         const sunk = sink(
-          first.map((p) => {
+          surface.placements.map((p) => {
             const u = unitOf(p.id), c = u.choices.find((x) => x.pose.poseIndex === p.key)!;
             return { id: p.id, depth: c.depth, footprint: c.footprint, angle: p.angle, tx: p.tx, ty: p.ty, noCover: u.part!.stackable === false };
           }),
-          rest.map((p) => { const c = unitOf(p.id).choices[0]; return { id: p.id, depth: c.depth, footprint: c.footprint }; }),
+          lower.map((u) => ({ id: u.id, depth: u.choices[0].depth, footprint: u.choices[0].footprint })),
           { ...region, maxDepth: D },
         );
-        if (sunk) {
-          entries = entriesOf({ ...packed, placements: first });
-          for (const sp of sunk) {
-            const u = unitOf(sp.id);
-            entries.push({ tray: 0, part: u.part!, choice: u.choices[0], angle: sp.angle, tx: sp.tx, ty: sp.ty, offset: sp.offset, level: sp.under.length ? 1 : 0, stackSize: sp.under.length ? 2 : 1, under: sp.under });
-          }
-          for (const e of entries) if (entries.some((x) => x.under.includes(e.part.partId))) e.stackSize = 2;
-          trayDepths = [Math.max(packed.trays[0].depth, ...sunk.map((sp) => sp.offset + unitOf(sp.id).choices[0].depth))];
-          stacks = sunk.filter((sp) => sp.under.length).length;
+        if (!sunk) return false;
+        const list = entriesOf(surface);
+        for (const sp of sunk) {
+          const u = unitOf(sp.id);
+          list.push({ tray: 0, part: u.part!, choice: u.choices[0], angle: sp.angle, tx: sp.tx, ty: sp.ty, offset: sp.offset, level: sp.under.length ? 1 : 0, stackSize: sp.under.length ? 2 : 1, under: sp.under });
         }
+        for (const e of list) if (list.some((x) => x.under.includes(e.part.partId))) e.stackSize = 2;
+        entries = list;
+        trayDepths = [Math.max(surface.trays[0].depth, ...sunk.map((sp) => sp.offset + unitOf(sp.id).choices[0].depth))];
+        stacks = sunk.filter((sp) => sp.under.length).length;
+        return true;
+      };
+
+      // 3a. Keep the first tray as laid out and tuck every part that did not fit.
+      const first = packed.placements.filter((p) => p.tray === 0), rest = packed.placements.filter((p) => p.tray > 0);
+      let found = rest.every((p) => unitOf(p.id).part!.stackable !== false)
+        && sinkInto({ ...packed, placements: first, trays: [packed.trays[0]] }, rest.map((p) => unitOf(p.id)));
+
+      // 3b. Otherwise search over *which* parts go underneath: move parts off
+      //     the surface (largest first) until the rest fit one tray, then try
+      //     to tuck the moved ones under them. Backtracks within a time budget.
+      if (!found) {
+        const regionArea = region.width * region.height;
+        // A part is worth putting underneath only if the parts shallow enough to sit
+        // over it could actually hide most of it (each may give up half its floor).
+        const cover = (l: Unit, over: Unit[]) => {
+          const a = l.shape.area();
+          let hidden = 0;
+          for (const v of over) if (v !== l && v.depth + l.depth <= D + 1e-9) hidden += v.shape.area() >= a ? a : 0.5 * v.shape.area();
+          return Math.min(1, hidden / a);
+        };
+        const sinkable = units
+          .filter((u) => u.part!.stackable !== false && cover(u, units) >= 0.6)
+          .sort((p, q) => q.shape.area() - p.shape.area());
+        const deadline = Date.now() + (o.packTimeMs ?? 2500) * 1.5;
+        const tried = new Set<string>();
+        const search = (lower: Unit[], from: number): boolean => {
+          for (let i = from; i < sinkable.length; i++) {
+            if (Date.now() > deadline) return false;
+            const next = [...lower, sinkable[i]];
+            const surfaceUnits = units.filter((u) => !next.includes(u));
+            // The remaining lower parts need shallow enough cover among what stays on the surface.
+            if (!next.every((l) => cover(l, surfaceUnits) >= 0.4)) continue;
+            const key = next.map((u) => u.id).sort((x, y) => x - y).join(',');
+            if (tried.has(key)) continue;
+            tried.add(key);
+            if (surfaceUnits.reduce((sum, u) => sum + u.shape.area(), 0) <= regionArea) {
+              const surface = packWith(surfaceUnits.map((u) => ({ id: u.id, options: u.choices.map((c) => ({ key: c.pose.poseIndex, depth: c.depth, footprint: c.footprint })) })), true);
+              if (!surface.unplaced.length && surface.trays.length === 1) {
+                if (sinkInto(surface, next)) return true;
+                continue; // the surface fits; taking more off it will not help these go under
+              }
+            }
+            if (next.length < 5 && search(next, i + 1)) return true;
+          }
+          return false;
+        };
+        // No point searching if even the parts that can never go underneath overflow one tray.
+        const mustStay = units.filter((u) => !sinkable.includes(u));
+        const possible = sinkable.length > 0
+          && packWith(mustStay.map((u) => ({ id: u.id, options: u.choices.map((c) => ({ key: c.pose.poseIndex, depth: c.depth, footprint: c.footprint })) })), true).trays.length <= 1;
+        found = possible && search([], 0);
       }
     }
 
     if (!entries && o.stacking && packed.trays.length > 1) {
-      // 3b. Whole stacks: merge pairs of parts into one footprint.
+      // 3c. Whole stacks: merge pairs of parts into one footprint.
       const flat = { packed, units: units.map((u) => ({ ...u })) };
       const regionArea = region.width * region.height;
       const canStack = (u: Unit) => layersOf(u).every((l) => l.part.stackable !== false);

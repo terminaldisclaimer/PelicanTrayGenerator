@@ -118,7 +118,11 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
        at least half its floor to rest on, unless the lower part is hidden
        completely beneath it (then it rests on that part). Positions that
        hide the most of the lower part are preferred.
-     - **Whole stacks second.** If that fails, parts are stacked one pair at
+     - **Search second.** If that fails, it searches over which parts go
+       underneath: parts that shallower neighbours could mostly hide are
+       moved off the surface (largest first) until the rest fit one tray,
+       then tucked under them, backtracking within a time budget.
+     - **Whole stacks third.** If that fails, parts are stacked one pair at
        a time, taking the pair that saves the most tray area first, and
        repacked after each, stopping as soon as everything fits in one tray.
   4. If they still do not fit, the stacks are undone and the parts overflow
