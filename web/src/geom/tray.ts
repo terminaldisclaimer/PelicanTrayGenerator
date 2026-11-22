@@ -33,12 +33,31 @@ export const DEFAULT_TRAY: TrayOptions = {
 
 /** One way a part may lie in the tray. */
 export interface TrayPose { poseIndex: number; mesh: TriMesh; silhouette: Silhouette; height: number }
+/** Side of the pocket (as the posed part is drawn: long side along X) a finger cutout sits on. */
+export type Side = 'top' | 'bottom' | 'left' | 'right';
+export const SIDES: Side[] = ['top', 'bottom', 'left', 'right'];
+
 export interface TrayPart {
   partId: number;
   name: string;
   /** Allowed poses, preferred first. One entry = pose is fixed. */
   poses: TrayPose[];
-  finger: boolean;
+  /** Finger cutouts: explicit sides, or 'auto' to decide per pose. */
+  fingers: Side[] | 'auto';
+}
+
+/**
+ * Default finger cutouts for a pose. Thin parts (under 10 mm) get one scoop —
+ * a fingertip under the edge levers them out. Anything taller gets a pair on
+ * opposite long sides so it can be pinched and lifted straight up.
+ */
+export function autoFingers(height: number): Side[] {
+  return height < 10 ? ['top'] : ['top', 'bottom'];
+}
+
+/** How deep a scoop goes: 60 % of the pocket, but all the way down for shallow pockets. */
+export function fingerDepth(pocketDepth: number, fraction: number): number {
+  return pocketDepth <= 15 ? pocketDepth : Math.max(fraction * pocketDepth, 15);
 }
 export interface Placement {
   partId: number;
@@ -47,6 +66,7 @@ export interface Placement {
   angle: number; x: number; y: number; z: number;
   pocketDepth: number;
   formFit: boolean;
+  fingers: Side[];
 }
 export interface Tray { mesh: TriMesh; depth: number; placements: Placement[]; volume: number }
 export interface TrayResult { trays: Tray[] }
@@ -66,24 +86,27 @@ function toTriMesh(m: Manifold, name: string): TriMesh {
 }
 
 /**
- * Where the finger scoop goes: on the pocket edge at the middle of the long
- * side (poses are aligned long-side-along-X, so that is straight "up" in Y
- * from the centre of the outline).
+ * Centre of the finger scoop on one side of the pocket: where the line through
+ * the middle of the outline meets the pocket edge on that side.
  */
-export function fingerCentre(silhouette: Silhouette, clearance: number): Pt {
-  let minX = Infinity, maxX = -Infinity;
-  for (const l of silhouette) for (const [x] of l) { if (x < minX) minX = x; if (x > maxX) maxX = x; }
-  const cx = (minX + maxX) / 2;
-  let top = -Infinity;
+export function fingerCentre(silhouette: Silhouette, clearance: number, side: Side = 'top'): Pt {
+  const horizontal = side === 'left' || side === 'right'; // scan along X at mid-height
+  const u = horizontal ? 1 : 0, v = horizontal ? 0 : 1; // u: fixed coordinate, v: searched coordinate
+  let lo = Infinity, hi = -Infinity;
+  for (const l of silhouette) for (const p of l) { if (p[u] < lo) lo = p[u]; if (p[u] > hi) hi = p[u]; }
+  const mid = (lo + hi) / 2;
+  const far = side === 'top' || side === 'right';
+  let best = far ? -Infinity : Infinity;
   for (const l of silhouette)
     for (let i = 0; i < l.length; i++) {
       const a = l[i], b = l[(i + 1) % l.length];
-      if ((a[0] <= cx && b[0] >= cx) || (b[0] <= cx && a[0] >= cx)) {
-        const y = a[0] === b[0] ? Math.max(a[1], b[1]) : a[1] + ((cx - a[0]) / (b[0] - a[0])) * (b[1] - a[1]);
-        if (y > top) top = y;
+      if ((a[u] <= mid && b[u] >= mid) || (b[u] <= mid && a[u] >= mid)) {
+        const w = a[u] === b[u] ? (far ? Math.max(a[v], b[v]) : Math.min(a[v], b[v])) : a[v] + ((mid - a[u]) / (b[u] - a[u])) * (b[v] - a[v]);
+        best = far ? Math.max(best, w) : Math.min(best, w);
       }
     }
-  return [cx, top + clearance];
+  const edge = best + (far ? clearance : -clearance);
+  return horizontal ? [edge, mid] : [mid, edge];
 }
 
 /** Build trays: choose poses and positions with the packer, then cut every pocket. */
@@ -98,9 +121,16 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
   try {
     const pocketDepth = (pose: TrayPose) => pose.height + o.pocket.floorClearance + o.pocket.topMargin;
     const fingerR = o.fingerDiameter / 2;
-    const scoop = (pose: TrayPose) => {
-      const [fx, fy] = fingerCentre(pose.silhouette, o.pocket.clearance);
-      return keep(keep(k.CrossSection.circle(fingerR, 32)).translate(fx, fy));
+    const sidesFor = (part: TrayPart, pose: TrayPose) => (part.fingers === 'auto' ? autoFingers(pose.height) : part.fingers);
+    /** All finger scoops of a pose as one 2D shape, or null if it has none. */
+    const scoops = (part: TrayPart, pose: TrayPose) => {
+      let all: ReturnType<typeof k.CrossSection.circle> | null = null;
+      for (const side of sidesFor(part, pose)) {
+        const [fx, fy] = fingerCentre(pose.silhouette, o.pocket.clearance, side);
+        const c = keep(keep(k.CrossSection.circle(fingerR, 32)).translate(fx, fy));
+        all = all ? keep(all.add(c)) : c;
+      }
+      return all;
     };
 
     // 1. Footprint of every allowed pose: pocket opening (+ finger scoop), grown by half a wall.
@@ -111,7 +141,8 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
     for (const part of parts) {
       const options = part.poses.filter((pose) => pocketDepth(pose) <= maxPocket + 1e-9).map((pose) => {
         let shape = keep(keep(k.CrossSection.ofPolygons(pose.silhouette, 'Positive')).offset(o.pocket.clearance, 'Round', 2, 16));
-        if (part.finger) shape = keep(shape.add(scoop(pose)));
+        const holes = scoops(part, pose);
+        if (holes) shape = keep(shape.add(holes));
         const grown = keep(keep(shape.offset(o.wall / 2 + RASTER_SLACK + POLYGON_SLACK, 'Round', 2, 12)).simplify(0.1));
         return { key: pose.poseIndex, depth: pocketDepth(pose), footprint: grown.toPolygons() as Pt[][] };
       });
@@ -125,7 +156,7 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
     //    tray shrunk by (edge − wall/2) on every side.
     onProgress?.(0.1, 'Arranging parts');
     const inset = Math.max(0, o.edge - o.wall / 2 - RASTER_SLACK);
-    const packed = pack(items, { width: o.length - 2 * inset, height: o.width - 2 * inset, attempts: o.packAttempts ?? 24, timeBudgetMs: o.packTimeMs ?? 2500 });
+    const packed = pack(items, { width: o.length - 2 * inset, height: o.width - 2 * inset, attempts: o.packAttempts ?? 30, timeBudgetMs: o.packTimeMs ?? 2500, trayOverhead: o.floor });
     if (packed.unplaced.length) {
       const names = packed.unplaced.map((id) => parts.find((p) => p.partId === id)!.name);
       throw new TrayError(`Too big for a ${o.length.toFixed(1)} × ${o.width.toFixed(1)} mm tray in any allowed pose: ${names.join(', ')}.`);
@@ -148,14 +179,14 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
         onProgress?.(0.15 + (0.75 * done++) / packed.placements.length, `Cutting pocket: ${part.name}`);
         const c = buildCavity(k, pose.mesh, pose.silhouette, pose.height, o.pocket);
         let solid = keep(c.solid);
-        if (part.finger) {
-          const fingerDepth = Math.min(c.depth, Math.max(o.fingerDepthFraction * c.depth, 0));
-          const cyl = keep(keep(scoop(pose).extrude(fingerDepth + 1)).translate(0, 0, c.top - fingerDepth));
-          solid = keep(solid.add(cyl));
+        const holes = scoops(part, pose);
+        if (holes) {
+          const d = fingerDepth(c.depth, o.fingerDepthFraction);
+          solid = keep(solid.add(keep(keep(holes.extrude(d + 1)).translate(0, 0, c.top - d))));
         }
         const x = pl.tx - o.length / 2 + inset, y = pl.ty - o.width / 2 + inset, z = depth - c.top;
         cuts.push(keep(keep(solid.rotate([0, 0, pl.angle])).translate(x, y, z)));
-        placements.push({ partId: part.partId, poseIndex: pose.poseIndex, angle: pl.angle, x, y, z, pocketDepth: c.depth, formFit: c.formFit });
+        placements.push({ partId: part.partId, poseIndex: pose.poseIndex, fingers: sidesFor(part, pose), angle: pl.angle, x, y, z, pocketDepth: c.depth, formFit: c.formFit });
       }
       onProgress?.(0.92, `Building tray ${t + 1}`);
       const block = keep(outline.extrude(depth));

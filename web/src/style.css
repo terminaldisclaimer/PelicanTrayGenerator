@@ -77,3 +77,12 @@ button, .btn { font: inherit; color: inherit; }
 .btn.wide { width: 100%; margin-top: 10px; }
 .btn[disabled] { opacity: .45; cursor: default; }
 label.row { cursor: text; }
+.finger-picker { grid-column: 1 / -1; padding-top: 6px; }
+.finger-picker svg { display: block; width: 100%; max-height: 240px; margin: 0 auto 6px; }
+.fp-part { fill: #56606b; stroke: #c7d0da; stroke-width: 0.6; }
+.fp-spot { cursor: pointer; }
+.fp-spot circle:not(.fp-hit) { fill: rgb(245 165 36 / .12); stroke: var(--accent); stroke-width: 1; stroke-dasharray: 2.5 2; }
+.fp-spot[aria-pressed="true"] circle:not(.fp-hit) { fill: var(--accent); stroke-dasharray: none; }
+.fp-hit { fill: transparent; }
+.fp-spot:focus-visible circle:not(.fp-hit) { stroke: #fff; stroke-width: 2; }
+.small-btn[aria-pressed="true"] { background: var(--accent); color: #1b1f24; font-weight: 600; }

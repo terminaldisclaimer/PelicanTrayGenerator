@@ -2,7 +2,9 @@
  * 2D packing of irregular footprints into equal-sized trays (pure TypeScript,
  * no kernel). Footprints are rasterised on a 1 mm grid at 0/90/180/270° and
  * placed first-fit, lowest row first. Several orderings are tried and the
- * best result kept: fewest trays, then least total depth, then most compact.
+ * best result kept: least total stacked height (pocket depth plus floor, summed
+ * over trays — what the stack takes up in the case), then fewest trays, then
+ * most compact.
  */
 import type { Pt } from './hull2d';
 
@@ -29,6 +31,8 @@ export interface PackSettings {
   attempts?: number;
   seed?: number;
   timeBudgetMs?: number;
+  /** Height every tray adds on top of its deepest pocket (the floor), mm. */
+  trayOverhead?: number;
 }
 
 const ANGLES = [0, 90, 180, 270];
@@ -133,7 +137,7 @@ function mulberry32(seed: number) {
 
 interface Solution { bins: Bin[]; placements: PackPlacement[]; unplaced: number[]; score: [number, number, number, number] }
 
-function attempt(order: Prepared[], W: number, H: number, cell: number, depthWeight: number): Solution {
+function attempt(order: Prepared[], W: number, H: number, cell: number, depthWeight: number, overhead: number): Solution {
   const bins: Bin[] = [];
   const placements: PackPlacement[] = [];
   const unplaced: number[] = [];
@@ -160,9 +164,9 @@ function attempt(order: Prepared[], W: number, H: number, cell: number, depthWei
     }
     if (!done) unplaced.push(item.id);
   }
-  const totalDepth = bins.reduce((s, b) => s + b.depth, 0);
+  const stackHeight = bins.reduce((s, b) => s + b.depth + overhead, 0);
   const extent = bins.reduce((s, b) => s + b.top, 0);
-  return { bins, placements, unplaced, score: [unplaced.length, bins.length, totalDepth, extent] };
+  return { bins, placements, unplaced, score: [unplaced.length, stackHeight, bins.length, extent] };
 }
 
 const better = (a: Solution, b: Solution) => {
@@ -196,9 +200,9 @@ export function pack(items: PackItem[], settings: PackSettings): PackResult {
   const start = Date.now();
   let best: Solution | null = null;
   for (let i = 0; i < attempts; i++) {
-    if (i >= orders.length * 2 && settings.timeBudgetMs && Date.now() - start > settings.timeBudgetMs) break;
+    if (i >= orders.length * 3 && settings.timeBudgetMs && Date.now() - start > settings.timeBudgetMs) break;
     let order: Prepared[];
-    if (i < orders.length * 2) order = orders[i >> 1];
+    if (i < orders.length * 3) order = orders[Math.floor(i / 3)];
     else {
       // Perturb the area order: swap a few neighbours.
       order = [...byArea];
@@ -208,8 +212,9 @@ export function pack(items: PackItem[], settings: PackSettings): PackResult {
         [order[a], order[b]] = [order[b], order[a]];
       }
     }
-    // Alternate between "keep trays shallow" and "fit as much as possible".
-    const sol = attempt(order, W, H, cell, i % 2 === 0 ? 4 : 0.25);
+    // Cycle through "never deepen a tray if avoidable", "keep trays shallow"
+    // and "fit as much as possible".
+    const sol = attempt(order, W, H, cell, [1e6, 4, 0.25][i % 3], settings.trayOverhead ?? 0);
     if (!best || better(sol, best)) best = sol;
   }
   return { trays: best!.bins.map((b) => ({ depth: b.depth })), placements: best!.placements, unplaced: best!.unplaced };

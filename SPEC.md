@@ -52,8 +52,9 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 - Auto pose: each flat face of the part's convex hull is a candidate resting
   face. A candidate is stable when the centre of mass is above the face.
   Among stable candidates the **lowest** pose wins (shallowest pocket,
-  thinnest tray); ties go to the larger support face. Up to 6 clearly
-  different poses (≥ 60° apart) are kept for the "Next pose" button. Each
+  thinnest tray); ties go to the larger support face. The pose list always
+  contains that best pose turned 90° every way (upside down, on each long
+  side, on each end), plus any other distinct resting faces, up to 8. Each
   pose is also spun so the part's bounding rectangle is axis-aligned, long
   side along X. The part is then translated so it rests at z = 0.
 - **Choosing a pose:** each part has a picker showing a picture of every
@@ -89,14 +90,18 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   the rim.
 - Pocket depth `D = H + c_z + top_margin`.
 
-### 3.4 Finger cutout
-- A rounded slot (default 20 mm wide, about 60 % of the pocket depth, with
-  rounded bottom) runs from the pocket edge outward.
-- Auto placement: candidates are scored by (a) how much of the part they
-  expose (prefer the narrow ends of long parts and the sides of compact ones)
-  and (b) the free space left in the layout. The packer treats each finger
-  cutout as part of the part's footprint.
-- Can be removed or set to 2 (opposite sides) per part.
+### 3.4 Finger cutouts
+- A round scoop, 20 mm across, centred on the pocket edge. Each pocket can
+  have one on any of its four sides: the two long sides and the two ends.
+- Depth: 60 % of the pocket depth (at least 15 mm); pockets 15 mm deep or
+  less are scooped all the way to the floor so a fingertip gets under the
+  part.
+- **Auto (default):** parts under 10 mm tall get one scoop (lever the part
+  up by its edge); taller parts get a pair on opposite long sides so they
+  can be pinched and lifted straight out.
+- **Choosing:** each part has a top-down drawing with a circle on every
+  side; tap to add or remove a cutout. Presets: Auto, None, Pinch pair.
+- The packer treats the scoops as part of the part's footprint.
 
 ### 3.5 Tiered pockets
 - Part B (shallow) sits above part A's pocket: B's pocket is cut from the
@@ -128,14 +133,16 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   first-fit, lowest row first, into the first tray with room; a new tray of
   the same footprint is opened when none has. Up to 24 orderings are tried
   (by area, by longest side, by depth, then seeded shuffles) within a time
-  budget, alternating between "keep trays shallow" and "fit as much as
-  possible".
+  budget, cycling between "never deepen a tray", "keep trays shallow" and
+  "fit as much as possible".
 - **Pose is part of the search:** parts left on Auto offer their best three
   poses; the packer may stand a part on edge when that saves a tray. Locked
   parts keep their pose. A manual tray depth acts as a limit on which poses
   are allowed.
-- Objective, in priority order: fewest trays → least total depth → most
-  compact.
+- Objective, in priority order: least total stacked height (every tray's
+  depth added up, since trays stack in the case) → fewest trays → most
+  compact. So a part is only stood on edge when that makes the whole stack
+  lower, never just to avoid a second tray.
 - **Not yet built:** finer rotation steps, manual drag/rotate/lock in a 2D
   tray view, moving a part to another tray by hand.
 

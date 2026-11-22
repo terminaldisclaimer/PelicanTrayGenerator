@@ -7,14 +7,14 @@ import type { TriMesh } from '../mesh/types';
 import { initKernel } from '../geom/kernel';
 import { poseCandidates, posePart, type PoseCandidate } from '../geom/analyze';
 import { FLIP, mul, ROT_X90, ROT_Y90, ROT_Z90, type Mat3 } from '../geom/vec';
-import { buildTrays, TrayError, type TrayPart } from '../geom/tray';
+import { autoFingers, buildTrays, TrayError, type Side, type TrayPart } from '../geom/tray';
 import type { ParsedPart, PoseAction, WorkerRequest, WorkerResponse } from './protocol';
 
 const post = (msg: WorkerResponse, transfer: Transferable[] = []) =>
   (self as unknown as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
 
 /** Originals stay in the worker so re-posing never re-sends the mesh. */
-interface Stored { original: TriMesh; candidates: PoseCandidate[]; rotation: Mat3; poseIndex: number; locked: boolean; finger: boolean; inchesChecked: boolean }
+interface Stored { original: TriMesh; candidates: PoseCandidate[]; rotation: Mat3; poseIndex: number; locked: boolean; fingers: Side[] | 'auto'; inchesChecked: boolean }
 const parts = new Map<number, Stored>();
 let nextPartId = 1;
 
@@ -27,7 +27,8 @@ async function describe(partId: number, candidate?: number): Promise<ParsedPart>
   const triangles = s.original.positions.length / 9;
   return {
     partId, ...posed, triangles,
-    poseIndex: candidate ?? s.poseIndex, poseCount: s.candidates.length, poseLocked: s.locked, finger: s.finger,
+    poseIndex: candidate ?? s.poseIndex, poseCount: s.candidates.length, poseLocked: s.locked,
+    fingers: s.fingers === 'auto' ? autoFingers(posed.height) : s.fingers, fingerAuto: s.fingers === 'auto',
     suggestInches: !s.inchesChecked && looksLikeInches(meshBounds(s.original)),
     large: triangles > LARGE_MESH_TRIANGLES,
   };
@@ -40,7 +41,7 @@ async function add(mesh: TriMesh): Promise<number> {
     throw new Error(`${mesh.name}: ${triangles.toLocaleString()} triangles exceeds the ${MAX_MESH_TRIANGLES.toLocaleString()} limit`);
   const candidates = poseCandidates(k, mesh);
   const id = nextPartId++;
-  parts.set(id, { original: mesh, candidates, rotation: candidates[0].rotation, poseIndex: 0, locked: false, finger: true, inchesChecked: false });
+  parts.set(id, { original: mesh, candidates, rotation: candidates[0].rotation, poseIndex: 0, locked: false, fingers: 'auto', inchesChecked: false });
   return id;
 }
 
@@ -96,21 +97,26 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     } else if (req.type === 'finger') {
       const s = parts.get(req.partId);
       if (!s) throw new Error('Unknown part');
-      s.finger = req.on;
+      s.fingers = req.fingers;
       reply(req.id, [await describe(req.partId)]);
     } else if (req.type === 'tray') {
       const k = await initKernel(wasmUrl);
       post({ id: req.id, type: 'progress', fraction: 0.01, label: 'Preparing parts' });
-      // Locked parts keep their pose; parts on Auto offer their best few poses to the packer.
+      // Locked parts keep their pose. Parts on Auto offer the packer their few
+      // lowest poses that actually differ (a flipped part packs the same).
       const AUTO_POSES = 3;
       const list: TrayPart[] = [...parts].map(([partId, s]) => {
-        const rotations: [number, Mat3][] = s.locked
-          ? [[-1, s.rotation]]
-          : s.candidates.slice(0, AUTO_POSES).map((c, i) => [i, c.rotation] as [number, Mat3]);
-        return {
-          partId, name: s.original.name, finger: s.finger,
-          poses: rotations.map(([poseIndex, r]) => { const p = posePart(k, s.original, r); return { poseIndex, mesh: p.mesh, silhouette: p.silhouette, height: p.height }; }),
-        };
+        const pose = (poseIndex: number, r: Mat3) => { const p = posePart(k, s.original, r); return { poseIndex, mesh: p.mesh, silhouette: p.silhouette, height: p.height, size: p.size }; };
+        let poses = [pose(-1, s.rotation)];
+        if (!s.locked) {
+          const all = s.candidates.map((c, i) => pose(i, c.rotation)).sort((a, b) => a.height - b.height || a.poseIndex - b.poseIndex);
+          poses = [];
+          for (const p of all) {
+            const same = poses.some((q) => Math.abs(q.height - p.height) < 0.5 && Math.abs(q.size[0] - p.size[0]) < 0.5 && Math.abs(q.size[1] - p.size[1]) < 0.5);
+            if (!same && poses.length < AUTO_POSES) poses.push(p);
+          }
+        }
+        return { partId, name: s.original.name, fingers: s.fingers, poses };
       });
       const result = buildTrays(k, list, req.options, (fraction, label) => post({ id: req.id, type: 'progress', fraction, label }));
       // Auto parts take the pose the packer chose (still unlocked).

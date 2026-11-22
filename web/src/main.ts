@@ -3,7 +3,7 @@ import { Viewer, renderThumbnail } from './viewer';
 import { initSheet } from './ui/sheet';
 import { GeometryClient } from './worker/client';
 import type { ParsedPart, FileKind, PoseAction, TrayInfo } from './worker/protocol';
-import { DEFAULT_TRAY, type TrayOptions } from './geom/tray';
+import { DEFAULT_TRAY, fingerCentre, SIDES, type Side, type TrayOptions } from './geom/tray';
 import { writeSTL } from './mesh/stl';
 import { LARGE_MESH_TRIANGLES } from './mesh/bounds';
 import { fmtDims, fmtLen, MM_PER_IN, type Units } from './units';
@@ -134,6 +134,73 @@ async function togglePicker(p: PartState) {
   }
 }
 
+/** Part whose finger-cutout picker is open. */
+let fingerOpen: number | null = null;
+const SIDE_NAME: Record<Side, string> = { top: 'far long side', bottom: 'near long side', left: 'left end', right: 'right end' };
+const SVG = 'http://www.w3.org/2000/svg';
+
+/**
+ * Top-down drawing of the part with a tappable circle on each side of the
+ * pocket. Filled circles are finger cutouts; tap to add or remove one.
+ */
+function fingerPicker(p: PartState): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'finger-picker';
+  const clearance = traySettings.clearance, r = DEFAULT_TRAY.fingerDiameter / 2;
+  const centres = SIDES.map((side) => ({ side, c: fingerCentre(p.silhouette, clearance, side) }));
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const { c } of centres) { minX = Math.min(minX, c[0] - r); maxX = Math.max(maxX, c[0] + r); minY = Math.min(minY, c[1] - r); maxY = Math.max(maxY, c[1] + r); }
+  const pad = 4, w = maxX - minX + 2 * pad, h = maxY - minY + 2 * pad;
+  const svg = document.createElementNS(SVG, 'svg');
+  // Flip Y so the drawing matches the top-down view (Y up).
+  svg.setAttribute('viewBox', `${minX - pad} ${-(maxY + pad)} ${w} ${h}`);
+  svg.setAttribute('role', 'group');
+  svg.setAttribute('aria-label', `Finger cutouts for ${p.mesh.name}`);
+  svg.style.aspectRatio = `${w} / ${h}`;
+  const path = document.createElementNS(SVG, 'path');
+  path.setAttribute('d', p.silhouette.map((loop) => 'M' + loop.map(([x, y]) => `${x.toFixed(2)} ${(-y).toFixed(2)}`).join('L') + 'Z').join(''));
+  path.setAttribute('class', 'fp-part');
+  svg.append(path);
+  for (const { side, c } of centres) {
+    const on = p.fingers.includes(side);
+    const hit = Math.max(r, (22 * w) / 300); // keep the tap target usable on small drawings
+    const g = document.createElementNS(SVG, 'g');
+    g.setAttribute('class', 'fp-spot');
+    g.setAttribute('role', 'button');
+    g.setAttribute('tabindex', '0');
+    g.setAttribute('aria-pressed', String(on));
+    g.setAttribute('aria-label', `Finger cutout on the ${SIDE_NAME[side]}`);
+    const ring = document.createElementNS(SVG, 'circle');
+    ring.setAttribute('cx', String(c[0])); ring.setAttribute('cy', String(-c[1])); ring.setAttribute('r', String(r));
+    const target = document.createElementNS(SVG, 'circle');
+    target.setAttribute('cx', String(c[0])); target.setAttribute('cy', String(-c[1])); target.setAttribute('r', String(hit));
+    target.setAttribute('class', 'fp-hit');
+    g.append(target, ring);
+    const toggle = () => update(p, geo.finger(p.partId, SIDES.filter((s) => (s === side ? !on : p.fingers.includes(s)))));
+    g.addEventListener('click', toggle);
+    g.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    svg.append(g);
+  }
+  const row = document.createElement('div');
+  row.className = 'pose-row';
+  const preset = (label: string, value: Side[] | 'auto', active: boolean) => {
+    const b = document.createElement('button');
+    b.className = 'btn small-btn';
+    b.textContent = label;
+    b.setAttribute('aria-pressed', String(active));
+    b.onclick = () => update(p, geo.finger(p.partId, value));
+    row.append(b);
+  };
+  preset('Auto', 'auto', p.fingerAuto);
+  preset('None', [], !p.fingerAuto && p.fingers.length === 0);
+  preset('Pinch pair', ['top', 'bottom'], !p.fingerAuto && p.fingers.length === 2 && p.fingers.includes('top') && p.fingers.includes('bottom'));
+  const hint = document.createElement('p');
+  hint.className = 'muted small';
+  hint.textContent = 'Top-down view. Tap a circle to add or remove a finger cutout there.';
+  wrap.append(svg, row, hint);
+  return wrap;
+}
+
 const POSE_BUTTONS: [PoseAction, string, string][] = [
   ['flip', 'Flip', 'Turn upside down'],
   ['x90', 'Tip ↕', 'Tip 90° forwards'],
@@ -163,6 +230,7 @@ function renderList() {
       del.textContent = '✕';
       del.onclick = () => {
         if (picker?.partId === p.partId) picker = null;
+        if (fingerOpen === p.partId) fingerOpen = null;
         geo.remove(p.partId);
         parts = parts.filter((q) => q.partId !== p.partId);
         refresh();
@@ -188,11 +256,12 @@ function renderList() {
       }
       const finger = document.createElement('button');
       finger.className = 'btn small-btn';
-      finger.textContent = p.finger ? 'Finger cutout: on' : 'Finger cutout: off';
-      finger.setAttribute('aria-pressed', String(p.finger));
-      finger.onclick = () => update(p, geo.finger(p.partId, !p.finger));
+      finger.textContent = fingerOpen === p.partId ? 'Close' : `Finger cutouts: ${p.fingers.length}${p.fingerAuto ? ' (auto)' : ''}`;
+      finger.setAttribute('aria-expanded', String(fingerOpen === p.partId));
+      finger.onclick = () => { fingerOpen = fingerOpen === p.partId ? null : p.partId; if (sheet.snap === 'peek') sheet.open('half'); renderList(); };
       poseRow.append(finger);
       li.append(poseRow);
+      if (fingerOpen === p.partId) li.append(fingerPicker(p));
 
       if (picker?.partId === p.partId) {
         const grid = document.createElement('div');

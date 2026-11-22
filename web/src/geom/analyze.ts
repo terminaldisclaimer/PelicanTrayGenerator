@@ -145,10 +145,11 @@ function centroid(verts: Float32Array, tris: Uint32Array): Vec3 {
  * Candidate resting poses, best first. Each flat face of the convex hull is a
  * way the part could sit on a table; a face is "stable" when the centre of
  * mass is above it. For a tray we prefer the *lowest* stable pose (shallowest
- * pocket, thinnest tray); ties go to the larger support face. Each rotation
- * also spins the part so its bounding rectangle is axis-aligned, long side on X.
+ * pocket, thinnest tray); ties go to the larger support face. The list then
+ * always includes that pose turned 90° in every direction. Each rotation also
+ * spins the part so its bounding rectangle is axis-aligned, long side on X.
  */
-export function poseCandidates(k: ManifoldToplevel, original: TriMesh, max = 6): PoseCandidate[] {
+export function poseCandidates(k: ManifoldToplevel, original: TriMesh, max = 8): PoseCandidate[] {
   const welded = weld(original.positions);
   const pts: Vec3[] = [];
   const step = Math.max(1, Math.floor(welded.verts.length / 3 / 20000));
@@ -207,14 +208,31 @@ export function poseCandidates(k: ManifoldToplevel, original: TriMesh, max = 6):
     return b.supportArea - a.supportArea;
   });
 
-  // Keep clearly different orientations only (≥ 60° apart).
-  const picked: typeof cands = [];
+  // The list always starts with the best pose, then that pose turned 90° every
+  // way (upside down, on each side, on each end), so "standing up" and "on its
+  // side" are always on offer. Other distinct resting faces fill what is left.
+  const finish = (r: Mat3) => {
+    const flat: Pt[] = hullVerts.map((p) => { const q = apply(r, p); return [q[0], q[1]] as Pt; });
+    return mul(rotZ(minAreaRectAngle(flat)), r);
+  };
+  const best = cands[0];
+  const R = finish(best.r); // rows = the posed part's X, Y, Z axes in model coordinates
+  const axes: Vec3[] = [
+    [R[6], R[7], R[8]], // upside down
+    [R[3], R[4], R[5]], [-R[3], -R[4], -R[5]], // on its long sides
+    [R[0], R[1], R[2]], [-R[0], -R[1], -R[2]], // on its ends
+  ];
+  const picked: typeof cands = [best];
+  for (const n of axes) {
+    const face = cands.find((c) => dot(c.n, n) > 0.985);
+    if (face) { if (!picked.includes(face)) picked.push(face); continue; }
+    let lo = Infinity, hi = -Infinity;
+    for (const p of hullVerts) { const d = dot(p, n); if (d < lo) lo = d; if (d > hi) hi = d; }
+    picked.push({ n, r: rotationToDown(n), height: hi - lo, supportArea: 0, stable: false });
+  }
   for (const c of cands) {
     if (picked.length >= max) break;
     if (picked.every((p) => dot(p.n, c.n) < 0.5)) picked.push(c);
   }
-  return picked.map((c) => {
-    const flat: Pt[] = hullVerts.map((p) => { const q = apply(c.r, p); return [q[0], q[1]] as Pt; });
-    return { rotation: mul(rotZ(minAreaRectAngle(flat)), c.r), height: c.height, supportArea: c.supportArea, stable: c.stable };
-  });
+  return picked.map((c) => ({ rotation: finish(c.r), height: c.height, supportArea: c.supportArea, stable: c.stable }));
 }

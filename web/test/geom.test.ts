@@ -140,6 +140,23 @@ describe('auto pose', () => {
     expect(c.every((x) => x.stable)).toBe(true);
   });
 
+  it('always offers the best pose turned 90° every way (on its sides and ends)', () => {
+    // A round bar has no flat side faces, but "standing on end" and "on its side" must still be offered.
+    const bar = soup(k.Manifold.cylinder(80, 6, 6, 64));
+    const heights = poseCandidates(k, bar).map((c) => posePart(k, bar, c.rotation).height);
+    expect(heights[0]).toBeCloseTo(12, 0); // lying down first
+    expect(heights.filter((h) => Math.abs(h - 80) < 0.01).length).toBeGreaterThanOrEqual(2); // both ends
+    expect(heights.filter((h) => Math.abs(h - 12) < 0.2).length).toBeGreaterThanOrEqual(4); // four sides
+    // An L-bracket: standing on each leg end is offered even though the best pose is flat.
+    const a = k.Manifold.cube([40, 10, 6]), b = k.Manifold.cube([10, 30, 6]);
+    const l = soup(a.add(b));
+    a.delete(); b.delete();
+    const sizes = poseCandidates(k, l).map((c) => posePart(k, l, c.rotation).height);
+    expect(sizes[0]).toBeCloseTo(6);
+    expect(sizes.some((h) => Math.abs(h - 40) < 0.01)).toBe(true);
+    expect(sizes.some((h) => Math.abs(h - 30) < 0.01)).toBe(true);
+  });
+
   it('rejects poses where the part would tip over', () => {
     // A tall L: resting on the short foot's end face would topple.
     const a = k.Manifold.cube([10, 10, 60]), b = k.Manifold.cube([40, 10, 10]);

@@ -1,4 +1,4 @@
-import type { TrayOptions } from '../geom/tray';
+import type { Side, TrayOptions } from '../geom/tray';
 import type { FileKind, ParsedPart, PoseAction, TrayInfo, WorkerRequest, WorkerResponse } from './protocol';
 
 type Progress = (fraction: number, label: string) => void;
@@ -52,8 +52,8 @@ export class GeometryClient {
   scale(partId: number, factor: number) {
     return this.call({ type: 'scale', partId, factor }).then((r) => r[0]);
   }
-  finger(partId: number, on: boolean) {
-    return this.call({ type: 'finger', partId, on }).then((r) => r[0]);
+  finger(partId: number, fingers: Side[] | 'auto') {
+    return this.call({ type: 'finger', partId, fingers }).then((r) => r[0]);
   }
   tray(options: TrayOptions, progress?: Progress) {
     return this.call<TrayInfo>({ type: 'tray', options }, [], progress);

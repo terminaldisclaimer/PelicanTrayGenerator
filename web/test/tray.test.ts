@@ -4,7 +4,7 @@ import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { initKernel } from '../src/geom/kernel';
 import { poseCandidates, posePart, toManifold } from '../src/geom/analyze';
 import { buildCavity, DEFAULT_POCKET } from '../src/geom/pocket';
-import { buildTrays, DEFAULT_TRAY, fingerCentre, TrayError, type TrayPart } from '../src/geom/tray';
+import { autoFingers, buildTrays, DEFAULT_TRAY, fingerCentre, fingerDepth, TrayError, type TrayPart } from '../src/geom/tray';
 import { IDENTITY } from '../src/geom/vec';
 import { parseSTL, writeSTL } from '../src/mesh/stl';
 import { parse3MF } from '../src/mesh/threemf';
@@ -109,9 +109,9 @@ describe('pocket', () => {
   });
 });
 
-const trayPart = (m: TriMesh, id: number, finger = false): TrayPart => {
+const trayPart = (m: TriMesh, id: number, fingers: TrayPart['fingers'] = []): TrayPart => {
   const p = posed(m);
-  return { partId: id, name: m.name, finger, poses: [{ poseIndex: 0, mesh: p.mesh, silhouette: p.silhouette, height: p.height }] };
+  return { partId: id, name: m.name, fingers, poses: [{ poseIndex: 0, mesh: p.mesh, silhouette: p.silhouette, height: p.height }] };
 };
 const FAST = { ...DEFAULT_TRAY, packAttempts: 6 };
 
@@ -161,15 +161,30 @@ describe('tray', () => {
     }));
   });
 
-  it('finger cutout: a scoop on the long edge, 60 % of the pocket depth, removes extra material', () => {
+  it('finger cutouts: chosen sides, sensible depth, extra material removed', () => {
     const box = boxMesh(60, 30, 20);
-    expect(fingerCentre(posed(box).silhouette, 0.5)).toEqual([0, 15.5]);
-    const plain = buildTrays(k, [trayPart(box, 1, false)], FAST).trays[0];
-    const withFinger = buildTrays(k, [trayPart(box, 1, true)], FAST).trays[0];
-    // Half a Ø20 disc lies outside the pocket: ≈ π·10²/2 × (0.6 × 20.2) of extra cut.
-    const extra = plain.volume - withFinger.volume;
-    expect(extra / ((Math.PI * 100) / 2 * 0.6 * 20.2)).toBeCloseTo(1, 1);
-    const solid = toManifold(k, withFinger.mesh)!;
+    const sil = posed(box).silhouette;
+    expect(fingerCentre(sil, 0.5, 'top')).toEqual([0, 15.5]);
+    expect(fingerCentre(sil, 0.5, 'bottom')).toEqual([0, -15.5]);
+    expect(fingerCentre(sil, 0.5, 'left')).toEqual([-30.5, 0]);
+    expect(fingerCentre(sil, 0.5, 'right')).toEqual([30.5, 0]);
+    // Shallow pockets are scooped to the floor; deep ones 60 % (at least 15 mm).
+    expect(fingerDepth(6.2, 0.6)).toBe(6.2);
+    expect(fingerDepth(20.2, 0.6)).toBe(15);
+    expect(fingerDepth(40, 0.6)).toBe(24);
+    // Thin parts get one lever scoop, taller parts a pinch pair.
+    expect(autoFingers(6)).toEqual(['top']);
+    expect(autoFingers(20)).toEqual(['top', 'bottom']);
+
+    const vol = (f: TrayPart['fingers']) => buildTrays(k, [trayPart(box, 1, f)], FAST).trays[0];
+    const none = vol([]), one = vol(['top']), two = vol(['top', 'bottom']), auto = vol('auto');
+    // Half a Ø20 disc lies outside the pocket, cut 15 mm deep.
+    const half = (Math.PI * 100) / 2 * 15;
+    expect((none.volume - one.volume) / half).toBeCloseTo(1, 1);
+    expect((none.volume - two.volume) / (2 * half)).toBeCloseTo(1, 1);
+    expect(auto.volume).toBeCloseTo(two.volume, 3);
+    expect(auto.placements[0].fingers).toEqual(['top', 'bottom']);
+    const solid = toManifold(k, two.mesh)!;
     expect(solid).not.toBeNull();
     solid.delete();
   });
@@ -178,7 +193,7 @@ describe('tray', () => {
     // 100×40×8 plate: flat it needs 101 mm of length; on edge (100×8 footprint, 40 tall) too.
     // In a 60×120 tray it must turn 90°; in a 60×60 tray nothing fits.
     const flat = posed(boxMesh(100, 40, 8)), edge = posed(boxMesh(100, 8, 40));
-    const part: TrayPart = { partId: 1, name: 'plate', finger: false, poses: [
+    const part: TrayPart = { partId: 1, name: 'plate', fingers: [], poses: [
       { poseIndex: 0, mesh: flat.mesh, silhouette: flat.silhouette, height: flat.height },
       { poseIndex: 1, mesh: edge.mesh, silhouette: edge.silhouette, height: edge.height },
     ] };
@@ -201,7 +216,7 @@ describe('tray', () => {
   });
 
   it('exports as a valid binary STL', () => {
-    const t = buildTrays(k, [trayPart(boxMesh(60, 40, 25), 1, true)], FAST).trays[0];
+    const t = buildTrays(k, [trayPart(boxMesh(60, 40, 25), 1, 'auto')], FAST).trays[0];
     const back = parseSTL(writeSTL(t.mesh));
     expect(back.positions.length).toBe(t.mesh.positions.length);
     const again = toManifold(k, back)!;
@@ -238,7 +253,7 @@ describe.skipIf(!existsSync(LIB))('real parts', () => {
         expect(out).toBeLessThan(0.5); // mm³
         c.solid.delete();
         const cands = poseCandidates(k, m).slice(0, 3);
-        all.push({ partId: id++, name: f, finger: true, poses: cands.map((c, i) => { const q = posePart(k, m, c.rotation); return { poseIndex: i, mesh: q.mesh, silhouette: q.silhouette, height: q.height }; }) });
+        all.push({ partId: id++, name: f, fingers: 'auto', poses: cands.map((c, i) => { const q = posePart(k, m, c.rotation); return { poseIndex: i, mesh: q.mesh, silhouette: q.silhouette, height: q.height }; }) });
       }
     }
     // The user's test case: 112.52 × 238.76 mm inside, 1 mm gap to the case wall.

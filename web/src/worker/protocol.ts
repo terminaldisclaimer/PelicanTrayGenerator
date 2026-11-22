@@ -1,6 +1,6 @@
 import type { TriMesh } from '../mesh/types';
 import type { Silhouette } from '../geom/analyze';
-import type { Tray, TrayOptions } from '../geom/tray';
+import type { Side, Tray, TrayOptions } from '../geom/tray';
 
 export type FileKind = 'stl' | '3mf';
 export type PoseAction = 'next' | 'x90' | 'y90' | 'z90' | 'flip';
@@ -14,7 +14,8 @@ export type WorkerRequest =
   | { id: number; type: 'select'; partId: number; index: number }
   | { id: number; type: 'scale'; partId: number; factor: number }
   | { id: number; type: 'remove'; partId: number }
-  | { id: number; type: 'finger'; partId: number; on: boolean }
+  /** Choose which sides of the pocket get a finger cutout, or 'auto'. */
+  | { id: number; type: 'finger'; partId: number; fingers: Side[] | 'auto' }
   /** Arrange every loaded part into trays and cut the pockets. */
   | { id: number; type: 'tray'; options: TrayOptions };
 
@@ -33,8 +34,10 @@ export interface ParsedPart {
   /** True once the user has chosen or adjusted the pose; the layout step may
    *  only re-orient parts whose pose is not locked. */
   poseLocked: boolean;
-  /** Whether this part's pocket gets a finger cutout. */
-  finger: boolean;
+  /** Sides of the pocket that get a finger cutout in the current pose. */
+  fingers: Side[];
+  /** True while the app picks the cutouts (they then depend on the pose). */
+  fingerAuto: boolean;
   suggestInches: boolean;
   large: boolean;
 }
