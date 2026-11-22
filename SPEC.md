@@ -1,6 +1,6 @@
 # SPEC — STL Cutout Tray Generator (web app)
 
-Status: **DRAFT — awaiting approval**. Items marked **TBD** need an answer.
+Status: **APPROVED** (2026-11-22). Remaining TBD: case interior size (entered in the app's Settings; presets offered).
 
 ## 1. Concept
 
@@ -162,20 +162,27 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 - Tested at 390 px in Chromium mobile emulation and Playwright WebKit (as a
   stand-in for iOS Safari). You check on a real iPhone at each milestone.
 
-## 7. Multi-material (H3C tool changer)
+## 7. Multi-material (H3C tool changer) — TPU protection liner
 - v1: single-material tray (PETG or PLA).
-- **Proposed v1.1 (optional toggle): TPU pocket liner.** The bottom 1.2 mm
-  and the pocket walls of each pocket are printed as a separate TPU object
-  that fuses to the tray in the same multi-material print. It is exported as
-  its own 3MF object with the TPU filament assigned. This gives the cushioning
-  of the old crush-rib insert without the press-fit step. **TBD — want it?**
+- **v1.1: TPU protection liner (approved).** Each pocket is surrounded by a
+  TPU body thick enough to fully protect the part. Liner thickness `t` is a
+  setting (default 10 mm, range 2–40 mm), applied to the walls *and* under
+  the part (floor pad). Liner = `offset(cavity, t)` minus cavity, clipped to
+  the tray; the PETG/PLA body = tray minus liners. Neighbouring liners merge
+  into one TPU region. A "full TPU interior" mode makes everything inside a
+  PETG/PLA outer shell (min 3 mm) TPU.
+- The packer treats the liner as part of each footprint (spacing between
+  parts ≥ 2·t when not merged; ≥ t when merged), and tray depth grows by the
+  floor pad thickness.
+- Exported as two objects in one 3MF (shell = PETG/PLA, liner = TPU 95A),
+  printed as one multi-material job on the H3C.
 
 ## 8. Hosting
 - Cloudflare Workers with static assets only: `wrangler.jsonc` with
   `assets.directory = web/dist`, no `main` script, `workers_dev: false`,
-  `preview_urls: false`, custom domain route **TBD: `<sub>.<domain>`**.
+  `preview_urls: false`, custom domain route **`pelican.blocknets.org`**.
 - Cloudflare Access: a self-hosted app on the domain, one-time PIN identity
-  provider, and an allow policy for **TBD: email(s)**. Set up by an idempotent
+  provider, and an allow policy for the owner's email(s), passed as `ACCESS_EMAILS` at setup time (never committed — the repo is public). Set up by an idempotent
   script (`npm run access:setup`) that calls the Cloudflare API with
   `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from the environment.
   Tokens are never written to files.
@@ -205,7 +212,8 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 5. **M4**: multiple trays, tiered pockets, per-tray depth.
 6. **M5**: 3MF export (H3C plates, materials), 3MF import polish, labels,
    offline/IndexedDB.
-7. (v1.1) TPU liner.
+7. (v1.1) TPU protection liner.
+8. (later) Fusion 360 import via Autodesk Platform Services (see §13).
 
 ## 11. Defaults (all adjustable)
 
@@ -221,8 +229,19 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 | Finger cutout | 20 mm wide, 60 % depth, on |
 | Tray corner radius | 4 mm |
 
-## 12. Open items (TBD)
-1. Case interior L × W × H (mm), or the case model.
-2. Custom domain (`sub.domain.com`).
-3. Email address(es) allowed through Access.
-4. TPU liner (§7): v1.1, later, or never?
+## 12. Open items
+1. Case interior L × W × H (mm), or the case model. Entered in the app's
+   Settings (default 330 × 230 mm footprint until set).
+
+## 13. Later: Fusion 360 import
+- **Today:** export 3MF from Fusion (desktop: File → 3D Print / Export → 3MF,
+  or Fusion mobile → share) to iCloud/Files/Drive, then open it with the
+  app's file picker.
+- **Later:** a "Import from Fusion" button using Autodesk Platform Services
+  (APS) with OAuth PKCE in the browser (no server, no secret). It lists your
+  hubs/projects/designs via the Data Management API and downloads a
+  translated mesh (STL/OBJ via the Model Derivative API). Requires you to
+  create a free APS app and register the site's callback URL. Needs a check
+  of which F3D output formats Model Derivative currently supports and whether
+  APS calls work through Cloudflare Access/CORS; if not, a small Worker
+  proxy would be added.
