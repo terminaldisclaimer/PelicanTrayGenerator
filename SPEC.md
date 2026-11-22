@@ -130,6 +130,12 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   4. If no one-tray layout is found and the depth is not fixed, the depth is
      stepped up (see Automatic turning) and the search repeated.
   5. Failing that, the side-by-side packing over several trays is used.
+- **Stacking gap.** "Gap between stacked parts" (Trays tab, default 0 mm)
+  is vertical room left between a part and the one beneath it: the lower
+  pocket sits that much below the floor of the pocket above. Each part can
+  set its own "Gap when stacked"; for a pair, the larger of the two applies.
+  The gap counts against the tray depth, so a larger gap means fewer parts
+  can stack.
 - A part on top keeps at least half its floor to rest on, unless the part
   beneath is hidden completely under it (then it rests on that part).
 - A lower part's finger holes run from the tray surface down to its floor.

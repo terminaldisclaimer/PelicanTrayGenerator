@@ -282,6 +282,15 @@ describe('tray', () => {
     expect(open / (81 * 61 + 71 * 51)).toBeCloseTo(1, 2);
     solid.delete();
 
+    // A stacking gap lowers the part underneath by that much (and still fits: 10.2 + 3 + 12.2 <= 30.2).
+    const gapped = buildTrays(k, [A, B, C], { ...tight, stackGap: 3 }).trays[0];
+    expect(gapped.placements.find((p) => p.partId === 3)!.z).toBeCloseTo(gapped.depth - 10.2 - 3 - 12);
+    expect(gapped.depth).toBeCloseTo(32.2);
+    // A part can ask for more than the tray's setting; too much and it can no longer be stacked.
+    const own = buildTrays(k, [A, B, { ...C, stackGap: 5 }], tight).trays[0];
+    expect(own.placements.find((p) => p.partId === 3)!.z).toBeCloseTo(own.depth - 10.2 - 5 - 12);
+    expect(buildTrays(k, [A, B, { ...C, stackGap: 9 }], tight).trays).toHaveLength(2);
+
     // Stacking switched off, or a part marked "never stack": overflow into a second tray instead.
     expect(buildTrays(k, [A, B, C], { ...tight, stacking: false }).trays).toHaveLength(2);
     const fixed = buildTrays(k, [A, B, { ...C, stackable: false }], tight);

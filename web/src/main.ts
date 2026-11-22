@@ -337,7 +337,28 @@ function renderList() {
       const stackRow = document.createElement('div');
       stackRow.className = 'pose-row main-row';
       stackRow.append(lock, stack);
+      // This part's own gap when stacked; empty = the Trays-tab setting.
+      const gapRow = document.createElement('label');
+      gapRow.className = 'row gap-row';
+      const gapText = document.createElement('span');
+      gapText.textContent = `Gap when stacked (${units})`;
+      const gapInput = document.createElement('input');
+      gapInput.className = 'num';
+      gapInput.inputMode = 'decimal';
+      gapInput.autocomplete = 'off';
+      gapInput.placeholder = fromMM(traySettings.stackGap);
+      gapInput.value = p.stackGap === null ? '' : fromMM(p.stackGap);
+      gapInput.setAttribute('aria-label', `Gap when stacked for ${p.mesh.name}, in ${units}; empty uses the tray setting`);
+      gapInput.onchange = () => {
+        const text = gapInput.value.trim().replace(',', '.');
+        const v = text === '' ? null : toMM(parseFloat(text));
+        if (v !== null && !(v >= 0 && v <= 30)) { toast('Gap when stacked must be between 0 and 30 mm, or empty to use the tray setting.'); gapInput.value = p.stackGap === null ? '' : fromMM(p.stackGap); return; }
+        update(p, geo.stackGap(p.partId, v));
+      };
+      gapRow.append(gapText, gapInput);
+
       li.append(stackRow);
+      if (p.stackable) li.append(gapRow);
       if (fingerOpen === p.partId) li.append(fingerPicker(p));
 
       if (picker?.partId === p.partId) {
@@ -395,8 +416,8 @@ const toMM = (v: number) => (units === 'mm' ? v : v * MM_PER_IN);
 const fromMM = (v: number, digits = units === 'mm' ? 2 : 3) => String(+(units === 'mm' ? v : v / MM_PER_IN).toFixed(digits));
 
 /** Case inside size and fit settings (mm). The tray is the case size minus the gap on every side. */
-interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; edge: number; clearance: number; split: number; fingerExtra: number; fingerSwept: boolean; stacking: boolean; shell: boolean; shellWall: number; shellRim: number; shellPlug: number; shellGap: number }
-let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, edge: 2, clearance: DEFAULT_TRAY.pocket.clearance, split: DEFAULT_TRAY.pocket.split, fingerExtra: 0, fingerSwept: true, stacking: true, shell: true, shellWall: DEFAULT_SHELL.wall, shellRim: DEFAULT_SHELL.rim, shellPlug: DEFAULT_SHELL.plug, shellGap: DEFAULT_SHELL.gap };
+interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; edge: number; clearance: number; split: number; fingerExtra: number; fingerSwept: boolean; stacking: boolean; stackGap: number; shell: boolean; shellWall: number; shellRim: number; shellPlug: number; shellGap: number }
+let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, edge: 2, clearance: DEFAULT_TRAY.pocket.clearance, split: DEFAULT_TRAY.pocket.split, fingerExtra: 0, fingerSwept: true, stacking: true, stackGap: 0, shell: true, shellWall: DEFAULT_SHELL.wall, shellRim: DEFAULT_SHELL.rim, shellPlug: DEFAULT_SHELL.plug, shellGap: DEFAULT_SHELL.gap };
 try { traySettings = { ...traySettings, ...JSON.parse(localStorage.getItem('tray') || '{}') }; } catch { /* ignore */ }
 let tray: TrayInfo | null = null;
 /** Shell settings and outside footprint (tray + shell) used for the tray on screen; null = no shell. */
@@ -411,6 +432,7 @@ function fillTrayInputs() {
   num('#tray-depth').value = traySettings.depth == null ? '' : fromMM(traySettings.depth);
   num('#tray-clearance').value = fromMM(traySettings.clearance);
   num('#tray-edge').value = fromMM(traySettings.edge);
+  num('#tray-stack-gap').value = fromMM(traySettings.stackGap);
   num('#tray-split').value = String(Math.round(traySettings.split * 100));
   num('#tray-finger-extra').value = fromMM(traySettings.fingerExtra);
   document.querySelectorAll<HTMLButtonElement>('[data-swept]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.swept === '1') === traySettings.fingerSwept)));
@@ -439,6 +461,8 @@ function readTrayInputs(): TraySettings | string {
   if (!(split >= 0 && split <= 1)) return 'Form-fit must be between 0 and 100 %.';
   const edge = toMM(val('#tray-edge'));
   if (!(edge >= 0.8 && edge <= 20)) return 'Minimum tray thickness at the edge must be between 0.8 and 20 mm.';
+  const stackGap = toMM(val('#tray-stack-gap') || 0);
+  if (!(stackGap >= 0 && stackGap <= 30)) return 'Gap between stacked parts must be between 0 and 30 mm.';
   const fingerExtra = toMM(val('#tray-finger-extra') || 0);
   if (!(fingerExtra >= 0 && fingerExtra <= 30)) return 'Finger hole extra depth must be between 0 and 30 mm.';
   const shell = traySettings.shell;
@@ -452,7 +476,7 @@ function readTrayInputs(): TraySettings | string {
     if (problem) return problem;
     if (height !== null && height - shellExtraHeight(o) <= DEFAULT_TRAY.floor) return `The case height leaves no room for a tray inside the shell (the shell alone takes ${fmtLen(shellExtraHeight(o), units)} ${units}).`;
   }
-  return { length, width, height, gap, depth, edge, clearance, split, fingerExtra, fingerSwept: traySettings.fingerSwept, stacking: traySettings.stacking, shell, shellWall, shellRim, shellPlug, shellGap };
+  return { length, width, height, gap, depth, edge, clearance, split, fingerExtra, fingerSwept: traySettings.fingerSwept, stacking: traySettings.stacking, stackGap, shell, shellWall, shellRim, shellPlug, shellGap };
 }
 
 const shellOptions = (s: Pick<TraySettings, 'shellWall' | 'shellRim' | 'shellPlug' | 'shellGap'>): ShellOptions => ({ ...DEFAULT_SHELL, wall: s.shellWall, rim: s.shellRim, plug: s.shellPlug, gap: s.shellGap });
@@ -545,7 +569,7 @@ async function generateTray() {
     ...DEFAULT_TRAY, ...inside, depth: s.depth,
     edge: s.edge,
     maxDepth: s.height === null ? null : s.height - (shell ? shellExtraHeight(shell.options) : 0),
-    fingerExtraDepth: s.fingerExtra, fingerSwept: s.fingerSwept, stacking: s.stacking,
+    fingerExtraDepth: s.fingerExtra, fingerSwept: s.fingerSwept, stacking: s.stacking, stackGap: s.stackGap,
     pocket: { ...DEFAULT_TRAY.pocket, clearance: s.clearance, split: s.split },
   };
   const btn = $<HTMLButtonElement>('#tray-build');

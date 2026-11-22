@@ -19,6 +19,8 @@ export type WorkerRequest =
   | { id: number; type: 'finger'; partId: number; fingers: Side[] | 'auto' }
   /** Lock the part in its current pose (true), or let the layout turn it (false). */
   | { id: number; type: 'lock'; partId: number; on: boolean }
+  /** Room to leave around this part when stacked (mm), or null to use the tray's setting. */
+  | { id: number; type: 'stackgap'; partId: number; gap: number | null }
   /** Allow or forbid putting this part in a stack. */
   | { id: number; type: 'stackable'; partId: number; on: boolean }
   /** Everything needed to rebuild the current parts later (for saving). */
@@ -52,6 +54,8 @@ export interface ParsedPart {
   fingerAuto: boolean;
   /** False = this part is never put in a stack. */
   stackable: boolean;
+  /** This part's own stacking gap in mm, or null when it uses the tray's setting. */
+  stackGap: number | null;
   suggestInches: boolean;
   large: boolean;
 }
@@ -74,6 +78,7 @@ export interface SavedPart {
   rotation: number[];
   fingers: Side[] | 'auto';
   stackable?: boolean;
+  stackGap?: number | null;
 }
 
 export type WorkerResponse =

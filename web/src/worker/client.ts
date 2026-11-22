@@ -59,6 +59,9 @@ export class GeometryClient {
   lock(partId: number, on: boolean) {
     return this.call({ type: 'lock', partId, on }).then((r) => r[0]);
   }
+  stackGap(partId: number, gap: number | null) {
+    return this.call({ type: 'stackgap', partId, gap }).then((r) => r[0]);
+  }
   stackable(partId: number, on: boolean) {
     return this.call({ type: 'stackable', partId, on }).then((r) => r[0]);
   }

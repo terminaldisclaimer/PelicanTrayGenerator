@@ -12,7 +12,8 @@
  * Rules a valid layout satisfies (footprints are pre-grown by half a wall):
  *  - surface parts do not overlap each other; sunk parts do not overlap each other;
  *  - a sunk part may lie under surface parts whose pocket depth plus its own
- *    fits within `maxDepth`; it sits just below the deepest pocket above it;
+ *    (plus the stacking gap of the pair) fits within `maxDepth`; it sits that
+ *    gap below the deepest pocket above it;
  *  - finger holes may overlap each other but stay out of other parts'
  *    footprints (same level) and inside the tray;
  *  - a surface part keeps at least (1 − maxCover) of its floor, not counting
@@ -25,6 +26,8 @@ export interface AnnealItem {
   options: PackOption[];
   /** May this part be sunk under others, or have others sunk under it? */
   stackable: boolean;
+  /** Vertical room (mm) to leave between this part and one stacked with it. Default 0. */
+  gap?: number;
   /** Where a previous layout put it (optional warm start). */
   start?: { key: number; angle: number; tx: number; ty: number };
 }
@@ -173,6 +176,8 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
     }
   };
   const depthOf = (i: number) => items[i].options[opt[i]].depth;
+  /** Room to leave between two stacked parts: the larger of what each asks for. */
+  const gapOf = (i: number, j: number) => Math.max(items[i].gap ?? 0, items[j].gap ?? 0);
 
   /** [rule violations in cells, secondary cost (stack count and tray depth)]. */
   const score = (): [number, number] => {
@@ -185,7 +190,7 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
         if (sunk[i] === sunk[j]) { bad += v + fv[i * n + j]; continue; } // same level: no overlap, no finger hole in a neighbour's pocket
         if (!v) continue;
         const u = sunk[i] ? j : i, l = sunk[i] ? i : j; // u on the surface, l beneath
-        if (!items[u].stackable || depthOf(u) + depthOf(l) > D) { bad += v; continue; }
+        if (!items[u].stackable || depthOf(u) + gapOf(u, l) + depthOf(l) > D) { bad += v; continue; }
         if (v < sh[l].cells) { covered[u] += v; outside[u] += sh[l].cells - v; } // not hidden entirely: u loses that much floor
       }
     let stacked = 0, depth = 0;
@@ -200,7 +205,7 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
         depth = Math.max(depth, depthOf(i));
       } else {
         let offset = 0;
-        for (let j = 0; j < n; j++) if (!sunk[j] && ov[i * n + j]) offset = Math.max(offset, depthOf(j));
+        for (let j = 0; j < n; j++) if (!sunk[j] && ov[i * n + j]) offset = Math.max(offset, depthOf(j) + gapOf(i, j));
         if (offset) stacked++;
         depth = Math.max(depth, offset + depthOf(i));
       }
@@ -367,7 +372,7 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
   return items.map((it, i) => {
     const under: number[] = [];
     let offset = 0;
-    if (sunk[i]) for (let j = 0; j < n; j++) if (!sunk[j] && ov[i * n + j]) { under.push(items[j].id); offset = Math.max(offset, depthOf(j)); }
+    if (sunk[i]) for (let j = 0; j < n; j++) if (!sunk[j] && ov[i * n + j]) { under.push(items[j].id); offset = Math.max(offset, depthOf(j) + gapOf(i, j)); }
     return { id: it.id, key: it.options[opt[i]].key, angle: angles[ang[i]], tx: px[i] * cell - sh[i].minX, ty: py[i] * cell - sh[i].minY, depth: depthOf(i), offset, under };
   });
 }

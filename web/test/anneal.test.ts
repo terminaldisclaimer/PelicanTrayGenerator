@@ -74,6 +74,20 @@ describe('anneal (whole-layout search)', () => {
     expect(anneal(items.map((x) => ({ ...x, stackable: false })), { width: 100, height: 40, maxDepth: 20, allowSink: true, rounds: 2, iterations: 20000 })).toBeNull();
   });
 
+  it('leaves the stacking gap between stacked parts, and counts it against the depth', () => {
+    const base = [item(0, 50, 40, 10), item(1, 50, 40, 10), item(2, 40, 30, 8)];
+    const s = { width: 100, height: 40, maxDepth: 20, allowSink: true };
+    // 2 mm asked for by every part: the lower one sits 12 below the surface (10 + 2 + 8 = 20 just fits).
+    const out = anneal(base.map((x) => ({ ...x, gap: 2 })), s)!;
+    expect(out.find((p) => p.under.length)!.offset).toBe(12);
+    // The larger of the two parts' gaps applies, even if only one part asks for it.
+    const one = anneal(base.map((x) => ({ ...x, gap: x.id === 2 ? 1.5 : 0 })), s)!;
+    const low = one.find((p) => p.under.length)!;
+    expect(low.offset).toBe(low.id === 2 || low.under.includes(2) ? 11.5 : 10);
+    // 3 mm no longer fits in the depth (10 + 3 + 8 > 20).
+    expect(anneal(base.map((x) => ({ ...x, gap: 3 })), { ...s, rounds: 2, iterations: 20000 })).toBeNull();
+  });
+
   it('tucks a long part partly under two neighbours, leaving each half its floor', () => {
     // 40×40 pockets either side of a 20-wide gap; a 70×20 strip cannot hide under one of them.
     const items = [item(0, 40, 40, 10), item(1, 40, 40, 10), item(2, 70, 20, 8)];

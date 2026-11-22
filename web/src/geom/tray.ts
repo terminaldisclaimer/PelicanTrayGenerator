@@ -29,6 +29,8 @@ export interface TrayOptions {
   pocket: PocketOptions;
   /** Stack shallow parts on top of each other when everything will not fit in one tray. */
   stacking: boolean;
+  /** Vertical room (mm) between stacked parts, unless a part sets its own. */
+  stackGap: number;
   /** Packing effort (orderings tried) and time limit. */
   packAttempts?: number;
   /** Effort of the whole-layout search: moves per round, and rounds. */
@@ -41,7 +43,7 @@ export interface TrayOptions {
 
 export const DEFAULT_TRAY: TrayOptions = {
   length: 300, width: 200, depth: null, maxDepth: null, floor: 2, wall: 3, edge: 4, cornerRadius: 4,
-  fingerDiameter: 20, fingerExtraDepth: 0, fingerSwept: true, stacking: true, pocket: DEFAULT_POCKET,
+  fingerDiameter: 20, fingerExtraDepth: 0, fingerSwept: true, stacking: true, stackGap: 0, pocket: DEFAULT_POCKET,
 };
 
 /** One way a part may lie in the tray. */
@@ -85,6 +87,8 @@ export interface TrayPart {
   fingers: Side[] | 'auto';
   /** False = never put this part in a stack. Default true. */
   stackable?: boolean;
+  /** Room (mm) to leave above/below this part when stacked; null/undefined = the tray's setting. */
+  stackGap?: number | null;
 }
 
 /**
@@ -289,7 +293,7 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
       const found = anneal(
         units.map((u) => {
           const p = start.get(u.id);
-          return { id: u.id, stackable: u.part.stackable !== false, options: options(u), start: p && { key: p.key, angle: p.angle, tx: p.tx, ty: p.ty } };
+          return { id: u.id, stackable: u.part.stackable !== false, gap: Math.max(0, u.part.stackGap ?? o.stackGap), options: options(u), start: p && { key: p.key, angle: p.angle, tx: p.tx, ty: p.ty } };
         }),
         { ...region, softMargin, maxDepth: D, allowSink: o.stacking, angleStep: o.packAngleStep, iterations: o.searchIterations, rounds: o.searchRounds },
       );

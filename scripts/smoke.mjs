@@ -88,6 +88,12 @@ try {
   await page.waitForTimeout(200);
   const kept = await page.$$eval('#parts .part', (e) => e.length);
   const fingersText = await page.textContent('.pose-row button:has-text("Finger cutouts")');
+  // Per-part stacking gap: empty by default (uses the tray setting), accepts a value, and can be cleared.
+  const gapEmpty = await page.inputValue('.gap-row input');
+  await page.fill('.gap-row input', '2.5');
+  await page.dispatchEvent('.gap-row input', 'change');
+  await page.waitForFunction(() => document.querySelector('.gap-row input')?.value === '2.5');
+  const gapSet = await page.inputValue('.gap-row input');
   // Generate a tray and download it as STL.
   await page.tap('.tab[data-tab="trays"]');
   await page.fill('#tray-length', '120');
@@ -111,7 +117,7 @@ try {
   await page.waitForTimeout(1200);
   await page.reload();
   await page.waitForSelector('.part .name');
-  const restored = { name: await page.textContent('.part .name'), fingers: await page.textContent('.pose-row button:nth-child(2)'), length: await page.inputValue('#tray-length') };
+  const restored = { gap: await page.inputValue('.gap-row input'), name: await page.textContent('.part .name'), fingers: await page.textContent('.pose-row button:nth-child(2)'), length: await page.inputValue('#tray-length') };
 
   // Tap targets ≥ 44px for visible buttons
   const small = await page.$$eval('button:not(.sheet-handle), label.btn', (els) =>
@@ -122,7 +128,7 @@ try {
   await page.screenshot({ path: 'test-results/mobile-half.png' });
   const sw = await page.evaluate(async () => !!(await navigator.serviceWorker?.getRegistration()));
   console.log({ width, overflow, meta, tipped, options, restored, fingersAuto, fingersText, trayStatus, stl: download.suggestedFilename(), stlOk, small, serviceWorker: sw, errors });
-  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · pose may be turned') || !tipped?.includes('60.0 × 25.0 × 40.0 mm · pose locked') || !lockedBox || unlockedBox || !picked || !saveVisible || !/saved \d/.test(saveState) || restored.name !== 'box' || !restored.fingers.includes('Finger cutouts: 2') || restored.fingers.includes('auto') || restored.length !== '120' || fingersAuto !== 2 || kept !== 1 || !noneHint.startsWith('No finger cutouts') || noneDrawn !== 0 || holesDrawn !== 2 || !mainVisible || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
+  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · pose may be turned') || !tipped?.includes('60.0 × 25.0 × 40.0 mm · pose locked') || !lockedBox || unlockedBox || !picked || gapEmpty !== '' || gapSet !== '2.5' || !saveVisible || !/saved \d/.test(saveState) || restored.name !== 'box' || restored.gap !== '2.5' || !restored.fingers.includes('Finger cutouts: 2') || restored.fingers.includes('auto') || restored.length !== '120' || fingersAuto !== 2 || kept !== 1 || !noneHint.startsWith('No finger cutouts') || noneDrawn !== 0 || holesDrawn !== 2 || !mainVisible || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
 } finally {
   await browser.close();
   server.kill();
