@@ -6,7 +6,7 @@
   "description": {
     "": "Adds Utilities > Pelican Export: export every design in a Fusion folder as 3MF and upload to the Pelican Cutouts library."
   },
-  "version": "1.0.0",
+  "version": "1.0.1",
   "runOnStartup": true,
   "supportedOS": "windows|mac",
   "editEnabled": true

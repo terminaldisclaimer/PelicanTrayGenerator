@@ -66,12 +66,21 @@ def load_config(ui):
 
 
 def ssl_context():
-    # Fusion's bundled Python sometimes lacks root certificates (macOS).
+    """Fusion's bundled Python on macOS ships without root certificates, so
+    load them from wherever we can find a trusted bundle."""
+    ctx = ssl.create_default_context()
     try:
         import certifi
-        return ssl.create_default_context(cafile=certifi.where())
+        ctx.load_verify_locations(cafile=certifi.where())
     except Exception:
-        return ssl.create_default_context()
+        pass
+    for bundle in ('/etc/ssl/cert.pem', '/private/etc/ssl/cert.pem'):  # macOS system bundle
+        if os.path.exists(bundle):
+            try:
+                ctx.load_verify_locations(cafile=bundle)
+            except Exception:
+                pass
+    return ctx
 
 
 def request(cfg, method, path, body=None, headers=None):
@@ -93,6 +102,8 @@ def request(cfg, method, path, body=None, headers=None):
             return res.status, res.read()
     except urllib.error.HTTPError as e:
         return e.code, e.read()
+    except urllib.error.URLError as e:
+        raise RuntimeError('Could not connect to {}: {}'.format(cfg['site'], e.reason))
 
 
 def safe_name(name):
@@ -203,10 +214,14 @@ def export_folder(app, ui):
             lines.append('Failed: {}'.format(len(failed)))
             lines.extend('  ' + f for f in failed[:15])
         ui.messageBox('\n'.join(lines), 'PelicanExport')
+    except RuntimeError as e:
+        if progress:
+            progress.hide()
+        ui.messageBox('PelicanExport: {}'.format(e))
     except Exception:
         if progress:
             progress.hide()
-        ui.messageBox('PelicanExport failed:\n{}'.format(traceback.format_exc()))
+        ui.messageBox('PelicanExport failed:\n{}'.format(traceback.format_exc()[-1500:]))
 
 
 # ---------------------------------------------------------------- add-in UI
