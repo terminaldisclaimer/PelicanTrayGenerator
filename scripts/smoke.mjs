@@ -65,13 +65,15 @@ try {
   // Finger cutouts: auto gives this 25 mm tall box a pinch pair; tap one circle off, then add an end.
   await page.tap('.pose-row button:has-text("Finger cutouts")');
   await page.waitForSelector('.fp-spot');
+  // Both main buttons must be fully on screen without scrolling sideways.
+  const mainVisible = await page.$$eval('.main-row .btn', (els) => els.every((e) => { const r = e.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; }));
   const fingersAuto = await page.$$eval('.fp-spot[aria-pressed="true"]', (e) => e.length);
   await page.tap('.fp-spot[aria-label*="near long side"]');
   await page.waitForFunction(() => document.querySelectorAll('.fp-spot[aria-pressed="true"]').length === 1);
   await page.tap('.fp-spot[aria-label*="right end"]');
   await page.waitForFunction(() => document.querySelectorAll('.fp-spot[aria-pressed="true"]').length === 2);
   await page.screenshot({ path: 'test-results/mobile-fingers.png' });
-  await page.tap('.pose-row button:has-text("Close")');
+  await page.tap('.pose-row button:has-text("Close cutouts")');
   const fingersText = await page.textContent('.pose-row button:has-text("Finger cutouts")');
   // Generate a tray and download it as STL.
   await page.tap('.tab[data-tab="trays"]');
@@ -98,7 +100,7 @@ try {
   await page.screenshot({ path: 'test-results/mobile-half.png' });
   const sw = await page.evaluate(async () => !!(await navigator.serviceWorker?.getRegistration()));
   console.log({ width, overflow, meta, tipped, options, fingersAuto, fingersText, trayStatus, stl: download.suggestedFilename(), stlOk, small, serviceWorker: sw, errors });
-  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · auto pose') || !tipped?.includes('60.0 × 25.0 × 40.0') || !picked || fingersAuto !== 2 || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
+  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · auto pose') || !tipped?.includes('60.0 × 25.0 × 40.0') || !picked || fingersAuto !== 2 || !mainVisible || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
 } finally {
   await browser.close();
   server.kill();

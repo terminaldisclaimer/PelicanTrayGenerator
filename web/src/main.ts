@@ -242,10 +242,18 @@ function renderList() {
       poseRow.className = 'pose-row';
       const choose = document.createElement('button');
       choose.className = 'btn small-btn';
-      choose.textContent = picker?.partId === p.partId ? 'Close' : 'Choose pose';
+      choose.textContent = picker?.partId === p.partId ? 'Close poses' : 'Choose pose';
       choose.setAttribute('aria-expanded', String(picker?.partId === p.partId));
       choose.onclick = () => togglePicker(p);
-      poseRow.append(choose);
+      const finger = document.createElement('button');
+      finger.className = 'btn small-btn';
+      finger.textContent = fingerOpen === p.partId ? 'Close cutouts' : `Finger cutouts: ${p.fingers.length}${p.fingerAuto ? ' (auto)' : ''}`;
+      finger.setAttribute('aria-expanded', String(fingerOpen === p.partId));
+      finger.onclick = () => { fingerOpen = fingerOpen === p.partId ? null : p.partId; picker = null; if (sheet.snap === 'peek') sheet.open('half'); renderList(); };
+      const mainRow = document.createElement('div');
+      mainRow.className = 'pose-row main-row';
+      mainRow.append(choose, finger);
+      li.append(mainRow);
       for (const [action, label, title] of POSE_BUTTONS) {
         const b = document.createElement('button');
         b.className = 'btn small-btn';
@@ -254,12 +262,6 @@ function renderList() {
         b.onclick = () => update(p, geo.pose(p.partId, action));
         poseRow.append(b);
       }
-      const finger = document.createElement('button');
-      finger.className = 'btn small-btn';
-      finger.textContent = fingerOpen === p.partId ? 'Close' : `Finger cutouts: ${p.fingers.length}${p.fingerAuto ? ' (auto)' : ''}`;
-      finger.setAttribute('aria-expanded', String(fingerOpen === p.partId));
-      finger.onclick = () => { fingerOpen = fingerOpen === p.partId ? null : p.partId; if (sheet.snap === 'peek') sheet.open('half'); renderList(); };
-      poseRow.append(finger);
       li.append(poseRow);
       if (fingerOpen === p.partId) li.append(fingerPicker(p));
 
