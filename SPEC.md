@@ -56,7 +56,15 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   different poses (≥ 60° apart) are kept for the "Next pose" button. Each
   pose is also spun so the part's bounding rectangle is axis-aligned, long
   side along X. The part is then translated so it rests at z = 0.
-- Manual override: Next pose, Flip, Tip 90° (two axes), Spin 90°.
+- **Choosing a pose:** each part has a picker showing a picture of every
+  candidate pose with its footprint and depth. Picking one **locks** it;
+  Flip, Tip 90° (two axes) and Spin 90° fine-tune and also lock. "Auto"
+  hands the choice back to the app.
+- **Auto orientation for tray use:** parts left on Auto are oriented by the
+  layout step (§3.7), which tries each part's candidate poses and spin
+  angles and keeps the combination that makes best use of the tray. Until a
+  layout is run, Auto shows the lowest stable pose. Locked parts are never
+  re-oriented (only spun on the bed, unless that is locked too).
 
 ### 3.2 Silhouette
 - `S = union(project(part))` onto the XY plane (manifold-3d `project()`,
@@ -120,6 +128,9 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   angles). Order parts by area descending. Then run simulated annealing on
   order, rotation and tray assignment for a time budget (default 3 s,
   progress shown).
+- Pose is part of the search: for every part left on Auto the optimizer may
+  switch between its candidate poses (e.g. stand a part on edge when that
+  saves a tray and the tray depth allows it).
 - Objective, in priority order: fewest trays → lowest total stacked depth →
   most even wall margins → finger cutouts pointing at open space.
 - Manual override: drag or rotate a part in the 2D tray view. You can lock a

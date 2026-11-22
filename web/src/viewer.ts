@@ -156,3 +156,36 @@ export class Viewer {
     this.needsRender = true;
   }
 }
+
+let thumbRenderer: THREE.WebGLRenderer | null = null;
+
+/** Render a small picture of a posed part (on a patch of bed) as a PNG data URL. */
+export function renderThumbnail(mesh: TriMesh, px = 192, color = PALETTE[0]): string {
+  thumbRenderer ??= new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+  thumbRenderer.setSize(px, px, false);
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x333344, 1.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+  sun.position.set(150, -200, 400);
+  scene.add(sun);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(mesh.positions, 3));
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.05, flatShading: true });
+  scene.add(new THREE.Mesh(geo, mat));
+  const r = geo.boundingSphere!.radius, c = geo.boundingSphere!.center;
+  const bedGeo = new THREE.CircleGeometry(r * 1.25, 48);
+  const bedMat = new THREE.MeshBasicMaterial({ color: 0x3a424d });
+  const bed = new THREE.Mesh(bedGeo, bedMat);
+  bed.position.set(c.x, c.y, -0.05);
+  scene.add(bed);
+  const cam = new THREE.PerspectiveCamera(30, 1, 0.5, 5000);
+  cam.up.set(0, 0, 1);
+  cam.position.copy(c).addScaledVector(new THREE.Vector3(0.45, -0.65, 0.6).normalize(), (r / Math.sin((15 * Math.PI) / 180)) * 1.1);
+  cam.lookAt(c);
+  thumbRenderer.render(scene, cam);
+  const url = thumbRenderer.domElement.toDataURL('image/png');
+  geo.dispose(); mat.dispose(); bedGeo.dispose(); bedMat.dispose();
+  return url;
+}

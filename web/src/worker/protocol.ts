@@ -7,6 +7,10 @@ export type PoseAction = 'next' | 'x90' | 'y90' | 'z90' | 'flip';
 export type WorkerRequest =
   | { id: number; type: 'parse'; fileName: string; kind: FileKind; data: ArrayBuffer }
   | { id: number; type: 'pose'; partId: number; action: PoseAction }
+  /** All automatic poses of one part, for the picker. */
+  | { id: number; type: 'poses'; partId: number }
+  /** Pick automatic pose `index` (locks it), or index -1 to hand the choice back to the app. */
+  | { id: number; type: 'select'; partId: number; index: number }
   | { id: number; type: 'scale'; partId: number; factor: number }
   | { id: number; type: 'remove'; partId: number };
 
@@ -22,6 +26,9 @@ export interface ParsedPart {
   solid: boolean;
   poseIndex: number; // which auto pose is active, or -1 after manual rotation
   poseCount: number;
+  /** True once the user has chosen or adjusted the pose; the layout step may
+   *  only re-orient parts whose pose is not locked. */
+  poseLocked: boolean;
   suggestInches: boolean;
   large: boolean;
 }

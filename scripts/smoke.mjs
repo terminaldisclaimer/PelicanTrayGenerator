@@ -49,8 +49,19 @@ try {
   await page.tap('#sheet-handle');
   await page.waitForTimeout(400);
   await page.tap('.pose-row button:has-text("Tip ↕")');
-  await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('manual'));
+  await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('custom'));
   const tipped = await page.textContent('.part .meta');
+  // Visual pose picker: thumbnails for every automatic pose, pick one, then hand back to Auto.
+  await page.tap('.pose-row button:has-text("Choose pose")');
+  await page.waitForSelector('.pose-option img');
+  const options = await page.$$eval('.pose-option img', (els) => els.filter((e) => e.naturalWidth > 0).length);
+  await page.screenshot({ path: 'test-results/mobile-picker.png' });
+  await page.tap('.pose-option:nth-child(3)');
+  await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('pose 2 (locked)'));
+  await page.tap('.pose-row button:has-text("Choose pose")');
+  await page.tap('.pose-option:first-child');
+  await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('auto pose'));
+  const picked = options >= 2;
   await page.tap('#sheet-handle'); await page.waitForTimeout(300);
   await page.tap('#sheet-handle'); await page.waitForTimeout(400); // back to peek
   // Tap targets ≥ 44px for visible buttons
@@ -61,8 +72,8 @@ try {
   await page.waitForTimeout(400);
   await page.screenshot({ path: 'test-results/mobile-half.png' });
   const sw = await page.evaluate(async () => !!(await navigator.serviceWorker?.getRegistration()));
-  console.log({ width, overflow, meta, tipped, small, serviceWorker: sw, errors });
-  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0') || !tipped?.includes('60.0 × 25.0 × 40.0') || small.length || errors.length) failed = true;
+  console.log({ width, overflow, meta, tipped, options, small, serviceWorker: sw, errors });
+  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · auto pose') || !tipped?.includes('60.0 × 25.0 × 40.0') || !picked || small.length || errors.length) failed = true;
 } finally {
   await browser.close();
   server.kill();

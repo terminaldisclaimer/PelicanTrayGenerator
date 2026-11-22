@@ -1,10 +1,10 @@
 import './style.css';
-import { Viewer } from './viewer';
+import { Viewer, renderThumbnail } from './viewer';
 import { initSheet } from './ui/sheet';
 import { GeometryClient } from './worker/client';
 import type { ParsedPart, FileKind, PoseAction } from './worker/protocol';
 import { LARGE_MESH_TRIANGLES } from './mesh/bounds';
-import { fmtDims, MM_PER_IN, type Units } from './units';
+import { fmtDims, fmtLen, MM_PER_IN, type Units } from './units';
 
 type PartState = ParsedPart;
 
@@ -115,8 +115,22 @@ async function update(p: PartState, job: Promise<ParsedPart>, reframe = false) {
   }
 }
 
+/** Part whose pose picker is open, and its rendered options. */
+let picker: { partId: number; options: { index: number; url: string; size: [number, number, number] }[] } | null = null;
+
+async function togglePicker(p: PartState) {
+  if (picker?.partId === p.partId) { picker = null; renderList(); return; }
+  try {
+    const poses = await geo.poses(p.partId);
+    picker = { partId: p.partId, options: poses.map((q) => ({ index: q.poseIndex, url: renderThumbnail(q.mesh), size: q.size })) };
+    if (sheet.snap === 'peek') sheet.open('half');
+    renderList();
+  } catch (e) {
+    toast(`${p.mesh.name}: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
 const POSE_BUTTONS: [PoseAction, string, string][] = [
-  ['next', 'Next pose', 'Try the next automatic resting pose'],
   ['flip', 'Flip', 'Turn upside down'],
   ['x90', 'Tip ↕', 'Tip 90° forwards'],
   ['y90', 'Tip ↔', 'Tip 90° sideways'],
@@ -135,7 +149,7 @@ function renderList() {
       name.textContent = p.mesh.name;
       const meta = document.createElement('div');
       meta.className = 'meta';
-      const pose = p.poseIndex >= 0 ? `pose ${p.poseIndex + 1}/${p.poseCount}` : 'manual pose';
+      const pose = !p.poseLocked ? 'auto pose' : p.poseIndex >= 0 ? `pose ${p.poseIndex + 1} (locked)` : 'custom pose (locked)';
       meta.textContent = `${fmtDims(p.size, units)} · ${pose}`;
       const actions = document.createElement('div');
       actions.className = 'actions';
@@ -144,6 +158,7 @@ function renderList() {
       del.setAttribute('aria-label', `Remove ${p.mesh.name}`);
       del.textContent = '✕';
       del.onclick = () => {
+        if (picker?.partId === p.partId) picker = null;
         geo.remove(p.partId);
         parts = parts.filter((q) => q.partId !== p.partId);
         refresh();
@@ -153,8 +168,13 @@ function renderList() {
 
       const poseRow = document.createElement('div');
       poseRow.className = 'pose-row';
+      const choose = document.createElement('button');
+      choose.className = 'btn small-btn';
+      choose.textContent = picker?.partId === p.partId ? 'Close' : 'Choose pose';
+      choose.setAttribute('aria-expanded', String(picker?.partId === p.partId));
+      choose.onclick = () => togglePicker(p);
+      poseRow.append(choose);
       for (const [action, label, title] of POSE_BUTTONS) {
-        if (action === 'next' && p.poseCount < 2) continue;
         const b = document.createElement('button');
         b.className = 'btn small-btn';
         b.textContent = label;
@@ -163,6 +183,35 @@ function renderList() {
         poseRow.append(b);
       }
       li.append(poseRow);
+
+      if (picker?.partId === p.partId) {
+        const grid = document.createElement('div');
+        grid.className = 'pose-grid';
+        const pick = (index: number) => { picker = null; update(p, geo.select(p.partId, index)); };
+        const auto = document.createElement('button');
+        auto.className = 'pose-option';
+        auto.setAttribute('aria-pressed', String(!p.poseLocked));
+        auto.innerHTML = '<span class="pose-auto">Auto</span><span>App decides</span><span class="muted">best use of tray</span>';
+        auto.onclick = () => pick(-1);
+        grid.append(auto);
+        for (const o of picker.options) {
+          const b = document.createElement('button');
+          b.className = 'pose-option';
+          b.setAttribute('aria-pressed', String(p.poseLocked && p.poseIndex === o.index));
+          b.setAttribute('aria-label', `Pose ${o.index + 1}: ${fmtDims(o.size, units)}`);
+          const img = document.createElement('img');
+          img.src = o.url; img.alt = ''; img.width = 96; img.height = 96;
+          const foot = document.createElement('span');
+          foot.textContent = `${fmtLen(o.size[0], units, 0)} × ${fmtLen(o.size[1], units, 0)}`;
+          const tall = document.createElement('span');
+          tall.className = 'muted';
+          tall.textContent = `${fmtLen(o.size[2], units, units === 'mm' ? 0 : 1)} ${units} deep`;
+          b.append(img, foot, tall);
+          b.onclick = () => pick(o.index);
+          grid.append(b);
+        }
+        li.append(grid);
+      }
 
       if (!p.solid) {
         const warn = document.createElement('div');

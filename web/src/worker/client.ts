@@ -41,6 +41,12 @@ export class GeometryClient {
   pose(partId: number, action: PoseAction) {
     return this.call({ type: 'pose', partId, action }).then((r) => r[0]);
   }
+  poses(partId: number) {
+    return this.call({ type: 'poses', partId });
+  }
+  select(partId: number, index: number) {
+    return this.call({ type: 'select', partId, index }).then((r) => r[0]);
+  }
   scale(partId: number, factor: number) {
     return this.call({ type: 'scale', partId, factor }).then((r) => r[0]);
   }
