@@ -72,3 +72,8 @@ button, .btn { font: inherit; color: inherit; }
 .pose-option[aria-pressed="true"] { border-color: var(--accent); }
 .pose-option img { width: 96px; height: 96px; }
 .pose-auto { font-size: 22px; font-weight: 700; color: var(--accent); margin-bottom: 26px; }
+.num { width: 96px; min-height: var(--tap); border-radius: 10px; border: 1px solid #3d4652; background: var(--bg); color: var(--text); font: inherit; text-align: right; padding: 0 10px; }
+.num:focus { outline: 2px solid var(--accent); }
+.btn.wide { width: 100%; margin-top: 10px; }
+.btn[disabled] { opacity: .45; cursor: default; }
+label.row { cursor: text; }

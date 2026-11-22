@@ -2,7 +2,9 @@ import './style.css';
 import { Viewer, renderThumbnail } from './viewer';
 import { initSheet } from './ui/sheet';
 import { GeometryClient } from './worker/client';
-import type { ParsedPart, FileKind, PoseAction } from './worker/protocol';
+import type { ParsedPart, FileKind, PoseAction, TrayInfo } from './worker/protocol';
+import { DEFAULT_TRAY, type TrayOptions } from './geom/tray';
+import { writeSTL } from './mesh/stl';
 import { LARGE_MESH_TRIANGLES } from './mesh/bounds';
 import { fmtDims, fmtLen, MM_PER_IN, type Units } from './units';
 
@@ -31,6 +33,7 @@ const setUnits = (u: Units) => {
   units = u;
   try { localStorage.setItem('units', u); } catch { /* private mode */ }
   unitButtons.forEach((b) => b.setAttribute('aria-checked', String(b.dataset.units === u)));
+  fillTrayInputs();
   renderList();
 };
 unitButtons.forEach((b) => b.addEventListener('click', () => setUnits(b.dataset.units as Units)));
@@ -100,6 +103,7 @@ window.addEventListener('drop', (e) => {
 
 // ---------- list ----------
 function refresh(reframe = true) {
+  clearTray(); // any change to the parts makes the generated tray stale
   viewer.setParts(parts, reframe);
   renderList();
 }
@@ -238,6 +242,99 @@ function renderList() {
     }),
   );
 }
+
+// ---------- tray ----------
+const num = (id: string) => $<HTMLInputElement>(id);
+const toMM = (v: number) => (units === 'mm' ? v : v * MM_PER_IN);
+const fromMM = (v: number, digits = units === 'mm' ? 1 : 3) => String(+(units === 'mm' ? v : v / MM_PER_IN).toFixed(digits));
+
+interface TraySettings { length: number; width: number; depth: number | null; clearance: number; split: number }
+let traySettings: TraySettings = { length: DEFAULT_TRAY.length, width: DEFAULT_TRAY.width, depth: null, clearance: DEFAULT_TRAY.pocket.clearance, split: DEFAULT_TRAY.pocket.split };
+try { traySettings = { ...traySettings, ...JSON.parse(localStorage.getItem('tray') || '{}') }; } catch { /* ignore */ }
+let tray: TrayInfo | null = null;
+let showPartsInTray = true;
+
+function fillTrayInputs() {
+  num('#tray-length').value = fromMM(traySettings.length);
+  num('#tray-width').value = fromMM(traySettings.width);
+  num('#tray-depth').value = traySettings.depth == null ? '' : fromMM(traySettings.depth);
+  num('#tray-clearance').value = fromMM(traySettings.clearance, units === 'mm' ? 2 : 3);
+  num('#tray-split').value = String(Math.round(traySettings.split * 100));
+  document.querySelectorAll('.u').forEach((e) => (e.textContent = units));
+}
+
+function readTrayInputs(): TraySettings | string {
+  const val = (id: string) => parseFloat(num(id).value.replace(',', '.'));
+  const length = toMM(val('#tray-length')), width = toMM(val('#tray-width')), clearance = toMM(val('#tray-clearance'));
+  const depthText = num('#tray-depth').value.trim();
+  const depth = depthText === '' ? null : toMM(val('#tray-depth'));
+  const split = val('#tray-split') / 100;
+  if (!(length > 0) || !(width > 0)) return 'Enter the tray length and width.';
+  if (!(clearance >= 0 && clearance <= 5)) return 'Clearance must be between 0 and 5 mm.';
+  if (depth !== null && !(depth > 0)) return 'Depth must be a number, or leave it empty for automatic.';
+  if (!(split >= 0 && split <= 1)) return 'Form-fit must be between 0 and 100 %.';
+  return { length, width, depth, clearance, split };
+}
+
+function clearTray() {
+  if (!tray) return;
+  tray = null;
+  viewer.setTray(null);
+  $('#tray-view-row').hidden = true;
+  $('#tray-status').textContent = 'Parts changed — generate the tray again.';
+  $<HTMLButtonElement>('#export-stl').disabled = true;
+  $('#export-status').textContent = 'Generate a tray first (Trays tab).';
+}
+
+function showTray() {
+  if (!tray) return;
+  viewer.setTray(tray, parts, showPartsInTray);
+}
+
+$('#tray-build').addEventListener('click', async () => {
+  const s = readTrayInputs();
+  if (typeof s === 'string') { $('#tray-status').textContent = s; return; }
+  traySettings = s;
+  try { localStorage.setItem('tray', JSON.stringify(s)); } catch { /* private mode */ }
+  const options: TrayOptions = { ...DEFAULT_TRAY, length: s.length, width: s.width, depth: s.depth, pocket: { ...DEFAULT_TRAY.pocket, clearance: s.clearance, split: s.split } };
+  const btn = $<HTMLButtonElement>('#tray-build');
+  btn.disabled = true;
+  try {
+    showProgress(0.02, 'Generating tray');
+    tray = await geo.tray(options, showProgress);
+    showTray();
+    const fit = tray.placements.filter((p) => p.formFit).length;
+    $('#tray-status').textContent = `Tray ${fmtDims([tray.length, tray.width, tray.depth], units)} with ${tray.placements.length} pocket${tray.placements.length === 1 ? '' : 's'} (${fit} form-fitted). About ${(tray.volume / 1000).toFixed(0)} cm³ of material before infill.`;
+    $('#tray-view-row').hidden = false;
+    $<HTMLButtonElement>('#export-stl').disabled = false;
+    $('#export-status').textContent = `Ready: tray ${fmtDims([tray.length, tray.width, tray.depth], units)}, ${(tray.mesh.positions.length / 9).toLocaleString()} triangles.`;
+  } catch (e) {
+    $('#tray-status').textContent = e instanceof Error ? e.message : String(e);
+  } finally {
+    hideProgress();
+    btn.disabled = false;
+  }
+});
+
+document.querySelectorAll<HTMLButtonElement>('[data-show]').forEach((b) =>
+  b.addEventListener('click', () => {
+    showPartsInTray = b.dataset.show === '1';
+    document.querySelectorAll<HTMLButtonElement>('[data-show]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+    showTray();
+  }),
+);
+
+$('#export-stl').addEventListener('click', () => {
+  if (!tray) return;
+  const name = `tray-${Math.round(tray.length)}x${Math.round(tray.width)}x${Math.round(tray.depth)}.stl`;
+  const url = URL.createObjectURL(new Blob([writeSTL({ name: 'tray', positions: tray.mesh.positions })], { type: 'model/stl' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+});
 
 // ---------- library (parts uploaded to this site, e.g. by the Fusion script) ----------
 interface LibraryItem { name: string; size?: number; uploaded?: string; version?: string }

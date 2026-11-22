@@ -62,6 +62,20 @@ try {
   await page.tap('.pose-option:first-child');
   await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('auto pose'));
   const picked = options >= 2;
+  // Generate a tray and download it as STL.
+  await page.tap('.tab[data-tab="trays"]');
+  await page.fill('#tray-length', '120');
+  await page.fill('#tray-width', '90');
+  await page.tap('#tray-build');
+  await page.waitForFunction(() => document.querySelector('#tray-status')?.textContent.startsWith('Tray '), null, { timeout: 30000 });
+  const trayStatus = await page.textContent('#tray-status');
+  await page.screenshot({ path: 'test-results/mobile-tray.png' });
+  await page.tap('.tab[data-tab="export"]');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.tap('#export-stl')]);
+  await download.saveAs('test-results/smoke-tray.stl');
+  const stl = readFileSync('test-results/smoke-tray.stl');
+  const stlOk = stl.length > 84 && stl.length === 84 + stl.readUInt32LE(80) * 50;
+  await page.tap('.tab[data-tab="parts"]');
   await page.tap('#sheet-handle'); await page.waitForTimeout(300);
   await page.tap('#sheet-handle'); await page.waitForTimeout(400); // back to peek
   // Tap targets ≥ 44px for visible buttons
@@ -72,8 +86,8 @@ try {
   await page.waitForTimeout(400);
   await page.screenshot({ path: 'test-results/mobile-half.png' });
   const sw = await page.evaluate(async () => !!(await navigator.serviceWorker?.getRegistration()));
-  console.log({ width, overflow, meta, tipped, options, small, serviceWorker: sw, errors });
-  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · auto pose') || !tipped?.includes('60.0 × 25.0 × 40.0') || !picked || small.length || errors.length) failed = true;
+  console.log({ width, overflow, meta, tipped, options, trayStatus, stl: download.suggestedFilename(), stlOk, small, serviceWorker: sw, errors });
+  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · auto pose') || !tipped?.includes('60.0 × 25.0 × 40.0') || !picked || !stlOk || !trayStatus.includes('120.0 × 90.0 × 27.2') || small.length || errors.length) failed = true;
 } finally {
   await browser.close();
   server.kill();

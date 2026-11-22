@@ -1,4 +1,5 @@
-import type { FileKind, ParsedPart, PoseAction, WorkerRequest, WorkerResponse } from './protocol';
+import type { TrayOptions } from '../geom/tray';
+import type { FileKind, ParsedPart, PoseAction, TrayInfo, WorkerRequest, WorkerResponse } from './protocol';
 
 type Progress = (fraction: number, label: string) => void;
 type Body = WorkerRequest extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never;
@@ -7,7 +8,7 @@ type Body = WorkerRequest extends infer R ? (R extends { id: number } ? Omit<R, 
 export class GeometryClient {
   private worker = new Worker(new URL('./geometry.worker.ts', import.meta.url), { type: 'module' });
   private nextId = 1;
-  private pending = new Map<number, { resolve: (p: ParsedPart[]) => void; reject: (e: Error) => void; progress?: Progress }>();
+  private pending = new Map<number, { resolve: (p: any) => void; reject: (e: Error) => void; progress?: Progress }>();
 
   constructor() {
     this.worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
@@ -18,6 +19,7 @@ export class GeometryClient {
       else {
         this.pending.delete(msg.id);
         if (msg.type === 'result') p.resolve(msg.parts);
+        else if (msg.type === 'tray') p.resolve(msg.tray);
         else p.reject(new Error(msg.message));
       }
     };
@@ -27,7 +29,7 @@ export class GeometryClient {
     };
   }
 
-  private call(body: Body, transfer: Transferable[] = [], progress?: Progress): Promise<ParsedPart[]> {
+  private call<T = ParsedPart[]>(body: Body, transfer: Transferable[] = [], progress?: Progress): Promise<T> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject, progress });
@@ -49,6 +51,9 @@ export class GeometryClient {
   }
   scale(partId: number, factor: number) {
     return this.call({ type: 'scale', partId, factor }).then((r) => r[0]);
+  }
+  tray(options: TrayOptions, progress?: Progress) {
+    return this.call<TrayInfo>({ type: 'tray', options }, [], progress);
   }
   remove(partId: number) {
     return this.call({ type: 'remove', partId });

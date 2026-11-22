@@ -77,11 +77,12 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   where `S_upper` is the silhouette of everything at or above `z_m`. This
   usually equals S, since the widest part rules.
 - **Lower zone** `z ∈ [0, z_m]`: slice the part every Δz (default 0.2 mm,
-  matching the layer height). The cavity cross-section at height z is
-  `offset(union of slices from z up to z_m, c)`. This gives an exact form-fit
-  wherever the part narrows downward. Where the part has undercuts, the
-  undercut is filled in automatically so the part can still lift straight
-  out. The slab stack is built as one manifold (union of extrusions).
+  matching the layer height). The part has to lift straight out, so the
+  cavity cross-section at height z is `offset(union of all part slices at or
+  below z, c)`. This is an exact form-fit wherever the part narrows towards
+  the bottom. Where the part has an undercut (wider below than above), the
+  undercut is filled in automatically. Consecutive identical sections are
+  merged into one slab; the stack is built as one manifold.
 - Floor clearance: the cavity is lowered by `c_z` (default 0.2 mm) so the
   part rests on its lowest point without binding.
 - `top_margin` (default 0 mm): optional extra depth so the part sits below

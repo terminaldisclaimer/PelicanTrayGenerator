@@ -7,6 +7,7 @@ import type { TriMesh } from '../mesh/types';
 import { initKernel } from '../geom/kernel';
 import { poseCandidates, posePart, type PoseCandidate } from '../geom/analyze';
 import { FLIP, mul, ROT_X90, ROT_Y90, ROT_Z90, type Mat3 } from '../geom/vec';
+import { buildTray, TrayError, type TrayPart } from '../geom/tray';
 import type { ParsedPart, PoseAction, WorkerRequest, WorkerResponse } from './protocol';
 
 const post = (msg: WorkerResponse, transfer: Transferable[] = []) =>
@@ -92,11 +93,19 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       if (req.factor !== 1) s.original = scaleMesh(s.original, req.factor);
       s.inchesChecked = true;
       reply(req.id, [await describe(req.partId)]);
+    } else if (req.type === 'tray') {
+      const k = await initKernel(wasmUrl);
+      const list: TrayPart[] = [...parts].map(([partId, s]) => {
+        const p = posePart(k, s.original, s.rotation);
+        return { partId, name: s.original.name, mesh: p.mesh, silhouette: p.silhouette, height: p.height };
+      });
+      const t = buildTray(k, list, req.options, (fraction, label) => post({ id: req.id, type: 'progress', fraction, label }));
+      post({ id: req.id, type: 'tray', tray: { ...t, length: req.options.length, width: req.options.width } }, [t.mesh.positions.buffer as ArrayBuffer]);
     } else if (req.type === 'remove') {
       parts.delete(req.partId);
       reply(req.id, []);
     }
   } catch (e) {
-    post({ id: req.id, type: 'error', message: e instanceof Error ? e.message : String(e) });
+    post({ id: req.id, type: 'error', message: e instanceof Error ? e.message : String(e), expected: e instanceof TrayError });
   }
 };

@@ -20,6 +20,7 @@ export class Viewer {
   private camera = new THREE.PerspectiveCamera(40, 1, 0.5, 5000);
   private controls: OrbitControls;
   private parts = new THREE.Group();
+  private tray = new THREE.Group();
   private needsRender = true;
   /** Pixels at the bottom covered by the bottom sheet; the view is re-centred above it. */
   private bottomInset = 0;
@@ -50,6 +51,7 @@ export class Viewer {
 
     this.scene.add(this.makeBed());
     this.scene.add(this.parts);
+    this.scene.add(this.tray);
 
     new ResizeObserver(() => this.resize()).observe(host);
     this.resize();
@@ -132,6 +134,42 @@ export class Viewer {
     this.needsRender = true;
   }
 
+  private clear(group: THREE.Group) {
+    group.traverse((o) => {
+      const m = o as THREE.Mesh;
+      m.geometry?.dispose();
+      (m.material as THREE.Material | undefined)?.dispose();
+    });
+    group.clear();
+  }
+
+  /**
+   * Show a generated tray with the parts sitting in their pockets (or pass
+   * null to go back to the loose-parts view).
+   */
+  setTray(tray: { mesh: TriMesh; placements: { partId: number; x: number; y: number; z: number }[] } | null, parts: (ViewPart & { partId: number })[] = [], showParts = true) {
+    this.clear(this.tray);
+    this.parts.visible = !tray;
+    if (tray) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(tray.mesh.positions, 3));
+      geo.computeVertexNormals();
+      this.tray.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x8a94a3, roughness: 0.8, flatShading: true })));
+      if (showParts)
+        tray.placements.forEach((pl) => {
+          const i = parts.findIndex((p) => p.partId === pl.partId);
+          if (i < 0) return;
+          const g = new THREE.BufferGeometry();
+          g.setAttribute('position', new THREE.BufferAttribute(parts[i].mesh.positions, 3));
+          g.computeVertexNormals();
+          const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: PALETTE[i % PALETTE.length], roughness: 0.55, flatShading: true }));
+          m.position.set(pl.x, pl.y, pl.z);
+          this.tray.add(m);
+        });
+    }
+    this.frame();
+  }
+
   setBottomInset(px: number) {
     if (px === this.bottomInset) return;
     this.bottomInset = px;
@@ -140,7 +178,7 @@ export class Viewer {
 
   /** Fit the camera to the parts (or the bed when empty). */
   frame() {
-    const box = new THREE.Box3().setFromObject(this.parts);
+    const box = new THREE.Box3().setFromObject(this.tray.children.length ? this.tray : this.parts);
     if (box.isEmpty()) box.set(new THREE.Vector3(-BED.x / 2, -BED.y / 2, 0), new THREE.Vector3(BED.x / 2, BED.y / 2, 10));
     const c = box.getCenter(new THREE.Vector3());
     const r = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 30);

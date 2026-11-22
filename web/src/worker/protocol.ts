@@ -1,5 +1,6 @@
 import type { TriMesh } from '../mesh/types';
 import type { Silhouette } from '../geom/analyze';
+import type { Placement, TrayOptions } from '../geom/tray';
 
 export type FileKind = 'stl' | '3mf';
 export type PoseAction = 'next' | 'x90' | 'y90' | 'z90' | 'flip';
@@ -12,7 +13,9 @@ export type WorkerRequest =
   /** Pick automatic pose `index` (locks it), or index -1 to hand the choice back to the app. */
   | { id: number; type: 'select'; partId: number; index: number }
   | { id: number; type: 'scale'; partId: number; factor: number }
-  | { id: number; type: 'remove'; partId: number };
+  | { id: number; type: 'remove'; partId: number }
+  /** Build one tray holding every loaded part. */
+  | { id: number; type: 'tray'; options: TrayOptions };
 
 /** A part as posed on the bed: mesh in mm resting on z=0, plus its top-down outline. */
 export interface ParsedPart {
@@ -33,7 +36,11 @@ export interface ParsedPart {
   large: boolean;
 }
 
+export interface TrayInfo { mesh: TriMesh; depth: number; placements: Placement[]; volume: number; length: number; width: number }
+
 export type WorkerResponse =
   | { id: number; type: 'progress'; fraction: number; label: string }
   | { id: number; type: 'result'; parts: ParsedPart[] }
-  | { id: number; type: 'error'; message: string };
+  | { id: number; type: 'tray'; tray: TrayInfo }
+  /** `expected` = a problem to explain to the user (e.g. parts do not fit), not a bug. */
+  | { id: number; type: 'error'; message: string; expected?: boolean };

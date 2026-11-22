@@ -6,11 +6,13 @@ Files you add from your device never leave the browser. The optional
 **Library** holds parts uploaded to your own Cloudflare account by the
 Fusion 360 script in [`fusion/`](fusion/README.md), behind the same login. The design is in [`SPEC.md`](SPEC.md).
 
-**Status:** M1 done. You can upload STL/3MF (file picker, drag-and-drop,
-or the Library), and each part is auto-posed in its lowest stable resting
-position, with pose controls and its top-down outline shown on the bed.
-Geometry runs in a Web Worker on the manifold-3d WASM kernel. Pockets,
-layout and export are next (see the SPEC milestones).
+**Status:** M2 done. Upload STL/3MF (file picker, drag-and-drop, or the
+Library); each part is auto-posed, and you can pick its pose from pictures.
+**Generate tray** cuts a pocket for every part (straight walls above
+mid-height, form-fit below, with clearance) into one tray of the size you
+set, and **Download STL** exports it. Placement is a simple row layout for
+now; the real packer, finger cutouts, multiple trays and 3MF are next (see
+the SPEC milestones).
 
 ## Development
 
