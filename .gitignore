@@ -28,3 +28,4 @@ dev-dist/
 .wrangler/
 test-results/
 playwright-report/
+fusion/PelicanExport.zip

@@ -22,8 +22,13 @@ Access without a browser login):
 
 **3. Install the script:**
 
-- In Fusion: Utilities → Add-Ins → Scripts and Add-Ins → Scripts tab →
-  the **+** next to "My Scripts" → select this `PelicanExport` folder.
+- Unzip `PelicanExport.zip` and double-click **Install (Mac).command** or
+  **Install (Windows).bat**. It copies the script into Fusion's Scripts
+  folder, so it shows up in Utilities → Add-Ins → Scripts and Add-Ins.
+  On a Mac, if it's blocked the first time, right-click the file → Open.
+- Or by hand: in Scripts and Add-Ins, click the **+** next to "My Scripts"
+  and select the `PelicanExport` folder.
+- To rebuild the zip from the repo: `npm run fusion:zip`.
 
 ## Use
 
