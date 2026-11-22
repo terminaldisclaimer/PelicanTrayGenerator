@@ -163,21 +163,39 @@ function fingerPicker(p: PartState): HTMLElement {
   path.setAttribute('d', p.silhouette.map((loop) => 'M' + loop.map(([x, y]) => `${x.toFixed(2)} ${(-y).toFixed(2)}`).join('L') + 'Z').join(''));
   path.setAttribute('class', 'fp-part');
   svg.append(path);
+  // Draw the chosen cutouts first (full size), then a small "+"/"−" handle on every side.
+  for (const { side, c } of centres) {
+    if (!p.fingers.includes(side)) continue;
+    const hole = document.createElementNS(SVG, 'circle');
+    hole.setAttribute('cx', String(c[0])); hole.setAttribute('cy', String(-c[1])); hole.setAttribute('r', String(r));
+    hole.setAttribute('class', 'fp-hole');
+    svg.append(hole);
+  }
+  const mark = Math.max(2.2, w * 0.04); // handle size in drawing units
   for (const { side, c } of centres) {
     const on = p.fingers.includes(side);
-    const hit = Math.max(r, (22 * w) / 300); // keep the tap target usable on small drawings
+    // Tap target: as large as possible without overlapping a neighbour's.
+    let nearest = Infinity;
+    for (const o of centres) if (o.side !== side) nearest = Math.min(nearest, Math.hypot(o.c[0] - c[0], o.c[1] - c[1]));
+    const hit = Math.max(mark, Math.min((22 * w) / 300, nearest / 2));
     const g = document.createElementNS(SVG, 'g');
     g.setAttribute('class', 'fp-spot');
     g.setAttribute('role', 'button');
     g.setAttribute('tabindex', '0');
     g.setAttribute('aria-pressed', String(on));
-    g.setAttribute('aria-label', `Finger cutout on the ${SIDE_NAME[side]}`);
-    const ring = document.createElementNS(SVG, 'circle');
-    ring.setAttribute('cx', String(c[0])); ring.setAttribute('cy', String(-c[1])); ring.setAttribute('r', String(r));
+    g.setAttribute('aria-label', `${on ? 'Remove' : 'Add'} finger cutout on the ${SIDE_NAME[side]}`);
     const target = document.createElementNS(SVG, 'circle');
     target.setAttribute('cx', String(c[0])); target.setAttribute('cy', String(-c[1])); target.setAttribute('r', String(hit));
     target.setAttribute('class', 'fp-hit');
-    g.append(target, ring);
+    const dot = document.createElementNS(SVG, 'circle');
+    dot.setAttribute('cx', String(c[0])); dot.setAttribute('cy', String(-c[1])); dot.setAttribute('r', String(mark));
+    dot.setAttribute('class', 'fp-dot');
+    const sign = document.createElementNS(SVG, 'path');
+    const k2 = mark * 0.5;
+    sign.setAttribute('d', `M${c[0] - k2} ${-c[1]}H${c[0] + k2}` + (on ? '' : `M${c[0]} ${-c[1] - k2}V${-c[1] + k2}`));
+    sign.setAttribute('class', 'fp-sign');
+    sign.setAttribute('stroke-width', String(mark * 0.22));
+    g.append(target, dot, sign);
     const toggle = () => update(p, geo.finger(p.partId, SIDES.filter((s) => (s === side ? !on : p.fingers.includes(s)))));
     g.addEventListener('click', toggle);
     g.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
@@ -200,7 +218,7 @@ function fingerPicker(p: PartState): HTMLElement {
   hint.className = 'muted small';
   hint.textContent =
     (p.fingers.length ? `${p.fingers.length} finger cutout${p.fingers.length === 1 ? '' : 's'}${p.fingerAuto ? ' (chosen automatically)' : ''}.` : 'No finger cutouts on this part.') +
-    ' Top-down view: tap a circle to add or remove one. Depth and the swept shape are set on the Trays tab.';
+    ' Top-down view: tap + to add a cutout on that side, − to remove it. Depth and the swept shape are set on the Trays tab.';
   wrap.append(svg, row, hint);
   return wrap;
 }
