@@ -1,0 +1,30 @@
+{
+  "name": "pelican-cutout",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "STL/3MF cutout tray generator — client-side PWA",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "deploy": "npm run build && wrangler deploy",
+    "access:setup": "node scripts/setup-access.mjs",
+    "verify:access": "node scripts/verify-access.mjs"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vite-plugin-pwa": "^2.0.0",
+    "vitest": "^5.1.1",
+    "wrangler": "^4.166.0"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "manifold-3d": "^3.5.5",
+    "three": "^0.187.0"
+  }
+}

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#1b1f24" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Cutouts" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <title>Pelican Cutouts</title>
+  </head>
+  <body>
+    <main id="view" aria-label="3D preview"></main>
+
+    <div id="progress" class="progress" hidden role="status" aria-live="polite">
+      <div class="progress-label"></div>
+      <div class="progress-track"><div class="progress-bar"></div></div>
+    </div>
+
+    <div id="toast" class="toast" hidden role="alert"></div>
+
+    <section id="sheet" class="sheet" aria-label="Controls">
+      <button id="sheet-handle" class="sheet-handle" aria-label="Resize controls panel" aria-expanded="false">
+        <span class="grip"></span>
+      </button>
+      <div class="sheet-head">
+        <h1>Cutouts</h1>
+        <label class="btn primary" for="file-input">
+          Add parts
+          <input id="file-input" type="file" accept=".stl,.3mf,model/stl,model/3mf,application/vnd.ms-pki.stl,application/octet-stream" multiple hidden />
+        </label>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button role="tab" class="tab" aria-selected="true" data-tab="parts">Parts</button>
+        <button role="tab" class="tab" aria-selected="false" data-tab="trays">Trays</button>
+        <button role="tab" class="tab" aria-selected="false" data-tab="export">Export</button>
+        <button role="tab" class="tab" aria-selected="false" data-tab="settings">Settings</button>
+      </nav>
+      <div class="sheet-body">
+        <div class="panel" data-panel="parts">
+          <p id="empty" class="muted">Add STL or 3MF files from Files, Drive, or drag them here. Files stay on this device.</p>
+          <ul id="parts" class="parts"></ul>
+        </div>
+        <div class="panel" data-panel="trays" hidden><p class="muted">Tray layout arrives in a later milestone.</p></div>
+        <div class="panel" data-panel="export" hidden><p class="muted">STL / 3MF export arrives in a later milestone.</p></div>
+        <div class="panel" data-panel="settings" hidden>
+          <div class="row">
+            <span>Units</span>
+            <div class="seg" role="radiogroup" aria-label="Units">
+              <button role="radio" data-units="mm" aria-checked="true">mm</button>
+              <button role="radio" data-units="in" aria-checked="false">in</button>
+            </div>
+          </div>
+          <p class="muted small">Build plate: Bambu Lab H3C, 330 × 320 mm.</p>
+          <p class="muted small" id="version"></p>
+        </div>
+      </div>
+    </section>
+
+    <div id="drop" class="drop" hidden>Drop STL / 3MF files</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
