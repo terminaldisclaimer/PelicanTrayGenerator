@@ -528,6 +528,9 @@ function stackNote(result: TrayInfo): string {
   return ` Stacked to fit: ${lines.join('; ')}.`;
 }
 
+/** Pocket-to-tray-edge margin (mm) when the tray sits in a shell. */
+const SHELL_EDGE = 1.2;
+
 async function generateTray() {
   const s = readTrayInputs();
   if (typeof s === 'string') { $('#tray-status').textContent = s; return; }
@@ -540,6 +543,8 @@ async function generateTray() {
   const inside = shell ? trayInsideShell(outer, shell.options) : outer;
   const options: TrayOptions = {
     ...DEFAULT_TRAY, ...inside, depth: s.depth,
+    // Inside a rigid shell the tray needs no thick edge of its own: the shell is the outer wall.
+    edge: shell ? SHELL_EDGE : DEFAULT_TRAY.edge,
     maxDepth: s.height === null ? null : s.height - (shell ? shellExtraHeight(shell.options) : 0),
     fingerExtraDepth: s.fingerExtra, fingerSwept: s.fingerSwept, stacking: s.stacking,
     pocket: { ...DEFAULT_TRAY.pocket, clearance: s.clearance, split: s.split },

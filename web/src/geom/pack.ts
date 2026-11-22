@@ -17,6 +17,12 @@ export interface PackOption {
    * minimum wall plus raster slack, so touching footprints are a wall apart.
    */
   footprint: Pt[][];
+  /**
+   * Finger holes (same coordinates, not grown). They need no wall: they may
+   * overlap other finger holes and run past the tray edge, but must stay out
+   * of other parts' footprints.
+   */
+  soft?: Pt[][];
 }
 export interface PackItem { id: number; options: PackOption[] }
 export interface PackPlacement { id: number; tray: number; key: number; angle: number; tx: number; ty: number; depth: number }
@@ -39,7 +45,11 @@ export interface PackSettings {
 }
 
 
-export interface Shape { runs: Int32Array; w: number; h: number; minX: number; minY: number; cells: number }
+export interface Shape {
+  runs: Int32Array; w: number; h: number; minX: number; minY: number; cells: number;
+  /** Finger-hole cells as (row, x0, x1) relative to the same origin; may lie outside the w×h box. */
+  soft?: Int32Array;
+}
 interface Opt { key: number; depth: number; shapes: Shape[]; angles: number[] }
 interface Prepared { id: number; opts: Opt[]; area: number; maxDim: number; minDepth: number; /** Option indices by footprint size, smallest first. */ bySize: number[] }
 
@@ -82,15 +92,52 @@ export function rasterize(loops: Pt[][], cell: number): Shape {
   return { runs: Int32Array.from(runs), w, h, minX, minY, cells };
 }
 
+/** Scanline cells of `loops` as (row, x0, x1) relative to a given origin, without clamping. */
+export function rasterizeRel(loops: Pt[][], cell: number, minX: number, minY: number): Int32Array {
+  let lo = Infinity, hi = -Infinity;
+  for (const l of loops) for (const [, y] of l) { if (y < lo) lo = y; if (y > hi) hi = y; }
+  const runs: number[] = [];
+  if (lo === Infinity) return new Int32Array(0);
+  for (let row = Math.floor((lo - minY) / cell); row <= Math.ceil((hi - minY) / cell); row++) {
+    const y = minY + (row + 0.5) * cell;
+    const xs: number[] = [];
+    for (const l of loops)
+      for (let i = 0; i < l.length; i++) {
+        const a = l[i], b = l[(i + 1) % l.length];
+        if ((a[1] <= y && b[1] > y) || (b[1] <= y && a[1] > y)) xs.push(a[0] + ((y - a[1]) / (b[1] - a[1])) * (b[0] - a[0]));
+      }
+    xs.sort((p, q) => p - q);
+    for (let i = 0; i + 1 < xs.length; i += 2) {
+      // Finger holes are not grown, so count only cells whose centre is inside.
+      const x0 = Math.ceil((xs[i] - minX) / cell - 0.5), x1 = Math.floor((xs[i + 1] - minX) / cell - 0.5);
+      if (x1 >= x0) runs.push(row, x0, x1);
+    }
+  }
+  return Int32Array.from(runs);
+}
+
+/** Footprint plus its finger holes, rasterised at one angle. */
+export function rasterizeOption(o: PackOption, angle: number, cell: number): Shape {
+  const s = rasterize(rotate(o.footprint, angle), cell);
+  if (o.soft?.length) s.soft = rasterizeRel(rotate(o.soft, angle), cell, s.minX, s.minY);
+  return s;
+}
+
 class Bin {
   depth = 0;
   top = 0; // highest occupied row + 1
   right = 0; // rightmost occupied column + 1
   private occ: Uint8Array;
   private prefix: Int32Array;
+  /** Cells taken by finger holes (which other finger holes may share, but footprints may not). */
+  private occSoft: Uint8Array;
+  private prefixSoft: Int32Array;
+  private anySoft = false;
   constructor(readonly W: number, readonly H: number) {
     this.occ = new Uint8Array(W * H);
     this.prefix = new Int32Array((W + 1) * H);
+    this.occSoft = new Uint8Array(W * H);
+    this.prefixSoft = new Int32Array((W + 1) * H);
   }
   private free(s: Shape, px: number, py: number): boolean {
     const r = s.runs, P = this.prefix, stride = this.W + 1;
@@ -98,6 +145,21 @@ class Bin {
       const base = (py + r[i]) * stride + px;
       if (P[base + r[i + 2] + 1] - P[base + r[i + 1]] !== 0) return false;
     }
+    if (this.anySoft) { // this footprint must not sit on anyone's finger hole
+      const S = this.prefixSoft;
+      for (let i = 0; i < r.length; i += 3) {
+        const base = (py + r[i]) * stride + px;
+        if (S[base + r[i + 2] + 1] - S[base + r[i + 1]] !== 0) return false;
+      }
+    }
+    const f = s.soft;
+    if (f) // ...and its finger holes must not cut into anyone's footprint (off the tray is fine)
+      for (let i = 0; i < f.length; i += 3) {
+        const row = py + f[i];
+        if (row < 0 || row >= this.H) continue;
+        const x0 = Math.max(0, px + f[i + 1]), x1 = Math.min(this.W - 1, px + f[i + 2]);
+        if (x1 >= x0 && P[row * stride + x1 + 1] - P[row * stride + x0] !== 0) return false;
+      }
     return true;
   }
   /** First free position scanning rows upward, columns left to right. */
@@ -123,6 +185,23 @@ class Bin {
       this.occ.fill(1, row * this.W + px + r[i + 1], row * this.W + px + r[i + 2] + 1);
     }
     if (lastRow >= 0) redo(lastRow);
+    const f = s.soft;
+    if (f?.length) {
+      this.anySoft = true;
+      const rows = new Set<number>();
+      for (let i = 0; i < f.length; i += 3) {
+        const row = py + f[i];
+        if (row < 0 || row >= this.H) continue;
+        const x0 = Math.max(0, px + f[i + 1]), x1 = Math.min(this.W - 1, px + f[i + 2]);
+        if (x1 < x0) continue;
+        this.occSoft.fill(1, row * this.W + x0, row * this.W + x1 + 1);
+        rows.add(row);
+      }
+      for (const row of rows) {
+        let acc = 0;
+        for (let x = 0; x < this.W; x++) { acc += this.occSoft[row * this.W + x]; this.prefixSoft[row * stride + x + 1] = acc; }
+      }
+    }
     this.top = Math.max(this.top, py + s.h);
     this.right = Math.max(this.right, px + s.w);
     this.depth = Math.max(this.depth, depth);
@@ -212,7 +291,7 @@ export function pack(items: PackItem[], settings: PackSettings): PackResult {
   const angles: number[] = [0, 90, 180, 270];
   for (let a = step; a < 360; a += step) if (a % 90 !== 0) angles.push(a);
   const prepared: Prepared[] = items.map((it) => {
-    const opts = it.options.map((o) => ({ key: o.key, depth: o.depth, angles, shapes: angles.map((a) => rasterize(rotate(o.footprint, a), cell)) }));
+    const opts = it.options.map((o) => ({ key: o.key, depth: o.depth, angles, shapes: angles.map((a) => rasterizeOption(o, a, cell)) }));
     const first = opts[0].shapes[0];
     const bySize = opts.map((_, i) => i).sort((a, b) => opts[a].shapes[0].cells - opts[b].shapes[0].cells);
     return { id: it.id, opts, area: first.cells, maxDim: Math.max(first.w, first.h), minDepth: Math.min(...opts.map((o) => o.depth)), bySize };

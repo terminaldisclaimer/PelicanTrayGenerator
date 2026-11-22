@@ -117,6 +117,8 @@ export interface TrayResult { trays: Tray[]; /** Number of stacks that were form
 /** User-facing problem with the request (shown as a message, not a crash). */
 export class TrayError extends Error {}
 
+/** Finger holes of neighbouring parts closer than this (edge to edge, mm) are joined into one slot. */
+const FINGER_MERGE_GAP = 2;
 const RASTER_SLACK = 0.75; // mm; covers the 1 mm packing grid
 const POLYGON_SLACK = 0.2; // mm; rounded offsets are polygons slightly inside the true curve
 
@@ -220,12 +222,8 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
       }
       return all;
     };
-    /** Pocket opening plus finger holes: everything the part takes from the tray surface. */
-    const shapeOf = (part: TrayPart, pose: TrayPose): CS => {
-      const open = keep(keep(k.CrossSection.ofPolygons(pose.silhouette, 'Positive')).offset(o.pocket.clearance, 'Round', 2, 16));
-      const holes = scoops(part, pose);
-      return holes ? keep(open.add(holes)) : open;
-    };
+    /** The pocket opening: the part of the footprint that needs a wall around it. */
+    const openingOf = (pose: TrayPose): CS => keep(keep(k.CrossSection.ofPolygons(pose.silhouette, 'Positive')).offset(o.pocket.clearance, 'Round', 2, 16));
     const grown = (shape: CS) => keep(keep(shape.offset(o.wall / 2 + RASTER_SLACK + POLYGON_SLACK, 'Round', 2, 12)).simplify(0.1)).toPolygons() as Pt[][];
 
     // Footprints already carry half a wall, so the usable region is the tray
@@ -238,7 +236,7 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
     // ---- 1. Allowed poses and the depth the deepest part sets ----
     onProgress?.(0.03, 'Measuring parts');
     const limit = Math.min(o.depth ?? Infinity, o.maxDepth ?? Infinity);
-    interface Choice { pose: TrayPose; depth: number; shape: CS; footprint: Pt[][]; area: number }
+    interface Choice { pose: TrayPose; depth: number; footprint: Pt[][]; soft: Pt[][] | undefined }
     interface Unit { id: number; choices: Choice[]; part: TrayPart; depth: number }
     const tooDeep: string[] = [], tooBig: string[] = [];
     const units: Unit[] = [];
@@ -246,9 +244,9 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
       const within = part.poses.filter((pose) => neededDepth(part, pose) <= limit - o.floor + 1e-9);
       if (!within.length) { tooDeep.push(part.name); continue; }
       const choices = within
-        .map((pose) => { const shape = shapeOf(part, pose); return { pose, depth: neededDepth(part, pose), shape, footprint: grown(shape), area: shape.area() }; })
+        .map((pose) => { const holes = scoops(part, pose); return { pose, depth: neededDepth(part, pose), footprint: grown(openingOf(pose)), soft: holes ? (holes.toPolygons() as Pt[][]) : undefined }; })
         // ...that can go in an empty tray at all, at some angle.
-        .filter((c) => !packWith([{ id: 0, options: [{ key: 0, depth: c.depth, footprint: c.footprint }] }], true).unplaced.length)
+        .filter((c) => !packWith([{ id: 0, options: [{ key: 0, depth: c.depth, footprint: c.footprint, soft: c.soft }] }], true).unplaced.length)
         .sort((a, b) => a.depth - b.depth);
       if (!choices.length) { tooBig.push(part.name); continue; }
       units.push({ id: part.partId, choices, part, depth: choices[0].depth });
@@ -262,7 +260,7 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
     // Depths that other orientations would need, for the caller to try if this does not fit.
     const deeper = [...new Set(units.flatMap((u) => u.choices.map((c) => c.depth)).filter((d) => d > D + 1e-9))].sort((x, y) => x - y);
     for (const u of units) u.choices = u.choices.filter((c) => c.depth <= D + 1e-9);
-    const options = (u: Unit) => u.choices.map((c) => ({ key: c.pose.poseIndex, depth: c.depth, footprint: c.footprint }));
+    const options = (u: Unit) => u.choices.map((c) => ({ key: c.pose.poseIndex, depth: c.depth, footprint: c.footprint, soft: c.soft }));
 
     // ---- 2. Side by side, quickly ----
     onProgress?.(0.1, 'Arranging parts');
@@ -318,16 +316,6 @@ function cutPlan(k: ManifoldToplevel, o: TrayOptions, plan: Plan, onProgress?: (
     const extra = Math.max(0, o.fingerExtraDepth);
     const fingerR = o.fingerDiameter / 2;
     const { inset } = plan;
-    const scoops = (part: TrayPart, pose: TrayPose) => {
-      let all: ReturnType<typeof k.CrossSection.circle> | null = null;
-      for (const side of sidesFor(part, pose)) {
-        const [fx, fy] = fingerCentre(pose.silhouette, o.pocket.clearance, side);
-        const c = keep(keep(k.CrossSection.circle(fingerR, 32)).translate(fx, fy));
-        all = all ? keep(all.add(c)) : c;
-      }
-      return all;
-    };
-    // ---- 4. Cut each tray ----
     const r = Math.max(0, Math.min(o.cornerRadius, o.length / 2 - 1, o.width / 2 - 1));
     const core = keep(k.CrossSection.square([o.length - 2 * r, o.width - 2 * r], true));
     const outline = r > 0 ? keep(core.offset(r, 'Round', 2, 32)) : core;
@@ -337,6 +325,7 @@ function cutPlan(k: ManifoldToplevel, o: TrayOptions, plan: Plan, onProgress?: (
       const depth = o.depth ?? plan.trayDepths[t] + o.floor;
       const placements: Placement[] = [];
       const cuts: Manifold[] = [];
+      const holes: { x: number; y: number; d: number }[] = [];
       for (const e of plan.entries.filter((x) => x.tray === t)) {
         const { part, pose } = e;
         onProgress?.(0.15 + (0.75 * done++) / plan.entries.length, `Cutting pocket: ${part.name}`);
@@ -348,24 +337,35 @@ function cutPlan(k: ManifoldToplevel, o: TrayOptions, plan: Plan, onProgress?: (
           piece = keep(piece.add(keep(keep(keep(k.CrossSection.ofPolygons(c.opening, 'Positive')).extrude(e.offset + 1)).translate(0, 0, -e.offset))));
         }
         const sides = sidesFor(part, pose);
-        if (sides.length) {
-          // Finger holes run from the tray surface to this pocket's floor (plus any extra).
-          const d = e.offset + c.depth + extra;
-          if (o.fingerSwept) {
-            for (const side of sides) {
-              const [fx, fy] = fingerCentre(pose.silhouette, o.pocket.clearance, side);
-              piece = keep(piece.add(keep(keep(keep(k.Manifold.sphere(1, 28)).scale([fingerR, fingerR, d])).translate(fx, fy, 0))));
-            }
-          } else {
-            piece = keep(piece.add(keep(keep(scoops(part, pose)!.extrude(d + 1)).translate(0, 0, -d))));
-          }
-        }
         const x = e.tx - o.length / 2 + inset, y = e.ty - o.width / 2 + inset;
         cuts.push(keep(keep(piece.rotate([0, 0, e.angle])).translate(x, y, depth)));
+        // Finger holes run from the tray surface to this pocket's floor (plus any
+        // extra). They are collected for the whole tray so that holes which meet
+        // can be cut as one slot.
+        const rad = (e.angle * Math.PI) / 180, cos = Math.cos(rad), sin = Math.sin(rad);
+        for (const side of sides) {
+          const [fx, fy] = fingerCentre(pose.silhouette, o.pocket.clearance, side);
+          holes.push({ x: x + fx * cos - fy * sin, y: y + fx * sin + fy * cos, d: e.offset + c.depth + extra });
+        }
         placements.push({
           partId: part.partId, poseIndex: pose.poseIndex, fingers: sides, angle: e.angle, x, y, z: depth - e.offset - c.top,
           pocketDepth: c.depth, formFit: c.formFit, level: e.level, stackSize: e.stackSize, under: e.under,
         });
+      }
+      // Finger holes that overlap or nearly touch become one rounded slot spanning
+      // the parts they serve (the convex hull of the individual holes).
+      const group = holes.map((_, i) => i);
+      const find = (i: number): number => (group[i] === i ? i : (group[i] = find(group[i])));
+      for (let i = 0; i < holes.length; i++)
+        for (let j = i + 1; j < holes.length; j++)
+          if (Math.hypot(holes[i].x - holes[j].x, holes[i].y - holes[j].y) <= 2 * fingerR + FINGER_MERGE_GAP) group[find(i)] = find(j);
+      const clusters = new Map<number, typeof holes>();
+      holes.forEach((h, i) => { const g = find(i); clusters.set(g, [...(clusters.get(g) ?? []), h]); });
+      for (const cluster of clusters.values()) {
+        const pieces = cluster.map((h) => (o.fingerSwept
+          ? keep(keep(keep(k.Manifold.sphere(1, 28)).scale([fingerR, fingerR, h.d])).translate(h.x, h.y, depth)) // bowl: full depth at the centre, curving up to the surface
+          : keep(keep(keep(k.CrossSection.circle(fingerR, 32)).extrude(h.d + 1)).translate(h.x, h.y, depth - h.d))));
+        cuts.push(pieces.length === 1 ? pieces[0] : keep(k.Manifold.hull(pieces)));
       }
       onProgress?.(0.92, `Building tray ${t + 1}`);
       const block = keep(outline.extrude(depth));

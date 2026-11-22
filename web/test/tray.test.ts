@@ -181,7 +181,8 @@ describe('tray', () => {
     expect(autoFingers(6)).toEqual(['top']);
     expect(autoFingers(20)).toEqual(['top', 'bottom']);
 
-    const tray = (f: TrayPart['fingers'], extra: object = {}) => buildTrays(k, [trayPart(box, 1, f)], { ...FAST, ...extra }).trays[0];
+    // A wide edge margin keeps the finger holes fully on the tray here (they are allowed to run off its edge).
+    const tray = (f: TrayPart['fingers'], extra: object = {}) => buildTrays(k, [trayPart(box, 1, f)], { ...FAST, edge: 20, ...extra }).trays[0];
     const straight = { fingerSwept: false };
     const none = tray([], straight), one = tray(['top'], straight), two = tray(['top', 'bottom'], straight), auto = tray('auto', straight);
     // Straight holes reach the pocket floor: half a Ø20 disc outside the pocket × 20.2 mm.
@@ -417,6 +418,44 @@ describe('tray', () => {
     expect(distinctPoses([pose(lPart, IDENTITY, 0), pose(lPart, FLIP, 1)])).toHaveLength(2);
     const box = boxMesh(40, 20, 6);
     expect(distinctPoses([pose(box, IDENTITY, 0), pose(box, FLIP, 1)])).toHaveLength(1);
+  });
+
+  it('finger holes need no wall: they may share space and run off the edge, but stay out of other pockets', () => {
+    // Two 60×30 parts with a finger hole on each long side, in a tray only 86 mm wide.
+    // With walls around every hole they could not sit side by side (30 + 2×20 each); sharing the gap they can.
+    const a = trayPart(boxMesh(60, 30, 20, 'a'), 1, ['top', 'bottom']), b = trayPart(boxMesh(60, 30, 20, 'b'), 2, ['top', 'bottom']);
+    const r = buildTrays(k, [a, b], { ...FAST, length: 70, width: 86, stacking: false });
+    expect(r.trays).toHaveLength(1);
+    const t = r.trays[0];
+    const tray = toManifold(k, t.mesh)!;
+    expect(tray).not.toBeNull();
+    // Each part still sits in clear space...
+    for (const pl of t.placements) {
+      const part = (pl.partId === 1 ? a : b).poses[0];
+      const solid = toManifold(k, part.mesh)!;
+      const moved = solid.rotate([0, 0, pl.angle]).translate(pl.x, pl.y, pl.z);
+      const clash = moved.intersect(tray);
+      expect(clash.volume()).toBeLessThan(0.01);
+      solid.delete(); moved.delete(); clash.delete();
+    }
+    // ...and no finger hole cuts into the other part's pocket: 0.6 mm outside each pocket there is
+    // still tray material along the long sides, except where the part's own two holes are.
+    const half = tray.slice(t.depth - 10);
+    for (const pl of t.placements) {
+      const ring = k.CrossSection.square([60 + 2.2, 30 + 2.2], true).subtract(k.CrossSection.square([60 + 1.2, 30 + 1.2], true)).rotate(pl.angle).translate(pl.x, pl.y);
+      const solid = ring.intersect(half);
+      expect(solid.area() / ring.area()).toBeGreaterThan(0.7); // only the two Ø20 holes interrupt it
+      ring.delete(); solid.delete();
+    }
+    half.delete();
+    // The two holes facing each other meet, so they are cut as one slot joining the pockets:
+    // midway between the parts, the tray is open across the full 20 mm of the slot.
+    const [p1, p2] = t.placements;
+    const mid = tray.slice(t.depth - 1);
+    const probe = k.CrossSection.square([16, 1], true).rotate(p1.angle).translate((p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
+    const left = probe.intersect(mid);
+    expect(left.area()).toBeLessThan(0.5);
+    mid.delete(); probe.delete(); left.delete(); tray.delete();
   });
 
   it('exports as a valid binary STL', () => {
