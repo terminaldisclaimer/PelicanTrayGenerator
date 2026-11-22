@@ -13,6 +13,8 @@
  *  - surface parts do not overlap each other; sunk parts do not overlap each other;
  *  - a sunk part may lie under surface parts whose pocket depth plus its own
  *    fits within `maxDepth`; it sits just below the deepest pocket above it;
+ *  - finger holes may overlap each other but stay out of other parts'
+ *    footprints (same level) and inside the tray;
  *  - a surface part keeps at least (1 − maxCover) of its floor, not counting
  *    sunk parts hidden entirely beneath it (it rests on those).
  */
@@ -28,6 +30,8 @@ export interface AnnealItem {
 }
 export interface AnnealSettings {
   width: number; height: number; cell?: number;
+  /** Cells of tray material a finger hole must leave to the edge of the region. */
+  softMargin?: number;
   /** Deepest pocket allowed, including anything stacked. */
   maxDepth: number;
   allowSink: boolean;
@@ -137,6 +141,8 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
   const sh: Sh[] = new Array(n);
   const ov = new Float64Array(n * n); // pairwise shared footprint cells
   const fv = new Float64Array(n * n); // finger holes of either cutting into the other's footprint
+  const out = new Float64Array(n); // finger-hole cells too close to, or past, the tray edge
+  const margin = settings.softMargin ?? 0;
   const covered = new Float64Array(n);
   const outside = new Float64Array(n);
 
@@ -148,6 +154,16 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
     return true;
   };
   const refresh = (i: number) => {
+    let o = 0;
+    const f = sh[i].soft;
+    if (f)
+      for (let r = 0; r < f.length; r += 3) {
+        const row = py[i] + f[r], x0 = px[i] + f[r + 1], x1 = px[i] + f[r + 2];
+        if (row < margin || row >= H - margin) { o += x1 - x0 + 1; continue; }
+        if (x0 < margin) o += Math.min(x1, margin - 1) - x0 + 1;
+        if (x1 >= W - margin) o += x1 - Math.max(x0, W - margin) + 1;
+      }
+    out[i] = o;
     for (let j = 0; j < n; j++) {
       if (j === i) continue;
       const v = overlap(sh[i], px[i], py[i], sh[j], px[j], py[j]);
@@ -174,6 +190,7 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
       }
     let stacked = 0, depth = 0;
     for (let i = 0; i < n; i++) {
+      bad += out[i];
       if (!sunk[i]) {
         // Too much floor lost: valid again either by uncovering some, or by pushing
         // what is beneath fully under — charge whichever is nearer, so the search
@@ -227,7 +244,7 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
     for (let it = 0; it < moves; it++) {
       const T = T0 * Math.pow(T1 / T0, it / moves);
       const i = ri(n);
-      const old = { o: opt[i], a: ang[i], x: px[i], y: py[i], k: sunk[i], s: sh[i] };
+      const old = { o: opt[i], a: ang[i], x: px[i], y: py[i], k: sunk[i], s: sh[i], out: out[i] };
       for (let j = 0; j < n; j++) { rowBackup[j] = ov[i * n + j]; fBackup[j] = fv[i * n + j]; }
       let j2 = -1, old2: typeof old | null = null;
       const r = rand();
@@ -257,7 +274,7 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
       } else if (r < 0.88) { // swap places with another part
         if (n < 2) continue;
         j2 = (i + 1 + ri(n - 1)) % n;
-        old2 = { o: opt[j2], a: ang[j2], x: px[j2], y: py[j2], k: sunk[j2], s: sh[j2] };
+        old2 = { o: opt[j2], a: ang[j2], x: px[j2], y: py[j2], k: sunk[j2], s: sh[j2], out: out[j2] };
         for (let j = 0; j < n; j++) { rowBackup2[j] = ov[j2 * n + j]; fBackup2[j] = fv[j2 * n + j]; }
         const cix = px[i] + sh[i].w / 2, ciy = py[i] + sh[i].h / 2, cjx = px[j2] + sh[j2].w / 2, cjy = py[j2] + sh[j2].h / 2;
         place(i, opt[i], ang[i], Math.round(cjx - sh[i].w / 2), Math.round(cjy - sh[i].h / 2));
@@ -274,8 +291,9 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
         cur = next;
         if (total(cur) < total(best)) { best = cur; bestState = snapshot(); }
       } else {
-        opt[i] = old.o; ang[i] = old.a; px[i] = old.x; py[i] = old.y; sunk[i] = old.k; sh[i] = old.s;
+        opt[i] = old.o; ang[i] = old.a; px[i] = old.x; py[i] = old.y; sunk[i] = old.k; sh[i] = old.s; out[i] = old.out;
         if (j2 >= 0 && old2) {
+          out[j2] = old2.out;
           opt[j2] = old2.o; ang[j2] = old2.a; px[j2] = old2.x; py[j2] = old2.y; sunk[j2] = old2.k; sh[j2] = old2.s;
           for (let j = 0; j < n; j++) { ov[j2 * n + j] = rowBackup2[j]; ov[j * n + j2] = rowBackup2[j]; fv[j2 * n + j] = fBackup2[j]; fv[j * n + j2] = fBackup2[j]; }
         }
@@ -336,6 +354,7 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
     for (let i = 0; i < n; i++) {
       let touching = false;
       for (let j = 0; j < n; j++) if (j !== i && (ov[i * n + j] || fv[i * n + j])) touching = true;
+      if (out[i]) touching = true;
       if (touching) continue; // leave stacked parts exactly as found
       if (angles[ang[i]] % 90 !== 0) {
         const q = Math.round(angles[ang[i]] / 90) % 4, s = shape(i, opt[i], q);

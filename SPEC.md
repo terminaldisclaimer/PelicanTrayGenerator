@@ -104,7 +104,14 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   can be pinched and lifted straight out.
 - **Choosing:** each part has a top-down drawing with a circle on every
   side; tap to add or remove a cutout. Presets: Auto, None, Pinch pair.
-- The packer treats the scoops as part of the part's footprint.
+- Finger holes need no wall between each other: they may overlap, and holes
+  of neighbouring parts that overlap or come within 2 mm are cut as one slot
+  spanning those parts. A hole stays at least 1.5 mm clear of any other
+  part's pocket.
+- **Nothing breaks through the tray.** Every cut, pocket or finger hole,
+  keeps at least the "minimum tray thickness at the edge" (setting, default
+  2 mm) of tray material to the outside, and the floor thickness below, so a
+  shell around the tray is never visible through it.
 
 ### 3.5 Stacking (tiered pockets)
 - A stack is two or more parts sharing one footprint: the top part in a

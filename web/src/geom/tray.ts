@@ -18,7 +18,7 @@ export interface TrayOptions {
   maxDepth: number | null;
   floor: number; // minimum material under the deepest pocket
   wall: number; // minimum between pockets
-  edge: number; // minimum between a pocket and the tray edge
+  edge: number; // minimum tray material between any cut (pocket or finger hole) and the tray edge
   cornerRadius: number;
   /** Finger cutout: a round hole on the pocket edge, as deep as the pocket. */
   fingerDiameter: number;
@@ -230,8 +230,11 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
     // shrunk by (edge − wall/2) on every side.
     const inset = Math.max(0, o.edge - o.wall / 2 - RASTER_SLACK);
     const region = { width: o.length - 2 * inset, height: o.width - 2 * inset };
+    // Finger holes are not grown, so they keep the whole edge margin themselves:
+    // no cut may come closer than `edge` to the outside of the tray.
+    const softMargin = Math.ceil(o.edge - inset - 1e-9);
     const packWith = (items: PackItem[], quick: boolean) =>
-      pack(items, { ...region, attempts: quick ? 16 : o.packAttempts ?? 96, timeBudgetMs: quick ? 400 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep, fixedDepth: o.depth !== null });
+      pack(items, { ...region, attempts: quick ? 16 : o.packAttempts ?? 96, timeBudgetMs: quick ? 400 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep, fixedDepth: o.depth !== null, softMargin });
 
     // ---- 1. Allowed poses and the depth the deepest part sets ----
     onProgress?.(0.03, 'Measuring parts');
@@ -288,7 +291,7 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
           const p = start.get(u.id);
           return { id: u.id, stackable: u.part.stackable !== false, options: options(u), start: p && { key: p.key, angle: p.angle, tx: p.tx, ty: p.ty } };
         }),
-        { ...region, maxDepth: D, allowSink: o.stacking, angleStep: o.packAngleStep, iterations: o.searchIterations, rounds: o.searchRounds },
+        { ...region, softMargin, maxDepth: D, allowSink: o.stacking, angleStep: o.packAngleStep, iterations: o.searchIterations, rounds: o.searchRounds },
       );
       if (found) {
         const above = new Set(found.flatMap((f) => f.under));
