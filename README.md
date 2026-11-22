@@ -6,13 +6,13 @@ Files you add from your device never leave the browser. The optional
 **Library** holds parts uploaded to your own Cloudflare account by the
 Fusion 360 script in [`fusion/`](fusion/README.md), behind the same login. The design is in [`SPEC.md`](SPEC.md).
 
-**Status:** M2 done. Upload STL/3MF (file picker, drag-and-drop, or the
-Library); each part is auto-posed, and you can pick its pose from pictures.
-**Generate tray** cuts a pocket for every part (straight walls above
-mid-height, form-fit below, with clearance) into one tray of the size you
-set, and **Download STL** exports it. Placement is a simple row layout for
-now; the real packer, finger cutouts, multiple trays and 3MF are next (see
-the SPEC milestones).
+**Status:** M3 mostly done. Upload STL/3MF (file picker, drag-and-drop, or
+the Library) and pick poses from pictures, or leave parts on Auto. Enter the
+case's inside size; **Generate tray** then arranges the parts (choosing
+poses for Auto parts, rotating in 90° steps, overflowing into extra trays),
+cuts form-fit pockets with finger cutouts, and **Download STL** exports each
+tray. Still to come: dragging parts by hand in a 2D layout view, tiered
+pockets, 3MF export, the TPU liner (see the SPEC milestones).
 
 ## Development
 

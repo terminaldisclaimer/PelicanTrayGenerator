@@ -49,13 +49,14 @@
           </section>
         </div>
         <div class="panel" data-panel="trays" hidden>
-          <label class="row"><span>Tray length (<span class="u">mm</span>)</span><input class="num" id="tray-length" inputmode="decimal" autocomplete="off" /></label>
-          <label class="row"><span>Tray width (<span class="u">mm</span>)</span><input class="num" id="tray-width" inputmode="decimal" autocomplete="off" /></label>
+          <label class="row"><span>Case inside length (<span class="u">mm</span>)</span><input class="num" id="tray-length" inputmode="decimal" autocomplete="off" /></label>
+          <label class="row"><span>Case inside width (<span class="u">mm</span>)</span><input class="num" id="tray-width" inputmode="decimal" autocomplete="off" /></label>
+          <label class="row"><span>Gap to case wall, per side (<span class="u">mm</span>)</span><input class="num" id="tray-gap" inputmode="decimal" autocomplete="off" /></label>
           <label class="row"><span>Tray depth (<span class="u">mm</span>)</span><input class="num" id="tray-depth" inputmode="decimal" autocomplete="off" placeholder="auto" /></label>
           <label class="row"><span>Clearance around parts (<span class="u">mm</span>)</span><input class="num" id="tray-clearance" inputmode="decimal" autocomplete="off" /></label>
           <label class="row"><span>Form-fit up to (% of part height)</span><input class="num" id="tray-split" inputmode="numeric" autocomplete="off" /></label>
           <button id="tray-build" class="btn primary wide">Generate tray</button>
-          <p id="tray-status" class="muted small">Set the tray to the inside size of your case, then generate.</p>
+          <p id="tray-status" class="muted small">Enter the inside size of your case, then generate.</p>
           <div class="row" id="tray-view-row" hidden>
             <span>Show parts in tray</span>
             <div class="seg" role="radiogroup" aria-label="Show parts in tray">
@@ -65,7 +66,7 @@
           </div>
         </div>
         <div class="panel" data-panel="export" hidden>
-          <button id="export-stl" class="btn primary wide" disabled>Download STL</button>
+          <div id="export-list"></div>
           <p id="export-status" class="muted small">Generate a tray first (Trays tab).</p>
           <p class="muted small">Print with the pockets facing up. 3MF export arrives in a later version.</p>
         </div>

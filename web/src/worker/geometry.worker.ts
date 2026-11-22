@@ -7,14 +7,14 @@ import type { TriMesh } from '../mesh/types';
 import { initKernel } from '../geom/kernel';
 import { poseCandidates, posePart, type PoseCandidate } from '../geom/analyze';
 import { FLIP, mul, ROT_X90, ROT_Y90, ROT_Z90, type Mat3 } from '../geom/vec';
-import { buildTray, TrayError, type TrayPart } from '../geom/tray';
+import { buildTrays, TrayError, type TrayPart } from '../geom/tray';
 import type { ParsedPart, PoseAction, WorkerRequest, WorkerResponse } from './protocol';
 
 const post = (msg: WorkerResponse, transfer: Transferable[] = []) =>
   (self as unknown as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
 
 /** Originals stay in the worker so re-posing never re-sends the mesh. */
-interface Stored { original: TriMesh; candidates: PoseCandidate[]; rotation: Mat3; poseIndex: number; locked: boolean; inchesChecked: boolean }
+interface Stored { original: TriMesh; candidates: PoseCandidate[]; rotation: Mat3; poseIndex: number; locked: boolean; finger: boolean; inchesChecked: boolean }
 const parts = new Map<number, Stored>();
 let nextPartId = 1;
 
@@ -27,7 +27,7 @@ async function describe(partId: number, candidate?: number): Promise<ParsedPart>
   const triangles = s.original.positions.length / 9;
   return {
     partId, ...posed, triangles,
-    poseIndex: candidate ?? s.poseIndex, poseCount: s.candidates.length, poseLocked: s.locked,
+    poseIndex: candidate ?? s.poseIndex, poseCount: s.candidates.length, poseLocked: s.locked, finger: s.finger,
     suggestInches: !s.inchesChecked && looksLikeInches(meshBounds(s.original)),
     large: triangles > LARGE_MESH_TRIANGLES,
   };
@@ -40,7 +40,7 @@ async function add(mesh: TriMesh): Promise<number> {
     throw new Error(`${mesh.name}: ${triangles.toLocaleString()} triangles exceeds the ${MAX_MESH_TRIANGLES.toLocaleString()} limit`);
   const candidates = poseCandidates(k, mesh);
   const id = nextPartId++;
-  parts.set(id, { original: mesh, candidates, rotation: candidates[0].rotation, poseIndex: 0, locked: false, inchesChecked: false });
+  parts.set(id, { original: mesh, candidates, rotation: candidates[0].rotation, poseIndex: 0, locked: false, finger: true, inchesChecked: false });
   return id;
 }
 
@@ -93,14 +93,38 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       if (req.factor !== 1) s.original = scaleMesh(s.original, req.factor);
       s.inchesChecked = true;
       reply(req.id, [await describe(req.partId)]);
+    } else if (req.type === 'finger') {
+      const s = parts.get(req.partId);
+      if (!s) throw new Error('Unknown part');
+      s.finger = req.on;
+      reply(req.id, [await describe(req.partId)]);
     } else if (req.type === 'tray') {
       const k = await initKernel(wasmUrl);
+      post({ id: req.id, type: 'progress', fraction: 0.01, label: 'Preparing parts' });
+      // Locked parts keep their pose; parts on Auto offer their best few poses to the packer.
+      const AUTO_POSES = 3;
       const list: TrayPart[] = [...parts].map(([partId, s]) => {
-        const p = posePart(k, s.original, s.rotation);
-        return { partId, name: s.original.name, mesh: p.mesh, silhouette: p.silhouette, height: p.height };
+        const rotations: [number, Mat3][] = s.locked
+          ? [[-1, s.rotation]]
+          : s.candidates.slice(0, AUTO_POSES).map((c, i) => [i, c.rotation] as [number, Mat3]);
+        return {
+          partId, name: s.original.name, finger: s.finger,
+          poses: rotations.map(([poseIndex, r]) => { const p = posePart(k, s.original, r); return { poseIndex, mesh: p.mesh, silhouette: p.silhouette, height: p.height }; }),
+        };
       });
-      const t = buildTray(k, list, req.options, (fraction, label) => post({ id: req.id, type: 'progress', fraction, label }));
-      post({ id: req.id, type: 'tray', tray: { ...t, length: req.options.length, width: req.options.width } }, [t.mesh.positions.buffer as ArrayBuffer]);
+      const result = buildTrays(k, list, req.options, (fraction, label) => post({ id: req.id, type: 'progress', fraction, label }));
+      // Auto parts take the pose the packer chose (still unlocked).
+      for (const t of result.trays)
+        for (const pl of t.placements) {
+          const s = parts.get(pl.partId)!;
+          if (!s.locked && pl.poseIndex >= 0) { s.poseIndex = pl.poseIndex; s.rotation = s.candidates[pl.poseIndex].rotation; }
+        }
+      const now: ParsedPart[] = [];
+      for (const id of parts.keys()) now.push(await describe(id));
+      post(
+        { id: req.id, type: 'tray', tray: { trays: result.trays, length: req.options.length, width: req.options.width, parts: now } },
+        [...result.trays.map((t) => t.mesh.positions.buffer as ArrayBuffer), ...now.map((p) => p.mesh.positions.buffer as ArrayBuffer)],
+      );
     } else if (req.type === 'remove') {
       parts.delete(req.partId);
       reply(req.id, []);

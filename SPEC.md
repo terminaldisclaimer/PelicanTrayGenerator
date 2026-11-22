@@ -28,7 +28,7 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 |---|---|
 | Printer | Bambu Lab **H3C**: 330 × 320 × 325 mm build volume, tool changer, multi-material |
 | Tray material | PETG or PLA (chosen at export; written into the 3MF) |
-| Tray footprint | Every tray uses the same L × W = case interior minus fit clearance. **Must fit the bed** (≤ 330 × 320 mm, rotation allowed); otherwise show an error and don't split |
+| Tray footprint | Configurable: you enter the case's inside L × W and a gap per side (default 1 mm). Every tray uses that same footprint. **Must fit the bed** (≤ 330 × 320 mm, rotation allowed); otherwise show an error and don't split |
 | Tray depth | Per tray: auto = deepest stack of pockets + floor, or set manually (a warning appears if it's too shallow) |
 | Pocket style | Upper half: straight walls (the silhouette cut down). Lower half: follows the part's 3D shape exactly |
 | Clearance | **0.5 mm** per side by default, adjustable globally and per part |
@@ -123,20 +123,21 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   more reliable, gives the same result for the same inputs, and works
   offline. Sending part geometry to an LLM would also break the rule that
   files never leave the browser.
-- Algorithm (in the worker): rasterize each footprint (pocket + finger
-  cutout, dilated by half the wall) at 0.5 mm. Place parts bottom-left-fill
-  over candidate rotations (every 15°, plus each part's principal-axis
-  angles). Order parts by area descending. Then run simulated annealing on
-  order, rotation and tray assignment for a time budget (default 3 s,
-  progress shown).
-- Pose is part of the search: for every part left on Auto the optimizer may
-  switch between its candidate poses (e.g. stand a part on edge when that
-  saves a tray and the tray depth allows it).
-- Objective, in priority order: fewest trays → lowest total stacked depth →
-  most even wall margins → finger cutouts pointing at open space.
-- Manual override: drag or rotate a part in the 2D tray view. You can lock a
-  part, move it to another tray, or make it a tier. Then re-run the optimizer
-  for the unlocked parts.
+- **As built:** each footprint (pocket opening + finger scoop, grown by half
+  the wall) is rasterised on a 1 mm grid at 0/90/180/270°. Parts are placed
+  first-fit, lowest row first, into the first tray with room; a new tray of
+  the same footprint is opened when none has. Up to 24 orderings are tried
+  (by area, by longest side, by depth, then seeded shuffles) within a time
+  budget, alternating between "keep trays shallow" and "fit as much as
+  possible".
+- **Pose is part of the search:** parts left on Auto offer their best three
+  poses; the packer may stand a part on edge when that saves a tray. Locked
+  parts keep their pose. A manual tray depth acts as a limit on which poses
+  are allowed.
+- Objective, in priority order: fewest trays → least total depth → most
+  compact.
+- **Not yet built:** finer rotation steps, manual drag/rotate/lock in a 2D
+  tray view, moving a part to another tray by hand.
 
 ## 4. Export (Bambu H3C)
 - **STL**: one binary STL per tray, in mm.

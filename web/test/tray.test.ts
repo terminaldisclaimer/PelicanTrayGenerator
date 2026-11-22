@@ -4,7 +4,7 @@ import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { initKernel } from '../src/geom/kernel';
 import { poseCandidates, posePart, toManifold } from '../src/geom/analyze';
 import { buildCavity, DEFAULT_POCKET } from '../src/geom/pocket';
-import { buildTray, DEFAULT_TRAY, shelfLayout, TrayError, type TrayPart } from '../src/geom/tray';
+import { buildTrays, DEFAULT_TRAY, fingerCentre, TrayError, type TrayPart } from '../src/geom/tray';
 import { IDENTITY } from '../src/geom/vec';
 import { parseSTL, writeSTL } from '../src/mesh/stl';
 import { parse3MF } from '../src/mesh/threemf';
@@ -109,28 +109,18 @@ describe('pocket', () => {
   });
 });
 
-const trayPart = (m: TriMesh, id: number): TrayPart => { const p = posed(m); return { partId: id, name: m.name, mesh: p.mesh, silhouette: p.silhouette, height: p.height }; };
+const trayPart = (m: TriMesh, id: number, finger = false): TrayPart => {
+  const p = posed(m);
+  return { partId: id, name: m.name, finger, poses: [{ poseIndex: 0, mesh: p.mesh, silhouette: p.silhouette, height: p.height }] };
+};
+const FAST = { ...DEFAULT_TRAY, packAttempts: 6 };
 
 describe('tray', () => {
-  it('shelf layout keeps boxes inside the tray and apart', () => {
-    const items = [{ w: 100, h: 40 }, { w: 80, h: 60 }, { w: 120, h: 30 }, { w: 50, h: 50 }];
-    const o = { length: 300, width: 200, wall: 3, edge: 4 };
-    const spots = shelfLayout(items, o)!;
-    items.forEach((a, i) => {
-      expect(Math.abs(spots[i].x) + a.w / 2).toBeLessThanOrEqual(150 - 4 + 1e-9);
-      expect(Math.abs(spots[i].y) + a.h / 2).toBeLessThanOrEqual(100 - 4 + 1e-9);
-      items.forEach((b, j) => {
-        if (j <= i) return;
-        const dx = Math.abs(spots[i].x - spots[j].x) - (a.w + b.w) / 2, dy = Math.abs(spots[i].y - spots[j].y) - (a.h + b.h) / 2;
-        expect(Math.max(dx, dy)).toBeGreaterThanOrEqual(3 - 1e-9);
-      });
-    });
-    expect(shelfLayout([{ w: 400, h: 10 }], o)).toBeNull();
-  });
-
   it('builds a watertight tray; depth = deepest pocket + floor; volume adds up', () => {
     const parts = [trayPart(boxMesh(60, 40, 25, 'a'), 1), trayPart(boxMesh(30, 30, 10, 'b'), 2)];
-    const t = buildTray(k, parts, DEFAULT_TRAY);
+    const { trays } = buildTrays(k, parts, FAST);
+    expect(trays).toHaveLength(1);
+    const t = trays[0];
     expect(t.depth).toBeCloseTo(25 + 0.2 + 2);
     const solid = toManifold(k, t.mesh)!;
     expect(solid).not.toBeNull();
@@ -142,14 +132,76 @@ describe('tray', () => {
     const pockets = 61 * 41 * 25.2 + 31 * 31 * 10.2;
     expect(t.volume / (block - pockets)).toBeCloseTo(1, 3);
     // Shallow part sits at the top: its pocket floor is 10.2 below the surface.
-    expect(t.placements[1].z).toBeCloseTo(27.2 - 10);
+    expect(t.placements.find((p) => p.partId === 2)!.z).toBeCloseTo(27.2 - 10);
     // The floor under the deepest pocket is solid.
     expect(sliceArea(solid, 1) / (300 * 200)).toBeCloseTo(1, 2);
     solid.delete();
   });
 
+  it('keeps pockets at least a wall apart and an edge margin from the rim', () => {
+    const sizes: [number, number][] = [[60, 40], [50, 30], [45, 45], [70, 20], [30, 30]];
+    const parts = sizes.map(([w, h], i) => trayPart(boxMesh(w, h, 10, `p${i}`), i));
+    const o = { ...FAST, length: 140, width: 120 };
+    const { trays } = buildTrays(k, parts, o);
+    expect(trays).toHaveLength(1);
+    const boxes = trays[0].placements.map((pl) => {
+      const [w, h] = sizes[pl.partId];
+      const turned = pl.angle % 180 !== 0;
+      const hw = (turned ? h : w) / 2 + 0.5, hh = (turned ? w : h) / 2 + 0.5; // pocket = part + clearance
+      return { x0: pl.x - hw, x1: pl.x + hw, y0: pl.y - hh, y1: pl.y + hh };
+    });
+    for (const b of boxes) {
+      expect(b.x0).toBeGreaterThanOrEqual(-70 + o.edge - 1e-6); expect(b.x1).toBeLessThanOrEqual(70 - o.edge + 1e-6);
+      expect(b.y0).toBeGreaterThanOrEqual(-60 + o.edge - 1e-6); expect(b.y1).toBeLessThanOrEqual(60 - o.edge + 1e-6);
+    }
+    boxes.forEach((a, i) => boxes.forEach((b, j) => {
+      if (j <= i) return;
+      const gap = Math.max(a.x0 - b.x1, b.x0 - a.x1, a.y0 - b.y1, b.y0 - a.y1);
+      expect(gap).toBeGreaterThanOrEqual(o.wall - 1e-6);
+    }));
+  });
+
+  it('finger cutout: a scoop on the long edge, 60 % of the pocket depth, removes extra material', () => {
+    const box = boxMesh(60, 30, 20);
+    expect(fingerCentre(posed(box).silhouette, 0.5)).toEqual([0, 15.5]);
+    const plain = buildTrays(k, [trayPart(box, 1, false)], FAST).trays[0];
+    const withFinger = buildTrays(k, [trayPart(box, 1, true)], FAST).trays[0];
+    // Half a Ø20 disc lies outside the pocket: ≈ π·10²/2 × (0.6 × 20.2) of extra cut.
+    const extra = plain.volume - withFinger.volume;
+    expect(extra / ((Math.PI * 100) / 2 * 0.6 * 20.2)).toBeCloseTo(1, 1);
+    const solid = toManifold(k, withFinger.mesh)!;
+    expect(solid).not.toBeNull();
+    solid.delete();
+  });
+
+  it('chooses another allowed pose when that is what fits', () => {
+    // 100×40×8 plate: flat it needs 101 mm of length; on edge (100×8 footprint, 40 tall) too.
+    // In a 60×120 tray it must turn 90°; in a 60×60 tray nothing fits.
+    const flat = posed(boxMesh(100, 40, 8)), edge = posed(boxMesh(100, 8, 40));
+    const part: TrayPart = { partId: 1, name: 'plate', finger: false, poses: [
+      { poseIndex: 0, mesh: flat.mesh, silhouette: flat.silhouette, height: flat.height },
+      { poseIndex: 1, mesh: edge.mesh, silhouette: edge.silhouette, height: edge.height },
+    ] };
+    const a = buildTrays(k, [part], { ...FAST, length: 60, width: 120 }).trays[0];
+    expect(a.placements[0].poseIndex).toBe(0); // flat still fits once turned
+    expect(a.placements[0].angle % 180).toBe(90);
+    const b = buildTrays(k, [part], { ...FAST, length: 30, width: 120 }).trays[0];
+    expect(b.placements[0].poseIndex).toBe(1); // only on edge fits a 30 mm wide tray
+    expect(b.depth).toBeCloseTo(42.2);
+    expect(() => buildTrays(k, [part], { ...FAST, length: 60, width: 60 })).toThrow(/Too big/);
+    // A depth limit rules out the on-edge pose.
+    expect(() => buildTrays(k, [part], { ...FAST, length: 30, width: 120, depth: 20 })).toThrow(/Too big/);
+  });
+
+  it('overflows into a second tray of the same footprint', () => {
+    const parts = [0, 1, 2].map((i) => trayPart(boxMesh(80, 60, 10 + i * 10, `p${i}`), i));
+    const { trays } = buildTrays(k, parts, { ...FAST, length: 100, width: 140 });
+    expect(trays).toHaveLength(2);
+    expect(trays.reduce((n, t) => n + t.placements.length, 0)).toBe(3);
+  });
+
   it('exports as a valid binary STL', () => {
-    const t = buildTray(k, [trayPart(boxMesh(60, 40, 25), 1)], DEFAULT_TRAY);
+    const t = buildTrays(k, [trayPart(boxMesh(60, 40, 25), 1, true)], FAST).trays[0];
     const back = parseSTL(writeSTL(t.mesh));
     expect(back.positions.length).toBe(t.mesh.positions.length);
     const again = toManifold(k, back)!;
@@ -159,12 +211,12 @@ describe('tray', () => {
 
   it('explains problems instead of producing a bad tray', () => {
     const p = [trayPart(boxMesh(60, 40, 25), 1)];
-    expect(() => buildTray(k, [], DEFAULT_TRAY)).toThrow(TrayError);
-    expect(() => buildTray(k, p, { ...DEFAULT_TRAY, length: 400, width: 330 })).toThrow(/print bed/);
-    expect(() => buildTray(k, p, { ...DEFAULT_TRAY, length: 50, width: 40 })).toThrow(/do not fit/);
-    expect(() => buildTray(k, p, { ...DEFAULT_TRAY, depth: 20 })).toThrow(/too shallow/);
-    expect(buildTray(k, p, { ...DEFAULT_TRAY, depth: 40 }).depth).toBe(40);
-    expect(buildTray(k, p, { ...DEFAULT_TRAY, length: 320, width: 330 }).depth).toBeGreaterThan(0); // fits rotated
+    expect(() => buildTrays(k, [], FAST)).toThrow(TrayError);
+    expect(() => buildTrays(k, p, { ...FAST, length: 400, width: 330 })).toThrow(/print bed/);
+    expect(() => buildTrays(k, p, { ...FAST, length: 50, width: 40 })).toThrow(/Too big/);
+    expect(() => buildTrays(k, p, { ...FAST, depth: 20 })).toThrow(/too shallow/);
+    expect(buildTrays(k, p, { ...FAST, depth: 40 }).trays[0].depth).toBe(40);
+    expect(buildTrays(k, p, { ...FAST, length: 320, width: 330 }).trays[0].depth).toBeGreaterThan(0); // fits rotated
   });
 });
 
@@ -185,15 +237,18 @@ describe.skipIf(!existsSync(LIB))('real parts', () => {
         console.log(`${f.padEnd(22)} steps=${String(c.steps).padStart(3)} depth=${c.depth.toFixed(1).padStart(5)} pocket=${(c.solid.volume() / 1000).toFixed(1).padStart(6)}cm³ vs straight ${(straight / 1000).toFixed(1).padStart(6)}cm³ leftover=${out.toExponential(1)} ${ms.toFixed(0)}ms`);
         expect(out).toBeLessThan(0.5); // mm³
         c.solid.delete();
-        all.push({ partId: id++, name: f, mesh: p.mesh, silhouette: p.silhouette, height: p.height });
+        const cands = poseCandidates(k, m).slice(0, 3);
+        all.push({ partId: id++, name: f, finger: true, poses: cands.map((c, i) => { const q = posePart(k, m, c.rotation); return { poseIndex: i, mesh: q.mesh, silhouette: q.silhouette, height: q.height }; }) });
       }
     }
-    const some = all.filter((p) => /bubbler|mct|pen|tweezers|m22\.3mf|zirconia/.test(p.name));
+    // The user's test case: 112.52 × 238.76 mm inside, 1 mm gap to the case wall.
     const t0 = performance.now();
-    const tray = buildTray(k, some, { ...DEFAULT_TRAY, length: 320, width: 220 });
-    console.log(`tray of ${some.length}: depth ${tray.depth.toFixed(1)} mm, ${tray.mesh.positions.length / 9} triangles, ${(performance.now() - t0).toFixed(0)} ms`);
-    const solid = toManifold(k, tray.mesh);
-    expect(solid).not.toBeNull();
-    solid!.delete();
+    const { trays } = buildTrays(k, all, { ...DEFAULT_TRAY, length: 110.52, width: 236.76 });
+    console.log(`${all.length} parts -> ${trays.length} trays in ${(performance.now() - t0).toFixed(0)} ms: ` + trays.map((t) => `${t.placements.length} parts, ${t.depth.toFixed(1)} mm deep`).join(' | '));
+    for (const t of trays) {
+      const solid = toManifold(k, t.mesh);
+      expect(solid).not.toBeNull();
+      solid!.delete();
+    }
   }, 120000);
 });

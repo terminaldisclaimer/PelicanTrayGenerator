@@ -144,29 +144,38 @@ export class Viewer {
   }
 
   /**
-   * Show a generated tray with the parts sitting in their pockets (or pass
-   * null to go back to the loose-parts view).
+   * Show generated trays side by side with the parts sitting in their pockets
+   * (or pass null to go back to the loose-parts view).
    */
-  setTray(tray: { mesh: TriMesh; placements: { partId: number; x: number; y: number; z: number }[] } | null, parts: (ViewPart & { partId: number })[] = [], showParts = true) {
+  setTrays(
+    trays: { mesh: TriMesh; placements: { partId: number; angle: number; x: number; y: number; z: number }[] }[] | null,
+    width = 0,
+    parts: (ViewPart & { partId: number })[] = [],
+    showParts = true,
+  ) {
     this.clear(this.tray);
-    this.parts.visible = !tray;
-    if (tray) {
+    this.parts.visible = !trays;
+    trays?.forEach((tray, t) => {
+      const group = new THREE.Group();
+      group.position.y = -t * (width + 15); // next tray in front of the previous one
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(tray.mesh.positions, 3));
       geo.computeVertexNormals();
-      this.tray.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x8a94a3, roughness: 0.8, flatShading: true })));
+      group.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x8a94a3, roughness: 0.8, flatShading: true })));
       if (showParts)
-        tray.placements.forEach((pl) => {
+        for (const pl of tray.placements) {
           const i = parts.findIndex((p) => p.partId === pl.partId);
-          if (i < 0) return;
+          if (i < 0) continue;
           const g = new THREE.BufferGeometry();
           g.setAttribute('position', new THREE.BufferAttribute(parts[i].mesh.positions, 3));
           g.computeVertexNormals();
           const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: PALETTE[i % PALETTE.length], roughness: 0.55, flatShading: true }));
+          m.rotation.z = (pl.angle * Math.PI) / 180;
           m.position.set(pl.x, pl.y, pl.z);
-          this.tray.add(m);
-        });
-    }
+          group.add(m);
+        }
+      this.tray.add(group);
+    });
     this.frame();
   }
 
