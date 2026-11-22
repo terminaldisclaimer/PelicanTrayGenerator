@@ -204,6 +204,9 @@ describe('tray', () => {
     expect(b.placements[0].poseIndex).toBe(1); // only on edge fits a 30 mm wide tray
     expect(b.depth).toBeCloseTo(42.2);
     expect(() => buildTrays(k, [part], { ...FAST, length: 60, width: 60 })).toThrow(/Too big/);
+    // A height limit (e.g. the case's inside height) rules out the on-edge pose too.
+    expect(() => buildTrays(k, [part], { ...FAST, length: 30, width: 120, maxDepth: 30 })).toThrow(/Too big/);
+    expect(buildTrays(k, [part], { ...FAST, length: 60, width: 120, maxDepth: 30 }).trays[0].depth).toBeCloseTo(10.2);
     // A depth limit rules out the on-edge pose.
     expect(() => buildTrays(k, [part], { ...FAST, length: 30, width: 120, depth: 20 })).toThrow(/Too big/);
   });

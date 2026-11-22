@@ -13,6 +13,8 @@ export interface TrayOptions {
   width: number; // Y, mm
   /** Total tray depth; null = deepest pocket + floor (per tray). */
   depth: number | null;
+  /** Deepest a tray may be (e.g. the case's inside height); null = no limit. */
+  maxDepth: number | null;
   floor: number; // minimum material under the deepest pocket
   wall: number; // minimum between pockets
   edge: number; // minimum between a pocket and the tray edge
@@ -27,7 +29,7 @@ export interface TrayOptions {
 }
 
 export const DEFAULT_TRAY: TrayOptions = {
-  length: 300, width: 200, depth: null, floor: 2, wall: 3, edge: 4, cornerRadius: 4,
+  length: 300, width: 200, depth: null, maxDepth: null, floor: 2, wall: 3, edge: 4, cornerRadius: 4,
   fingerDiameter: 20, fingerDepthFraction: 0.6, pocket: DEFAULT_POCKET,
 };
 
@@ -135,7 +137,8 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
 
     // 1. Footprint of every allowed pose: pocket opening (+ finger scoop), grown by half a wall.
     onProgress?.(0.03, 'Measuring parts');
-    const maxPocket = o.depth === null ? Infinity : o.depth - o.floor;
+    const limit = Math.min(o.depth ?? Infinity, o.maxDepth ?? Infinity);
+    const maxPocket = limit - o.floor;
     const tooDeep: string[] = [];
     const items: PackItem[] = [];
     for (const part of parts) {
@@ -150,7 +153,7 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
       else items.push({ id: part.partId, options });
     }
     if (tooDeep.length)
-      throw new TrayError(`Tray depth ${o.depth!.toFixed(1)} mm is too shallow for: ${tooDeep.join(', ')}. Increase the depth or leave it empty for automatic.`);
+      throw new TrayError(`${limit.toFixed(1)} mm is too shallow for: ${tooDeep.join(', ')}. Increase the tray depth or case height, or leave them empty.`);
 
     // 2. Pack. Footprints already carry half a wall, so the usable region is the
     //    tray shrunk by (edge − wall/2) on every side.

@@ -2,9 +2,8 @@
  * 2D packing of irregular footprints into equal-sized trays (pure TypeScript,
  * no kernel). Footprints are rasterised on a 1 mm grid at 0/90/180/270° and
  * placed first-fit, lowest row first. Several orderings are tried and the
- * best result kept: least total stacked height (pocket depth plus floor, summed
- * over trays — what the stack takes up in the case), then fewest trays, then
- * most compact.
+ * best result kept: fewest trays, then least total stacked height (pocket
+ * depth plus floor, summed over trays), then most compact.
  */
 import type { Pt } from './hull2d';
 
@@ -166,7 +165,7 @@ function attempt(order: Prepared[], W: number, H: number, cell: number, depthWei
   }
   const stackHeight = bins.reduce((s, b) => s + b.depth + overhead, 0);
   const extent = bins.reduce((s, b) => s + b.top, 0);
-  return { bins, placements, unplaced, score: [unplaced.length, stackHeight, bins.length, extent] };
+  return { bins, placements, unplaced, score: [unplaced.length, bins.length, stackHeight, extent] };
 }
 
 const better = (a: Solution, b: Solution) => {

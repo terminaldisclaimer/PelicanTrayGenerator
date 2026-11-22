@@ -324,8 +324,8 @@ const toMM = (v: number) => (units === 'mm' ? v : v * MM_PER_IN);
 const fromMM = (v: number, digits = units === 'mm' ? 2 : 3) => String(+(units === 'mm' ? v : v / MM_PER_IN).toFixed(digits));
 
 /** Case inside size and fit settings (mm). The tray is the case size minus the gap on every side. */
-interface TraySettings { length: number; width: number; gap: number; depth: number | null; clearance: number; split: number }
-let traySettings: TraySettings = { length: 300, width: 200, gap: 1, depth: null, clearance: DEFAULT_TRAY.pocket.clearance, split: DEFAULT_TRAY.pocket.split };
+interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; clearance: number; split: number }
+let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, clearance: DEFAULT_TRAY.pocket.clearance, split: DEFAULT_TRAY.pocket.split };
 try { traySettings = { ...traySettings, ...JSON.parse(localStorage.getItem('tray') || '{}') }; } catch { /* ignore */ }
 let tray: TrayInfo | null = null;
 let showPartsInTray = true;
@@ -333,6 +333,7 @@ let showPartsInTray = true;
 function fillTrayInputs() {
   num('#tray-length').value = fromMM(traySettings.length);
   num('#tray-width').value = fromMM(traySettings.width);
+  num('#tray-height').value = traySettings.height == null ? '' : fromMM(traySettings.height);
   num('#tray-gap').value = fromMM(traySettings.gap);
   num('#tray-depth').value = traySettings.depth == null ? '' : fromMM(traySettings.depth);
   num('#tray-clearance').value = fromMM(traySettings.clearance);
@@ -346,12 +347,14 @@ function readTrayInputs(): TraySettings | string {
   const depthText = num('#tray-depth').value.trim();
   const depth = depthText === '' ? null : toMM(val('#tray-depth'));
   const split = val('#tray-split') / 100;
+  const height = num('#tray-height').value.trim() === '' ? null : toMM(val('#tray-height'));
+  if (height !== null && !(height > 0)) return 'Case height must be a number, or leave it empty for no limit.';
   if (!(length > 0) || !(width > 0)) return 'Enter the case inside length and width.';
   if (!(gap >= 0 && gap <= 10)) return 'Gap to the case wall must be between 0 and 10 mm.';
   if (!(clearance >= 0 && clearance <= 5)) return 'Clearance must be between 0 and 5 mm.';
   if (depth !== null && !(depth > 0)) return 'Depth must be a number, or leave it empty for automatic.';
   if (!(split >= 0 && split <= 1)) return 'Form-fit must be between 0 and 100 %.';
-  return { length, width, gap, depth, clearance, split };
+  return { length, width, height, gap, depth, clearance, split };
 }
 
 function renderExport() {
@@ -404,7 +407,7 @@ $('#tray-build').addEventListener('click', async () => {
   traySettings = s;
   try { localStorage.setItem('tray', JSON.stringify(s)); } catch { /* private mode */ }
   const options: TrayOptions = {
-    ...DEFAULT_TRAY, length: s.length - 2 * s.gap, width: s.width - 2 * s.gap, depth: s.depth,
+    ...DEFAULT_TRAY, length: s.length - 2 * s.gap, width: s.width - 2 * s.gap, depth: s.depth, maxDepth: s.height,
     pocket: { ...DEFAULT_TRAY.pocket, clearance: s.clearance, split: s.split },
   };
   const btn = $<HTMLButtonElement>('#tray-build');
@@ -419,10 +422,12 @@ $('#tray-build').addEventListener('click', async () => {
     showTray();
     const n = result.trays.length, count = result.trays.reduce((c, t) => c + t.placements.length, 0);
     const volume = result.trays.reduce((v, t) => v + t.volume, 0);
+    const stack = result.trays.reduce((v, t) => v + t.depth, 0);
     $('#tray-status').textContent =
       `${n === 1 ? '1 tray' : `${n} trays`} of ${fmtDims([result.length, result.width, 0], units).replace(/ × [\d.]+ (mm|in)$/, ' $1')}, ${count} pocket${count === 1 ? '' : 's'}. ` +
       result.trays.map((t, i) => `Tray ${i + 1}: ${t.placements.length} part${t.placements.length === 1 ? '' : 's'}, ${fmtLen(t.depth, units)} ${units} deep.`).join(' ') +
-      ` About ${(volume / 1000).toFixed(0)} cm³ of material before infill.`;
+      ` About ${(volume / 1000).toFixed(0)} cm³ of material before infill.` +
+      (s.height !== null && stack > s.height + 1e-6 ? ` Note: stacked, the trays are ${fmtLen(stack, units)} ${units} tall — more than the case height of ${fmtLen(s.height, units)} ${units}.` : n > 1 ? ` Stacked height ${fmtLen(stack, units)} ${units}.` : '');
     $('#tray-view-row').hidden = false;
     renderExport();
   } catch (e) {

@@ -61,19 +61,19 @@ describe('pack', () => {
     expect(r.unplaced).toEqual([3]);
   });
 
-  it('stands parts on edge when that makes the stack lower overall', () => {
-    // Flat (80×30, 12 deep): one per 80×40 tray -> two trays, stack 2×(12+2) = 28.
-    // On edge (80×12, 20 deep): both in one tray -> stack 22.
-    const two = (id: number): PackItem => ({ id, options: [{ key: 0, depth: 12, footprint: rect(80, 30) }, { key: 1, depth: 20, footprint: rect(80, 12) }] });
+  it('switches to another pose when that saves a tray', () => {
+    // Lying flat (80×30, shallow) two parts need two 80×40 trays; on edge (80×12, deeper) both fit in one.
+    const two = (id: number): PackItem => ({ id, options: [{ key: 0, depth: 12, footprint: rect(80, 30) }, { key: 1, depth: 30, footprint: rect(80, 12) }] });
     const r = pack([two(0), two(1)], { width: 80, height: 40, trayOverhead: 2 });
-    expect(r.trays).toEqual([{ depth: 20 }]);
+    expect(r.trays).toHaveLength(1);
+    expect(r.placements.filter((p) => p.key === 1).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('prefers two shallow trays to one very deep one', () => {
-    // On end the parts would share a tray, but it would be 90 deep; flat they need two trays of 12.
-    const two = (id: number): PackItem => ({ id, options: [{ key: 0, depth: 12, footprint: rect(80, 30) }, { key: 1, depth: 90, footprint: rect(30, 12) }] });
-    const r = pack([two(0), two(1)], { width: 80, height: 40, trayOverhead: 2 });
-    expect(r.trays).toEqual([{ depth: 12 }, { depth: 12 }]);
+  it('with the same number of trays, picks the lower stack', () => {
+    // Either pose fits in one tray; flat is shallower.
+    const one: PackItem = { id: 0, options: [{ key: 1, depth: 60, footprint: rect(30, 12) }, { key: 0, depth: 12, footprint: rect(80, 30) }] };
+    const r = pack([one], { width: 80, height: 40, trayOverhead: 2 });
+    expect(r.trays).toEqual([{ depth: 12 }]);
   });
 
   it('keeps parts flat when there is room, so the tray stays shallow', () => {

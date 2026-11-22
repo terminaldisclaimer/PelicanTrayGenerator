@@ -139,10 +139,12 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   poses; the packer may stand a part on edge when that saves a tray. Locked
   parts keep their pose. A manual tray depth acts as a limit on which poses
   are allowed.
-- Objective, in priority order: least total stacked height (every tray's
-  depth added up, since trays stack in the case) → fewest trays → most
-  compact. So a part is only stood on edge when that makes the whole stack
-  lower, never just to avoid a second tray.
+- Objective, in priority order: **fewest trays** → least total stacked
+  height → most compact. To save a tray the packer will stand Auto parts on
+  edge or on end, however deep that makes the tray.
+- **Case inside height** (optional setting) caps how deep any tray may be,
+  which rules out poses that would not fit in the case. If the trays stacked
+  together are taller than the case, the result says so.
 - **Not yet built:** finer rotation steps, manual drag/rotate/lock in a 2D
   tray view, moving a part to another tray by hand.
 
