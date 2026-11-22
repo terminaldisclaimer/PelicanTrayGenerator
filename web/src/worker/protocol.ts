@@ -1,14 +1,27 @@
 import type { TriMesh } from '../mesh/types';
+import type { Silhouette } from '../geom/analyze';
 
 export type FileKind = 'stl' | '3mf';
+export type PoseAction = 'next' | 'x90' | 'y90' | 'z90' | 'flip';
 
 export type WorkerRequest =
-  | { id: number; type: 'parse'; fileName: string; kind: FileKind; data: ArrayBuffer };
+  | { id: number; type: 'parse'; fileName: string; kind: FileKind; data: ArrayBuffer }
+  | { id: number; type: 'pose'; partId: number; action: PoseAction }
+  | { id: number; type: 'scale'; partId: number; factor: number }
+  | { id: number; type: 'remove'; partId: number };
 
+/** A part as posed on the bed: mesh in mm resting on z=0, plus its top-down outline. */
 export interface ParsedPart {
+  partId: number;
   mesh: TriMesh;
   triangles: number;
   size: [number, number, number];
+  height: number;
+  silhouette: Silhouette;
+  silhouetteArea: number;
+  solid: boolean;
+  poseIndex: number; // which auto pose is active, or -1 after manual rotation
+  poseCount: number;
   suggestInches: boolean;
   large: boolean;
 }

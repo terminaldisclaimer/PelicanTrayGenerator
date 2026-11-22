@@ -65,3 +65,5 @@ button, .btn { font: inherit; color: inherit; }
 }
 
 #library { margin-top: 18px; } #library h2 { font-size: 15px; margin: 0; color: var(--muted); font-weight: 600; }
+.pose-row { grid-column: 1 / -1; display: flex; gap: 6px; overflow-x: auto; padding-top: 4px; }
+.small-btn { padding: 0 12px; font-size: 14px; white-space: nowrap; flex: none; }

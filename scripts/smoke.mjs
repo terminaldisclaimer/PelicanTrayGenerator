@@ -45,6 +45,14 @@ try {
   await page.setInputFiles('#file-input', 'test-results/box.stl');
   await page.waitForSelector('.part .name');
   const meta = await page.textContent('.part .meta');
+  // Manual re-pose: tipping the 60×40×25 box forwards makes it 60×25×40.
+  await page.tap('#sheet-handle');
+  await page.waitForTimeout(400);
+  await page.tap('.pose-row button:has-text("Tip ↕")');
+  await page.waitForFunction(() => document.querySelector('.part .meta')?.textContent.includes('manual'));
+  const tipped = await page.textContent('.part .meta');
+  await page.tap('#sheet-handle'); await page.waitForTimeout(300);
+  await page.tap('#sheet-handle'); await page.waitForTimeout(400); // back to peek
   // Tap targets ≥ 44px for visible buttons
   const small = await page.$$eval('button:not(.sheet-handle), label.btn', (els) =>
     els.filter((e) => e.offsetParent).map((e) => [e.textContent.trim(), e.getBoundingClientRect().height]).filter(([, h]) => h < 44));
@@ -53,8 +61,8 @@ try {
   await page.waitForTimeout(400);
   await page.screenshot({ path: 'test-results/mobile-half.png' });
   const sw = await page.evaluate(async () => !!(await navigator.serviceWorker?.getRegistration()));
-  console.log({ width, overflow, meta, small, serviceWorker: sw, errors });
-  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0') || small.length || errors.length) failed = true;
+  console.log({ width, overflow, meta, tipped, small, serviceWorker: sw, errors });
+  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0') || !tipped?.includes('60.0 × 25.0 × 40.0') || small.length || errors.length) failed = true;
 } finally {
   await browser.close();
   server.kill();

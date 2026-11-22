@@ -1,6 +1,7 @@
-import type { FileKind, ParsedPart, WorkerRequest, WorkerResponse } from './protocol';
+import type { FileKind, ParsedPart, PoseAction, WorkerRequest, WorkerResponse } from './protocol';
 
 type Progress = (fraction: number, label: string) => void;
+type Body = WorkerRequest extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never;
 
 /** Promise wrapper around the geometry worker. */
 export class GeometryClient {
@@ -20,14 +21,30 @@ export class GeometryClient {
         else p.reject(new Error(msg.message));
       }
     };
+    this.worker.onerror = (e) => {
+      for (const p of this.pending.values()) p.reject(new Error(e.message || 'Geometry worker failed'));
+      this.pending.clear();
+    };
   }
 
-  parse(fileName: string, kind: FileKind, data: ArrayBuffer, progress?: Progress): Promise<ParsedPart[]> {
+  private call(body: Body, transfer: Transferable[] = [], progress?: Progress): Promise<ParsedPart[]> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject, progress });
-      const req: WorkerRequest = { id, type: 'parse', fileName, kind, data };
-      this.worker.postMessage(req, [data]);
+      this.worker.postMessage({ id, ...body } as WorkerRequest, transfer);
     });
+  }
+
+  parse(fileName: string, kind: FileKind, data: ArrayBuffer, progress?: Progress) {
+    return this.call({ type: 'parse', fileName, kind, data }, [data], progress);
+  }
+  pose(partId: number, action: PoseAction) {
+    return this.call({ type: 'pose', partId, action }).then((r) => r[0]);
+  }
+  scale(partId: number, factor: number) {
+    return this.call({ type: 'scale', partId, factor }).then((r) => r[0]);
+  }
+  remove(partId: number) {
+    return this.call({ type: 'remove', partId });
   }
 }

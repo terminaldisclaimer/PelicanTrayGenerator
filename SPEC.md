@@ -49,9 +49,14 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   like inches — scale ×25.4?" (you confirm).
 - Large-mesh warning above 500k triangles (offer decimation) and a hard cap
   of 3M.
-- Auto pose: from the convex-hull faces, pick the most stable resting face
-  (largest contact area; ties go to the lower height). The part is then
-  translated so it rests at z = 0.
+- Auto pose: each flat face of the part's convex hull is a candidate resting
+  face. A candidate is stable when the centre of mass is above the face.
+  Among stable candidates the **lowest** pose wins (shallowest pocket,
+  thinnest tray); ties go to the larger support face. Up to 6 clearly
+  different poses (≥ 60° apart) are kept for the "Next pose" button. Each
+  pose is also spun so the part's bounding rectangle is axis-aligned, long
+  side along X. The part is then translated so it rests at z = 0.
+- Manual override: Next pose, Flip, Tip 90° (two axes), Spin 90°.
 
 ### 3.2 Silhouette
 - `S = union(project(part))` onto the XY plane (manifold-3d `project()`,

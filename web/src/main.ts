@@ -2,11 +2,11 @@ import './style.css';
 import { Viewer } from './viewer';
 import { initSheet } from './ui/sheet';
 import { GeometryClient } from './worker/client';
-import type { ParsedPart, FileKind } from './worker/protocol';
-import { scaleMesh, meshBounds, size, LARGE_MESH_TRIANGLES } from './mesh/bounds';
+import type { ParsedPart, FileKind, PoseAction } from './worker/protocol';
+import { LARGE_MESH_TRIANGLES } from './mesh/bounds';
 import { fmtDims, MM_PER_IN, type Units } from './units';
 
-interface PartState extends ParsedPart { id: number; }
+type PartState = ParsedPart;
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const viewer = new Viewer($('#view'));
@@ -15,7 +15,6 @@ const geo = new GeometryClient();
 
 let parts: PartState[] = [];
 let units: Units = (localStorage.getItem('units') as Units) || 'mm';
-let nextId = 1;
 
 // ---------- tabs ----------
 document.querySelectorAll<HTMLButtonElement>('.tab').forEach((tab) =>
@@ -70,7 +69,7 @@ async function addFiles(files: Iterable<File>) {
       showProgress(0.02, `${prefix}Loading ${f.name}`);
       const buf = await f.arrayBuffer();
       const result = await geo.parse(f.name, kind, buf, (fr, label) => showProgress(fr, prefix + label));
-      for (const p of result) parts.push({ ...p, id: nextId++ });
+      parts.push(...result);
       if (result.some((p) => p.large))
         toast(`Large mesh (> ${LARGE_MESH_TRIANGLES.toLocaleString()} triangles): processing may be slow on phones.`);
     } catch (e) {
@@ -100,10 +99,29 @@ window.addEventListener('drop', (e) => {
 });
 
 // ---------- list ----------
-function refresh() {
-  viewer.setParts(parts.map((p) => p.mesh));
+function refresh(reframe = true) {
+  viewer.setParts(parts, reframe);
   renderList();
 }
+
+/** Replace one part with the worker's updated version (after a pose/scale change). */
+async function update(p: PartState, job: Promise<ParsedPart>, reframe = false) {
+  try {
+    const next = await job;
+    parts = parts.map((q) => (q.partId === p.partId ? next : q));
+    refresh(reframe);
+  } catch (e) {
+    toast(`${p.mesh.name}: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
+const POSE_BUTTONS: [PoseAction, string, string][] = [
+  ['next', 'Next pose', 'Try the next automatic resting pose'],
+  ['flip', 'Flip', 'Turn upside down'],
+  ['x90', 'Tip ↕', 'Tip 90° forwards'],
+  ['y90', 'Tip ↔', 'Tip 90° sideways'],
+  ['z90', 'Spin', 'Spin 90° on the bed'],
+];
 
 function renderList() {
   const ul = $('#parts');
@@ -117,16 +135,41 @@ function renderList() {
       name.textContent = p.mesh.name;
       const meta = document.createElement('div');
       meta.className = 'meta';
-      meta.textContent = `${fmtDims(p.size, units)} · ${p.triangles.toLocaleString()} tris`;
+      const pose = p.poseIndex >= 0 ? `pose ${p.poseIndex + 1}/${p.poseCount}` : 'manual pose';
+      meta.textContent = `${fmtDims(p.size, units)} · ${pose}`;
       const actions = document.createElement('div');
       actions.className = 'actions';
       const del = document.createElement('button');
       del.className = 'icon-btn';
       del.setAttribute('aria-label', `Remove ${p.mesh.name}`);
       del.textContent = '✕';
-      del.onclick = () => { parts = parts.filter((q) => q.id !== p.id); refresh(); };
+      del.onclick = () => {
+        geo.remove(p.partId);
+        parts = parts.filter((q) => q.partId !== p.partId);
+        refresh();
+      };
       actions.append(del);
       li.append(name, actions, meta);
+
+      const poseRow = document.createElement('div');
+      poseRow.className = 'pose-row';
+      for (const [action, label, title] of POSE_BUTTONS) {
+        if (action === 'next' && p.poseCount < 2) continue;
+        const b = document.createElement('button');
+        b.className = 'btn small-btn';
+        b.textContent = label;
+        b.setAttribute('aria-label', `${title}: ${p.mesh.name}`);
+        b.onclick = () => update(p, geo.pose(p.partId, action));
+        poseRow.append(b);
+      }
+      li.append(poseRow);
+
+      if (!p.solid) {
+        const warn = document.createElement('div');
+        warn.className = 'warn';
+        warn.textContent = 'Mesh is not watertight: only a straight-walled pocket will be possible.';
+        li.append(warn);
+      }
       if (p.suggestInches) {
         const warn = document.createElement('div');
         warn.className = 'warn';
@@ -134,16 +177,11 @@ function renderList() {
         const fix = document.createElement('button');
         fix.className = 'btn';
         fix.textContent = 'Scale ×25.4';
-        fix.onclick = () => {
-          p.mesh = scaleMesh(p.mesh, MM_PER_IN);
-          p.size = size(meshBounds(p.mesh));
-          p.suggestInches = false;
-          refresh();
-        };
+        fix.onclick = () => update(p, geo.scale(p.partId, MM_PER_IN), true);
         const keep = document.createElement('button');
         keep.className = 'btn';
         keep.textContent = 'Keep mm';
-        keep.onclick = () => { p.suggestInches = false; renderList(); };
+        keep.onclick = () => update(p, geo.scale(p.partId, 1));
         warn.append(fix, keep);
         li.append(warn);
       }

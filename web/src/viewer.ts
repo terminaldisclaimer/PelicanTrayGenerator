@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { TriMesh } from './mesh/types';
 
+export interface ViewPart { mesh: TriMesh; silhouette: [number, number][][] }
+
 /** H3C build plate (mm). */
 export const BED = { x: 330, y: 320 };
 
@@ -89,35 +91,45 @@ export class Viewer {
     this.needsRender = true;
   }
 
-  /** Replace displayed parts; lays them out in a row for the skeleton preview. */
-  setParts(meshes: TriMesh[]) {
-    for (const c of this.parts.children) {
-      const m = c as THREE.Mesh;
-      m.geometry.dispose();
-      (m.material as THREE.Material).dispose();
-    }
+  /** Replace displayed parts; lays them out in a row, each with its outline on the bed. */
+  setParts(list: ViewPart[], reframe = true) {
+    this.parts.traverse((o) => {
+      const m = o as THREE.Mesh;
+      m.geometry?.dispose();
+      (m.material as THREE.Material | undefined)?.dispose();
+    });
     this.parts.clear();
-    const gap = 10;
-    const items = meshes.map((tm, i) => {
+    const gap = 12;
+    const items = list.map((part, i) => {
+      const color = PALETTE[i % PALETTE.length];
       const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(tm.positions, 3));
+      geo.setAttribute('position', new THREE.BufferAttribute(part.mesh.positions, 3));
       geo.computeVertexNormals();
       geo.computeBoundingBox();
-      const mesh = new THREE.Mesh(
-        geo,
-        new THREE.MeshStandardMaterial({ color: PALETTE[i % PALETTE.length], roughness: 0.55, metalness: 0.05, flatShading: true }),
-      );
-      return { mesh, box: geo.boundingBox! };
+      const group = new THREE.Group();
+      group.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.05, flatShading: true })));
+      // Top-down outline, drawn just above the bed.
+      const pts: number[] = [];
+      for (const loop of part.silhouette)
+        for (let j = 0; j < loop.length; j++) {
+          const a = loop[j], b = loop[(j + 1) % loop.length];
+          pts.push(a[0], a[1], 0.15, b[0], b[1], 0.15);
+        }
+      const lineGeo = new THREE.BufferGeometry();
+      lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+      group.add(new THREE.LineSegments(lineGeo, new THREE.LineBasicMaterial({ color: 0xffffff })));
+      return { group, box: geo.boundingBox! };
     });
     const total = items.reduce((s, it) => s + (it.box.max.x - it.box.min.x), 0) + gap * Math.max(0, items.length - 1);
     let x = -total / 2;
     for (const it of items) {
       const w = it.box.max.x - it.box.min.x;
-      it.mesh.position.x = x - it.box.min.x;
+      it.group.position.x = x - it.box.min.x;
       x += w + gap;
-      this.parts.add(it.mesh);
+      this.parts.add(it.group);
     }
-    this.frame();
+    if (reframe) this.frame();
+    this.needsRender = true;
   }
 
   setBottomInset(px: number) {

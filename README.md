@@ -6,10 +6,11 @@ Files you add from your device never leave the browser. The optional
 **Library** holds parts uploaded to your own Cloudflare account by the
 Fusion 360 script in [`fusion/`](fusion/README.md), behind the same login. The design is in [`SPEC.md`](SPEC.md).
 
-**Status:** M0 walking skeleton. You can upload STL/3MF (native file picker
-or drag-and-drop), see a touch-controlled 3D preview, use the mobile bottom
-sheet and mm/inch units, and use it offline as a PWA. Pockets, layout and
-export are next (see the SPEC milestones).
+**Status:** M1 done. You can upload STL/3MF (file picker, drag-and-drop,
+or the Library), and each part is auto-posed in its lowest stable resting
+position, with pose controls and its top-down outline shown on the bed.
+Geometry runs in a Web Worker on the manifold-3d WASM kernel. Pockets,
+layout and export are next (see the SPEC milestones).
 
 ## Development
 
@@ -21,7 +22,8 @@ npm run build        # type-check + production build into web/dist
 node scripts/smoke.mjs   # mobile (390 px, touch) smoke test in Chromium; needs a build
 ```
 
-Layout: `web/src/mesh` (parsers, pure + tested), `web/src/worker` (heavy
+Layout: `web/src/mesh` (parsers, pure + tested), `web/src/geom` (pose and
+silhouette on the WASM kernel, tested), `web/src/worker` (heavy
 geometry off the main thread), `web/src/viewer.ts` (Three.js),
 `web/src/ui` (bottom sheet), `web/test` (Vitest).
 
