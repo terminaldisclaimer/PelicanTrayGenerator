@@ -844,6 +844,18 @@ function renderLibrary() {
 $('#library-refresh').addEventListener('click', loadLibrary);
 loadLibrary();
 
+// When a new version of the app takes over, reload once so it is actually shown
+// (otherwise the previous version stays on screen until the next visit).
+// Work is saved automatically, so nothing is lost.
+if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloaded) return;
+    reloaded = true;
+    saveNow().finally(() => location.reload());
+  });
+}
+
 $('#version').textContent = `Version ${__APP_VERSION__}`;
 setUnits(units);
 viewer.setParts([]);
