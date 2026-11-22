@@ -26,11 +26,17 @@
         <span class="grip"></span>
       </button>
       <div class="sheet-head">
-        <h1>Cutouts</h1>
-        <label class="btn primary" for="file-input">
-          Add parts
-          <input id="file-input" type="file" accept=".stl,.3mf,model/stl,model/3mf,application/vnd.ms-pki.stl,application/octet-stream" multiple hidden />
-        </label>
+        <div class="head-title">
+          <h1>Cutouts</h1>
+          <span id="save-state" class="muted small">Not saved yet</span>
+        </div>
+        <div class="head-actions">
+          <button id="save-now" class="btn">Save</button>
+          <label class="btn primary" for="file-input">
+            Add parts
+            <input id="file-input" type="file" accept=".stl,.3mf,model/stl,model/3mf,application/vnd.ms-pki.stl,application/octet-stream" multiple hidden />
+          </label>
+        </div>
       </div>
       <nav class="tabs" role="tablist">
         <button role="tab" class="tab" aria-selected="true" data-tab="parts">Parts</button>

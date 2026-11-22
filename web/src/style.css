@@ -94,3 +94,6 @@ label.row { cursor: text; }
 .section { font-size: 15px; margin: 14px 0 4px; color: var(--muted); font-weight: 600; }
 .section:first-child { margin-top: 0; }
 #project-list { margin: 8px 0; }
+.head-title { min-width: 0; display: flex; flex-direction: column; }
+.head-title span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.head-actions { display: flex; gap: 8px; flex: none; }

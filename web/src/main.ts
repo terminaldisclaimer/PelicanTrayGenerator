@@ -541,6 +541,7 @@ let restoring = false;
 
 function scheduleSave() {
   if (restoring) return;
+  $('#save-state').textContent = `${projectName} · saving…`;
   clearTimeout(saveTimer);
   saveTimer = window.setTimeout(saveNow, 600);
 }
@@ -550,10 +551,15 @@ async function saveNow() {
     const saved = await geo.exportParts();
     await saveProject({ name: projectName, savedAt: new Date().toISOString(), settings: { ...traySettings }, parts: saved });
     try { localStorage.setItem('project', projectName); } catch { /* private mode */ }
-    $('#project-status').textContent = `“${projectName}” — saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} (${saved.length} part${saved.length === 1 ? '' : 's'}).`;
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    $('#project-status').textContent = `“${projectName}” — saved ${time} (${saved.length} part${saved.length === 1 ? '' : 's'}).`;
+    $('#save-state').textContent = `${projectName} · saved ${time}`;
+    return true;
     renderProjects();
   } catch (e) {
     $('#project-status').textContent = `Could not save: ${e instanceof Error ? e.message : e}`;
+    $('#save-state').textContent = 'Could not save';
+    return false;
   }
 }
 
@@ -574,6 +580,7 @@ async function openProject(name: string) {
     viewer.setParts(parts);
     renderList();
     $('#project-status').textContent = `“${name}” — opened (${parts.length} part${parts.length === 1 ? '' : 's'}).`;
+    $('#save-state').textContent = `${name} · saved`;
   } catch (e) {
     hideProgress();
     toast(`Could not open “${name}”: ${e instanceof Error ? e.message : e}`);
@@ -622,6 +629,14 @@ async function renderProjects() {
     }),
   );
 }
+
+$('#save-now').addEventListener('click', async () => {
+  clearTimeout(saveTimer);
+  const btn = $<HTMLButtonElement>('#save-now');
+  const ok = await saveNow();
+  btn.textContent = ok ? 'Saved ✓' : 'Failed';
+  setTimeout(() => (btn.textContent = 'Save'), 1500);
+});
 
 $('#project-save-as').addEventListener('click', async () => {
   const name = prompt('Save this project as:', projectName)?.trim();

@@ -100,6 +100,11 @@ try {
   const stl = readFileSync('test-results/smoke-tray.stl');
   const stlOk = stl.length > 84 && stl.length === 84 + stl.readUInt32LE(80) * 50;
   await page.tap('.tab[data-tab="parts"]');
+  // The Save button is on screen and confirms; the header shows the saved state.
+  const saveVisible = await page.$eval('#save-now', (e) => { const r = e.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.height >= 44; });
+  await page.tap('#save-now');
+  await page.waitForFunction(() => document.querySelector('#save-now').textContent.includes('Saved'));
+  const saveState = await page.textContent('#save-state');
   // Saved automatically: after a reload the part, its cutouts and the case size are back.
   await page.waitForTimeout(1200);
   await page.reload();
@@ -115,7 +120,7 @@ try {
   await page.screenshot({ path: 'test-results/mobile-half.png' });
   const sw = await page.evaluate(async () => !!(await navigator.serviceWorker?.getRegistration()));
   console.log({ width, overflow, meta, tipped, options, restored, fingersAuto, fingersText, trayStatus, stl: download.suggestedFilename(), stlOk, small, serviceWorker: sw, errors });
-  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · auto pose') || !tipped?.includes('60.0 × 25.0 × 40.0 mm · pose 3 (locked)') || !picked || restored.name !== 'box' || !restored.fingers.includes('Finger cutouts: 2') || restored.fingers.includes('auto') || restored.length !== '120' || fingersAuto !== 2 || kept !== 1 || !noneHint.startsWith('No finger cutouts') || noneDrawn !== 0 || holesDrawn !== 2 || !mainVisible || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
+  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · auto pose') || !tipped?.includes('60.0 × 25.0 × 40.0 mm · pose 3 (locked)') || !picked || !saveVisible || !/saved \d/.test(saveState) || restored.name !== 'box' || !restored.fingers.includes('Finger cutouts: 2') || restored.fingers.includes('auto') || restored.length !== '120' || fingersAuto !== 2 || kept !== 1 || !noneHint.startsWith('No finger cutouts') || noneDrawn !== 0 || holesDrawn !== 2 || !mainVisible || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
 } finally {
   await browser.close();
   server.kill();
