@@ -1,0 +1,13 @@
+{
+  // Static-assets-only Worker: no `main` script.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pelican-cutout",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./web/dist",
+    "not_found_handling": "single-page-application"
+  },
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "pelican.blocknets.org", "custom_domain": true }]
+}

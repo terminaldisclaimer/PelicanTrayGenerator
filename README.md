@@ -1,4 +1,53 @@
-# traygen — Parametric Glass-Carrier Tray Generator (PETG + TPU)
+# Pelican Cutouts — STL/3MF tray generator (web app)
+
+A client-side, installable PWA. Upload STL or 3MF models of parts, and it
+generates 3D-printable trays with form-fit pockets for a Bambu Lab H3C.
+Your files never leave the browser. The design is in [`SPEC.md`](SPEC.md).
+
+**Status:** M0 walking skeleton. You can upload STL/3MF (native file picker
+or drag-and-drop), see a touch-controlled 3D preview, use the mobile bottom
+sheet and mm/inch units, and use it offline as a PWA. Pockets, layout and
+export are next (see the SPEC milestones).
+
+## Development
+
+```bash
+npm install
+npm run dev          # http://localhost:5173
+npm test             # unit tests (Vitest)
+npm run build        # type-check + production build into web/dist
+node scripts/smoke.mjs   # mobile (390 px, touch) smoke test in Chromium; needs a build
+```
+
+Layout: `web/src/mesh` (parsers, pure + tested), `web/src/worker` (heavy
+geometry off the main thread), `web/src/viewer.ts` (Three.js),
+`web/src/ui` (bottom sheet), `web/test` (Vitest).
+
+## Deploy (Cloudflare Workers static assets + Access)
+
+`wrangler.jsonc` deploys `web/dist` as an assets-only Worker on the custom
+domain `pelican.blocknets.org`. The `workers.dev` and preview URLs are
+disabled.
+
+Authenticate with `npx wrangler login` or an exported
+`CLOUDFLARE_API_TOKEN`. Never put the token in a file. The token needs the
+**Workers Scripts: Edit**, **Workers Routes: Edit** (zone), **Zone: Read**,
+**DNS: Edit** and **Access: Apps and Policies: Edit** /
+**Access: Organizations, Identity Providers, and Groups: Edit**
+permissions.
+
+```bash
+npm run deploy                                       # build + wrangler deploy
+ACCESS_EMAILS="you@example.com" npm run access:setup # One-time PIN + allow-list (idempotent)
+npm run verify:access                                # unauthenticated request must hit the Access login
+```
+
+Allowed emails are passed in at setup time and are not stored in this
+(public) repository.
+
+---
+
+# traygen (legacy) — Parametric Glass-Carrier Tray Generator (PETG + TPU)
 
 Generate print-ready **STL / 3MF** files for a two-part glass-carrier system:
 
