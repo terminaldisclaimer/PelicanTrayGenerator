@@ -97,6 +97,21 @@ describe('pack', () => {
     expect(r.trays.map((t) => t.depth).sort((a, b) => a - b)).toEqual([10, 40]);
   });
 
+  it('finds a fit that needs each part in one particular pose', () => {
+    // Each part's lower pose is 2 wider than its taller one. Only all-taller fits: 4 × 24 + ... in a 100-wide strip.
+    const part = (id: number): PackItem => ({ id, options: [{ key: 0, depth: 10, footprint: rect(27, 60) }, { key: 1, depth: 12, footprint: rect(25, 60) }] });
+    const r = pack([part(0), part(1), part(2), part(3)], { width: 100, height: 60, angleStep: 90, trayOverhead: 2 });
+    expect(r.trays).toHaveLength(1);
+    expect(r.placements.every((p) => p.key === 1)).toBe(true);
+  });
+
+  it('with a fixed tray depth, a deeper pose costs nothing', () => {
+    const part: PackItem = { id: 0, options: [{ key: 0, depth: 10, footprint: rect(60, 60) }, { key: 1, depth: 40, footprint: rect(60, 20) }] };
+    // Normally the shallow pose wins; with the depth fixed, the more compact one does.
+    expect(pack([part], { width: 100, height: 100, angleStep: 90 }).placements[0].key).toBe(0);
+    expect(pack([part], { width: 100, height: 100, angleStep: 90, fixedDepth: true }).placements[0].key).toBe(1);
+  });
+
   it('is deterministic', () => {
     const items = Array.from({ length: 12 }, (_, i) => item(i, 15 + ((i * 7) % 30), 10 + ((i * 11) % 25)));
     expect(pack(items, { width: 100, height: 100 })).toEqual(pack(items, { width: 100, height: 100 }));

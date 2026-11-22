@@ -32,6 +32,8 @@ export interface PackSettings {
   timeBudgetMs?: number;
   /** Rotation step about Z in degrees (default 15; 90 = axis-aligned only). */
   angleStep?: number;
+  /** True when the tray depth is fixed by the user: a deeper pose then costs nothing. */
+  fixedDepth?: boolean;
   /** Height every tray adds on top of its deepest pocket (the floor), mm. */
   trayOverhead?: number;
 }
@@ -39,7 +41,7 @@ export interface PackSettings {
 
 interface Shape { runs: Int32Array; w: number; h: number; minX: number; minY: number; cells: number }
 interface Opt { key: number; depth: number; shapes: Shape[]; angles: number[] }
-interface Prepared { id: number; opts: Opt[]; area: number; maxDim: number; minDepth: number }
+interface Prepared { id: number; opts: Opt[]; area: number; maxDim: number; minDepth: number; /** Option indices by footprint size, smallest first. */ bySize: number[] }
 
 function rotate(loops: Pt[][], deg: number): Pt[][] {
   if (deg === 0) return loops;
@@ -83,6 +85,7 @@ export function rasterize(loops: Pt[][], cell: number): Shape {
 class Bin {
   depth = 0;
   top = 0; // highest occupied row + 1
+  right = 0; // rightmost occupied column + 1
   private occ: Uint8Array;
   private prefix: Int32Array;
   constructor(readonly W: number, readonly H: number) {
@@ -121,6 +124,7 @@ class Bin {
     }
     if (lastRow >= 0) redo(lastRow);
     this.top = Math.max(this.top, py + s.h);
+    this.right = Math.max(this.right, px + s.w);
     this.depth = Math.max(this.depth, depth);
   }
 }
@@ -138,7 +142,18 @@ function mulberry32(seed: number) {
 
 interface Solution { bins: Bin[]; placements: PackPlacement[]; unplaced: number[]; score: [number, number, number, number] }
 
-function attempt(order: Prepared[], W: number, H: number, cell: number, depthWeight: number, overhead: number): Solution {
+/**
+ * How a greedy attempt picks among the positions on offer. No single rule is
+ * best for every set of parts, so several are tried:
+ *  0 = lowest top edge, any quarter turn;
+ *  1 = lowest top edge, parts kept lengthwise (0/180°) when possible;
+ *  2 = lowest top edge, parts kept crosswise (90/270°) when possible;
+ *  3 = smallest bounding box around everything placed so far.
+ */
+type Policy = 0 | 1 | 2 | 3;
+const PASSES: number[][][] = [[[0, 1, 2, 3]], [[0, 2], [1, 3]], [[1, 3], [0, 2]], [[0, 1, 2, 3]]];
+
+function attempt(order: Prepared[], W: number, H: number, cell: number, depthWeight: number, overhead: number, policy: Policy = 0, choose?: (item: Prepared) => Opt[]): Solution {
   const bins: Bin[] = [];
   const placements: PackPlacement[] = [];
   const unplaced: number[] = [];
@@ -147,16 +162,20 @@ function attempt(order: Prepared[], W: number, H: number, cell: number, depthWei
     for (let b = 0; b <= bins.length && !done; b++) {
       const bin = b < bins.length ? bins[b] : new Bin(W, H);
       let best = null as { cost: number; opt: Opt; a: number; px: number; py: number } | null;
-      // Quarter turns first; other angles only if the part will not go in square
-      // (so skewing is used to save a tray, and the common case stays fast).
-      for (const [from, to] of [[0, 4], [4, Infinity]]) {
-        for (const opt of item.opts)
-          for (let a = from; a < Math.min(to, opt.shapes.length); a++) {
+      // Quarter turns first (in the order the policy prefers); other angles only
+      // if the part will not go in square, so skewing is used to save a tray.
+      const options = choose ? choose(item) : item.opts;
+      const passes: number[][] = [...PASSES[policy], options[0].angles.map((_, i) => i).filter((i) => i >= 4)];
+      for (const pass of passes) {
+        for (const opt of options)
+          for (const a of pass) {
             const s = opt.shapes[a];
             const pos = bin.find(s);
             if (!pos) continue;
-            // Low and left is good; making the tray deeper is expensive.
-            const cost = pos[1] + s.h + pos[0] * 1e-3 + depthWeight * Math.max(0, opt.depth - bin.depth);
+            const deeper = depthWeight * Math.max(0, opt.depth - bin.depth);
+            const cost = policy === 3
+              ? Math.max(bin.top, pos[1] + s.h) * Math.max(bin.right, pos[0] + s.w) + deeper * W + pos[1] * 1e-3
+              : pos[1] + s.h + pos[0] * 1e-3 + deeper; // low and left is good; a deeper tray is expensive
             if (!best || cost < best.cost) best = { cost, opt, a, px: pos[0], py: pos[1] };
           }
         if (best) break;
@@ -170,7 +189,7 @@ function attempt(order: Prepared[], W: number, H: number, cell: number, depthWei
     }
     if (!done) unplaced.push(item.id);
   }
-  const stackHeight = bins.reduce((s, b) => s + b.depth + overhead, 0);
+  const stackHeight = depthWeight === 0 && overhead < 0 ? 0 : bins.reduce((s, b) => s + b.depth + overhead, 0);
   const extent = bins.reduce((s, b) => s + b.top, 0);
   return { bins, placements, unplaced, score: [unplaced.length, bins.length, stackHeight, extent] };
 }
@@ -195,7 +214,8 @@ export function pack(items: PackItem[], settings: PackSettings): PackResult {
   const prepared: Prepared[] = items.map((it) => {
     const opts = it.options.map((o) => ({ key: o.key, depth: o.depth, angles, shapes: angles.map((a) => rasterize(rotate(o.footprint, a), cell)) }));
     const first = opts[0].shapes[0];
-    return { id: it.id, opts, area: first.cells, maxDim: Math.max(first.w, first.h), minDepth: Math.min(...opts.map((o) => o.depth)) };
+    const bySize = opts.map((_, i) => i).sort((a, b) => opts[a].shapes[0].cells - opts[b].shapes[0].cells);
+    return { id: it.id, opts, area: first.cells, maxDim: Math.max(first.w, first.h), minDepth: Math.min(...opts.map((o) => o.depth)), bySize };
   });
   if (W < 1 || H < 1) return { trays: [], placements: [], unplaced: items.map((i) => i.id) };
 
@@ -206,15 +226,47 @@ export function pack(items: PackItem[], settings: PackSettings): PackResult {
     [...prepared].sort((a, b) => b.maxDim - a.maxDim || b.area - a.area),
     [...prepared].sort((a, b) => b.minDepth - a.minDepth || b.area - a.area),
   ];
-  const attempts = settings.attempts ?? 24;
+  const attempts = settings.attempts ?? 96;
   const start = Date.now();
+  const weights = settings.fixedDepth ? [0, 0, 0] : [1e6, 4, 0.25];
+  const overhead = settings.fixedDepth ? -1 : settings.trayOverhead ?? 0;
   let best: Solution | null = null;
-  for (let i = 0; i < attempts; i++) {
-    if (i >= 3 && settings.timeBudgetMs && Date.now() - start > settings.timeBudgetMs) break;
-    let order: Prepared[];
-    if (i < orders.length * 3) order = orders[Math.floor(i / 3)];
-    else {
-      // Perturb the area order: swap a few neighbours.
+  const consider = (sol: Solution) => { if (!best || better(sol, best)) best = sol; };
+
+  // The placement loop picks each part's pose greedily, which can miss a fit
+  // that needs one particular pose of a big part. So, besides letting it
+  // choose freely, systematically commit the largest parts to every
+  // combination of their poses (the big parts decide whether a layout works),
+  // and also try every part in its smallest footprint.
+  type Choose = ((item: Prepared) => Opt[]) | undefined;
+  const plans: Choose[] = [undefined];
+  const multi = byArea.filter((p) => p.opts.length > 1);
+  if (multi.length) {
+    const lead: Prepared[] = [];
+    let combos = 1;
+    for (const p of multi) {
+      if (combos * p.opts.length > 12) break;
+      lead.push(p);
+      combos *= p.opts.length;
+    }
+    if (lead.length) {
+      for (let c = 0; c < combos; c++) {
+        const fixed = new Map<number, Opt>();
+        let n = c;
+        for (const p of lead) { fixed.set(p.id, p.opts[n % p.opts.length]); n = Math.floor(n / p.opts.length); }
+        plans.push((item) => (fixed.has(item.id) ? [fixed.get(item.id)!] : item.opts));
+      }
+    }
+    plans.push((item) => [item.opts[item.bySize[0]]]);
+  }
+
+  // Every plan with every placement policy and base ordering, most promising
+  // combinations first; then shuffled orderings while attempts remain.
+  let done = 0;
+  search: for (let round = 0; ; round++) {
+    const base = round < orders.length;
+    let order = orders[round % orders.length];
+    if (!base) {
       order = [...byArea];
       const swaps = 1 + Math.floor(rand() * Math.max(1, order.length / 2));
       for (let s = 0; s < swaps; s++) {
@@ -222,10 +274,15 @@ export function pack(items: PackItem[], settings: PackSettings): PackResult {
         [order[a], order[b]] = [order[b], order[a]];
       }
     }
-    // Cycle through "never deepen a tray if avoidable", "keep trays shallow"
-    // and "fit as much as possible".
-    const sol = attempt(order, W, H, cell, [1e6, 4, 0.25][i % 3], settings.trayOverhead ?? 0);
-    if (!best || better(sol, best)) best = sol;
+    for (let policy = 0; policy < 4; policy++)
+      for (let p = 0; p < plans.length; p++) {
+        if (done >= attempts) break search;
+        // The time limit is only a safety net for slow devices; it never cuts the first pass short.
+        if (round > 0 && settings.timeBudgetMs && Date.now() - start > settings.timeBudgetMs) break search;
+        consider(attempt(order, W, H, cell, weights[(done + policy) % 3], overhead, policy as Policy, plans[p]));
+        done++;
+        if (best!.score[0] === 0 && best!.score[1] === 1 && (settings.fixedDepth || done >= 3)) break search; // everything in one tray
+      }
   }
   return { trays: best!.bins.map((b) => ({ depth: b.depth })), placements: best!.placements, unplaced: best!.unplaced };
 }

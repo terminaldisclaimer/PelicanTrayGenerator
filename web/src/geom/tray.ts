@@ -42,6 +42,32 @@ export const DEFAULT_TRAY: TrayOptions = {
 
 /** One way a part may lie in the tray. */
 export interface TrayPose { poseIndex: number; mesh: TriMesh; silhouette: Silhouette; height: number }
+/**
+ * Drop poses that would pack identically. Two poses are the same only if they
+ * have the same height and the same outline; a mirror-image outline is kept,
+ * because a mirrored part nests differently against its neighbours.
+ */
+export function distinctPoses<T extends TrayPose>(poses: T[]): T[] {
+  const signature = (p: T) => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, a = 0, cx = 0, cy = 0;
+    for (const loop of p.silhouette)
+      for (let i = 0; i < loop.length; i++) {
+        const [x1, y1] = loop[i], [x2, y2] = loop[(i + 1) % loop.length];
+        if (x1 < minX) minX = x1; if (x1 > maxX) maxX = x1;
+        if (y1 < minY) minY = y1; if (y1 > maxY) maxY = y1;
+        const w = x1 * y2 - x2 * y1;
+        a += w; cx += (x1 + x2) * w; cy += (y1 + y2) * w;
+      }
+    cx = cx / (3 * a) - (minX + maxX) / 2; cy = cy / (3 * a) - (minY + maxY) / 2; // centroid relative to the box centre
+    // Turning the part half a turn on the tray flips both offsets, so compare
+    // their sizes and whether they have the same sign (which a mirror image flips).
+    const hand = Math.abs(cx) > 0.3 && Math.abs(cy) > 0.3 ? Math.sign(cx * cy) : 0;
+    return [p.height, maxX - minX, maxY - minY, Math.sqrt(Math.abs(a / 2)), Math.abs(cx), Math.abs(cy)].map((v) => Math.round(v * 2)).join(',') + ',' + hand;
+  };
+  const seen = new Set<string>();
+  return poses.filter((p) => { const k = signature(p); if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
 /** Side of the pocket (as the posed part is drawn: long side along X) a finger cutout sits on. */
 export type Side = 'top' | 'bottom' | 'left' | 'right';
 export const SIDES: Side[] = ['top', 'bottom', 'left', 'right'];
@@ -136,29 +162,58 @@ export function fingerCentre(silhouette: Silhouette, clearance: number, side: Si
  *    underneath. If that fails, stack whole parts on
  *    top of each other, one pair at a time, best space saving first, stopping
  *    as soon as everything fits in one tray.
- * 4. If it still does not fit, try again a little deeper, so parts (including
+ * 4. If it still does not fit, fix each of the biggest parts in each of its
+ *    poses in turn and lay everything out again.
+ * 5. If it still does not fit, try again a little deeper, so parts (including
  *    the deepest) can use their next orientations: up to the case height if
  *    given, otherwise at most half as deep again. Failing that, the parts
  *    overflow into more trays.
  */
 export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, onProgress?: (fraction: number, label: string) => void): TrayResult {
   const first = buildOnce(k, parts, o, null, onProgress);
-  if (first.trayDepths.length <= 1 || o.depth !== null) return cutPlan(k, o, first, onProgress);
-  // Still more than one tray. The depth so far came from every part lying as
-  // low as it can; a slightly deeper tray lets parts (including the deepest
-  // one) use other orientations, which can be what makes everything fit. Try
-  // the next deeper orientations in turn — up to the case height if one is
-  // given, otherwise at most half as deep again — and keep the first depth
-  // that needs the fewest trays.
-  const cap = o.maxDepth !== null ? o.maxDepth - o.floor : first.depth * 1.5;
+  if (first.trayDepths.length <= 1) return cutPlan(k, o, first, onProgress);
+  let best = first;
+  const better = (p: Plan) => p.trayDepths.length < best.trayDepths.length;
+
+  // More than one tray. The layout above let every unlocked part take whichever
+  // pose looked best step by step, which can miss a fit that depends on one
+  // big part lying a particular way. So do what a person would: take the
+  // biggest parts in turn, fix each in every one of its poses, and lay
+  // everything out again (stacking included). Stop at the first single tray.
+  const cap = o.depth !== null ? o.depth - o.floor : o.maxDepth !== null ? o.maxDepth - o.floor : first.depth * 1.5;
+  const area = (p: TrayPart) => { let a = 0; for (const l of p.poses[0].silhouette) for (let i = 0; i < l.length; i++) { const [x1, y1] = l[i], [x2, y2] = l[(i + 1) % l.length]; a += x1 * y2 - x2 * y1; } return Math.abs(a / 2); };
+  const pocket = (pose: TrayPose) => pose.height + o.pocket.floorClearance + o.pocket.topMargin;
+  const big = parts.filter((p) => p.poses.length > 1).sort((p, q) => area(q) - area(p)).slice(0, 2);
+  // Shallowest pose first (so the tray stays as thin as it can), then the narrowest footprint.
+  const narrow = (pose: TrayPose) => { let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity; for (const l of pose.silhouette) for (const [x, y] of l) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; } return Math.round(Math.min(maxX - minX, maxY - minY)); };
+  const deadline = Date.now() + 15000; // keep the extra searching bounded on slow devices
+  let tries = 0;
+  search: for (const part of big)
+    for (const pose of [...part.poses].sort((p, q) => Math.round(p.height) - Math.round(q.height) || narrow(p) - narrow(q))) {
+      if (pocket(pose) > cap + 1e-9 || tries >= 8 || Date.now() > deadline) continue;
+      tries++;
+      onProgress?.(0.05, `Trying ${part.name} another way up`);
+      const fixed = parts.map((p) => (p === part ? { ...p, poses: [pose] } : p));
+      // If this pose is deeper than the depth so far, it sets the depth for this try.
+      const depth = o.depth !== null ? null : Math.max(first.depth, pocket(pose) + (part.fingers === 'auto' || part.fingers.length ? Math.max(0, o.fingerExtraDepth) : 0));
+      let next: Plan;
+      try { next = buildOnce(k, fixed, o, depth, onProgress, false, true); } catch (e) { if (e instanceof TrayError) continue; throw e; }
+      if (better(next)) best = next;
+      if (best.trayDepths.length === 1) break search;
+    }
+  if (best.trayDepths.length <= 1 || o.depth !== null) return cutPlan(k, o, best, onProgress);
+
+  // Still more than one tray: step the depth up through the next deeper
+  // orientations of any part — up to the case height if one is given,
+  // otherwise at most half as deep again.
   const steps: number[] = [];
   for (const d of first.deeper) if (d <= cap + 1e-9 && (!steps.length || d - steps[steps.length - 1] > 1)) steps.push(d);
-  const tries: [number, boolean][] = steps.slice(0, 4).map((d) => [d, true]);
-  if (o.maxDepth !== null && (!tries.length || cap - tries[tries.length - 1][0] > 1)) tries.push([cap, false]);
-  let best = first;
-  for (const [d, force] of tries) {
-    const next = buildOnce(k, parts, o, d, onProgress, force);
-    if (next.trayDepths.length < best.trayDepths.length) best = next;
+  const tries2: [number, boolean][] = steps.slice(0, 3).map((d) => [d, true]);
+  if (o.maxDepth !== null && (!tries2.length || cap - tries2[tries2.length - 1][0] > 1)) tries2.push([cap, false]);
+  for (const [d, force] of tries2) {
+    if (Date.now() > deadline) break;
+    const next = buildOnce(k, parts, o, d, onProgress, force, true);
+    if (better(next)) best = next;
     if (best.trayDepths.length === 1) break;
   }
   return cutPlan(k, o, best, onProgress);
@@ -170,7 +225,7 @@ interface Entry { tray: number; part: TrayPart; pose: TrayPose; angle: number; t
 interface Plan { entries: Entry[]; trayDepths: number[]; stacks: number; depth: number; deeper: number[]; inset: number }
 
 /** Decide poses, positions and stacking for one maximum pocket depth (see buildTrays). */
-function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depthCap: number | null, onProgress?: (fraction: number, label: string) => void, forceStep = false): Plan {
+function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depthCap: number | null, onProgress?: (fraction: number, label: string) => void, forceStep = false, brisk = false): Plan {
   if (!parts.length) throw new TrayError('Add at least one part first.');
   const fitsBed = (o.length <= BED.x && o.width <= BED.y) || (o.length <= BED.y && o.width <= BED.x);
   if (!fitsBed) throw new TrayError(`A ${o.length.toFixed(1)} × ${o.width.toFixed(1)} mm tray does not fit the ${BED.x} × ${BED.y} mm print bed.`);
@@ -208,7 +263,7 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
     const inset = Math.max(0, o.edge - o.wall / 2 - RASTER_SLACK);
     const region = { width: o.length - 2 * inset, height: o.width - 2 * inset };
     const packWith = (items: PackItem[], quick: boolean) =>
-      pack(items, { ...region, attempts: quick ? 6 : o.packAttempts ?? 30, timeBudgetMs: quick ? 400 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep });
+      pack(items, { ...region, attempts: quick ? 16 : brisk ? 40 : o.packAttempts ?? 96, timeBudgetMs: quick ? 400 : brisk ? 900 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep, fixedDepth: o.depth !== null });
 
     // ---- 1. Allowed poses and the depth the deepest part sets ----
     onProgress?.(0.03, 'Measuring parts');
@@ -322,7 +377,7 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
         const sinkable = units
           .filter((u) => u.part!.stackable !== false && cover(u, units) >= 0.6)
           .sort((p, q) => q.shape.area() - p.shape.area());
-        const deadline = Date.now() + (o.packTimeMs ?? 2500) * 1.5;
+        const deadline = Date.now() + (brisk ? 800 : 1500);
         const tried = new Set<string>();
         const search = (lower: Unit[], from: number): boolean => {
           for (let i = from; i < sinkable.length; i++) {

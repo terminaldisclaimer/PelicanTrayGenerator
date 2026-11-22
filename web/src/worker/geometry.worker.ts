@@ -7,7 +7,7 @@ import type { TriMesh } from '../mesh/types';
 import { initKernel } from '../geom/kernel';
 import { poseCandidates, posePart, type PoseCandidate } from '../geom/analyze';
 import { FLIP, mul, ROT_X90, ROT_Y90, ROT_Z90, type Mat3 } from '../geom/vec';
-import { autoFingers, buildTrays, TrayError, type Side, type TrayPart } from '../geom/tray';
+import { autoFingers, buildTrays, distinctPoses, TrayError, type Side, type TrayPart } from '../geom/tray';
 import type { ParsedPart, PoseAction, WorkerRequest, WorkerResponse } from './protocol';
 
 const post = (msg: WorkerResponse, transfer: Transferable[] = []) =>
@@ -136,17 +136,12 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const k = await initKernel(wasmUrl);
       post({ id: req.id, type: 'progress', fraction: 0.01, label: 'Preparing parts' });
       // Locked parts keep their pose. Unlocked parts offer the packer every 90°
-      // orientation that actually differs (a flipped part packs the same).
+      // orientation that actually differs.
       const list: TrayPart[] = [...parts].map(([partId, s]) => {
         const pose = (poseIndex: number, r: Mat3) => { const p = posePart(k, s.original, r); return { poseIndex, mesh: p.mesh, silhouette: p.silhouette, height: p.height, size: p.size }; };
         let poses = [pose(-1, s.rotation)];
         if (!s.locked) {
-          const all = s.candidates.map((c, i) => pose(i, c.rotation)).sort((a, b) => a.height - b.height || a.poseIndex - b.poseIndex);
-          poses = [];
-          for (const p of all) {
-            const same = poses.some((q) => Math.abs(q.height - p.height) < 0.5 && Math.abs(q.size[0] - p.size[0]) < 0.5 && Math.abs(q.size[1] - p.size[1]) < 0.5);
-            if (!same) poses.push(p);
-          }
+          poses = distinctPoses(s.candidates.map((c, i) => pose(i, c.rotation)).sort((a, b) => a.height - b.height || a.poseIndex - b.poseIndex));
         }
         return { partId, name: s.original.name, fingers: s.fingers, stackable: s.stackable, poses };
       });

@@ -4,7 +4,7 @@ import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { initKernel } from '../src/geom/kernel';
 import { poseCandidates, posePart, toManifold } from '../src/geom/analyze';
 import { buildCavity, DEFAULT_POCKET } from '../src/geom/pocket';
-import { autoFingers, buildTrays, DEFAULT_TRAY, fingerCentre, TrayError, type TrayPart } from '../src/geom/tray';
+import { autoFingers, buildTrays, DEFAULT_TRAY, distinctPoses, fingerCentre, TrayError, type TrayPart } from '../src/geom/tray';
 import { IDENTITY } from '../src/geom/vec';
 import { parseSTL, writeSTL } from '../src/mesh/stl';
 import { parse3MF } from '../src/mesh/threemf';
@@ -113,7 +113,7 @@ const trayPart = (m: TriMesh, id: number, fingers: TrayPart['fingers'] = []): Tr
   const p = posed(m);
   return { partId: id, name: m.name, fingers, poses: [{ poseIndex: 0, mesh: p.mesh, silhouette: p.silhouette, height: p.height }] };
 };
-const FAST = { ...DEFAULT_TRAY, packAttempts: 6, packAngleStep: 90 };
+const FAST = { ...DEFAULT_TRAY, packAttempts: 24, packAngleStep: 90 };
 /** Point-in-polygon (even-odd over all loops). */
 function inside(loops: number[][][], [x, y]: number[]) {
   let hit = false;
@@ -401,6 +401,22 @@ describe('tray', () => {
     const roomy = buildTrays(k, [big, other], { ...FAST, length: 110, width: 130 });
     expect(roomy.trays[0].placements.find((p) => p.partId === 1)!.poseIndex).toBe(0);
     expect(roomy.trays[0].depth).toBeCloseTo(30.2 + 2);
+  });
+
+  it('keeps mirror-image poses as separate options, drops true duplicates', () => {
+    // An L-shaped plate: flipped over it is a mirror image (a different shape to nest); a plain box is not.
+    const a = k.Manifold.cube([40, 10, 6]), b = k.Manifold.cube([10, 30, 6]);
+    const l = a.add(b);
+    const lMesh = l.getMesh();
+    const soup = new Float32Array(lMesh.triVerts.length * 3);
+    for (let i = 0; i < lMesh.triVerts.length; i++) for (let c = 0; c < 3; c++) soup[i * 3 + c] = lMesh.vertProperties[lMesh.triVerts[i] * lMesh.numProp + c];
+    a.delete(); b.delete(); l.delete();
+    const pose = (m: TriMesh, r: number[], i: number) => { const p = posePart(k, m, r as never); return { poseIndex: i, mesh: p.mesh, silhouette: p.silhouette, height: p.height }; };
+    const FLIP = [1, 0, 0, 0, -1, 0, 0, 0, -1];
+    const lPart = { name: 'l', positions: soup };
+    expect(distinctPoses([pose(lPart, IDENTITY, 0), pose(lPart, FLIP, 1)])).toHaveLength(2);
+    const box = boxMesh(40, 20, 6);
+    expect(distinctPoses([pose(box, IDENTITY, 0), pose(box, FLIP, 1)])).toHaveLength(1);
   });
 
   it('exports as a valid binary STL', () => {
