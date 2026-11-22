@@ -62,6 +62,9 @@ function kindOf(name: string): FileKind | null {
   return n.endsWith('.stl') ? 'stl' : n.endsWith('.3mf') ? '3mf' : null;
 }
 
+/** Parts uploaded moments ago, shown until the server's listing catches up. */
+const justUploaded = new Map<string, { name: string; size: number; uploaded: string; until: number }>();
+
 /** Library names allow letters, digits, spaces and _.()+,- only. */
 function libraryName(fileName: string): string {
   const m = /^(.*)\.(stl|3mf)$/i.exec(fileName);
@@ -74,7 +77,11 @@ async function uploadToLibrary(file: File, buf: ArrayBuffer) {
   if (buf.byteLength > 25 * 1024 * 1024) { toast(`${file.name} is over 25 MB, so it was not added to the library.`); return; }
   try {
     const res = await fetch(`/api/parts/${encodeURIComponent(libraryName(file.name))}`, { method: 'PUT', body: buf, headers: { 'content-type': 'application/octet-stream' } });
-    if (res.ok) loadLibrary();
+    if (res.ok) {
+      // The library's listing can lag a minute behind an upload, so show the new part straight away.
+      justUploaded.set(libraryName(file.name), { name: libraryName(file.name), size: buf.byteLength, uploaded: new Date().toISOString(), until: Date.now() + 120_000 });
+      loadLibrary();
+    }
     else if (res.headers.get('content-type')?.includes('json')) toast(`${file.name} was not added to the library: ${(await res.json()).error ?? res.status}`);
   } catch { /* offline or no library: the part still works locally */ }
 }
@@ -667,6 +674,10 @@ async function loadLibrary() {
     if (!res.ok || !res.headers.get('content-type')?.includes('json')) return; // no API (dev) or signed out
     items = await res.json();
   } catch { return; } // offline
+  for (const [name, it] of justUploaded) {
+    if (items.some((x) => x.name === name) || Date.now() > it.until) justUploaded.delete(name);
+    else items.push({ name, size: it.size, uploaded: it.uploaded });
+  }
   $('#library').hidden = false;
   $('#library-empty').hidden = items.length > 0;
   items.sort((a, b) => a.name.localeCompare(b.name));
