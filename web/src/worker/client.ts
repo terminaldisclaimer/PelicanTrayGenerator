@@ -1,5 +1,5 @@
 import type { Side, TrayOptions } from '../geom/tray';
-import type { FileKind, ParsedPart, PoseAction, SavedPart, TrayInfo, WorkerRequest, WorkerResponse } from './protocol';
+import type { FileKind, ParsedPart, PoseAction, SavedPart, ShellRequest, TrayInfo, WorkerRequest, WorkerResponse } from './protocol';
 
 type Progress = (fraction: number, label: string) => void;
 type Body = WorkerRequest extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never;
@@ -68,8 +68,8 @@ export class GeometryClient {
   restore(parts: SavedPart[], progress?: Progress) {
     return this.call({ type: 'restore', parts }, [], progress);
   }
-  tray(options: TrayOptions, progress?: Progress) {
-    return this.call<TrayInfo>({ type: 'tray', options }, [], progress);
+  tray(options: TrayOptions, shell: ShellRequest | null, progress?: Progress) {
+    return this.call<TrayInfo>({ type: 'tray', options, shell }, [], progress);
   }
   remove(partId: number) {
     return this.call({ type: 'remove', partId });

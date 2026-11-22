@@ -8,6 +8,7 @@ import { initKernel } from '../geom/kernel';
 import { poseCandidates, posePart, type PoseCandidate } from '../geom/analyze';
 import { FLIP, mul, ROT_X90, ROT_Y90, ROT_Z90, type Mat3 } from '../geom/vec';
 import { autoFingers, buildTrays, distinctPoses, TrayError, type Side, type TrayPart } from '../geom/tray';
+import { buildShell, shellProblem } from '../geom/shell';
 import type { ParsedPart, PoseAction, WorkerRequest, WorkerResponse } from './protocol';
 
 const post = (msg: WorkerResponse, transfer: Transferable[] = []) =>
@@ -134,6 +135,8 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       reply(req.id, [await describe(req.partId)]);
     } else if (req.type === 'tray') {
       const k = await initKernel(wasmUrl);
+      const shellError = req.shell ? shellProblem(req.shell.outer, req.shell.options) : null;
+      if (shellError) throw new TrayError(shellError);
       post({ id: req.id, type: 'progress', fraction: 0.01, label: 'Preparing parts' });
       // Locked parts keep their pose. Unlocked parts offer the packer every 90°
       // orientation that actually differs.
@@ -154,9 +157,11 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         }
       const now: ParsedPart[] = [];
       for (const id of parts.keys()) now.push(await describe(id));
+      const sh = req.shell;
+      const shells = sh ? result.trays.map((t, i) => buildShell(k, sh.outer, t.depth, sh.options, `shell-${i + 1}`)) : null;
       post(
-        { id: req.id, type: 'tray', tray: { trays: result.trays, stacks: result.stacks, length: req.options.length, width: req.options.width, parts: now } },
-        [...result.trays.map((t) => t.mesh.positions.buffer as ArrayBuffer), ...now.map((p) => p.mesh.positions.buffer as ArrayBuffer)],
+        { id: req.id, type: 'tray', tray: { trays: result.trays, stacks: result.stacks, length: req.options.length, width: req.options.width, parts: now, shells } },
+        [...result.trays.map((t) => t.mesh.positions.buffer as ArrayBuffer), ...now.map((p) => p.mesh.positions.buffer as ArrayBuffer), ...(shells ?? []).map((s) => s.mesh.positions.buffer as ArrayBuffer)],
       );
     } else if (req.type === 'remove') {
       parts.delete(req.partId);
