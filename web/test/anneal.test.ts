@@ -97,6 +97,22 @@ describe('anneal (whole-layout search)', () => {
     expect(out.find((p) => p.id === 2)!.offset).toBe(10);
   });
 
+  it('keeps a finger hole clear of the neighbouring pocket, whatever level the parts are on', () => {
+    // Each 30×30 part has a 10×10 finger hole sticking out of its right side.
+    const holed = (id: number): AnnealItem => ({ id, stackable: true, options: [{ key: 0, depth: 10, footprint: rect(30, 30), soft: [[[30, 10], [40, 10], [40, 20], [30, 20]]] }] });
+    // Side by side they need 30 + 10 + 30 = 70 mm (the second hole may share... nothing: it needs its own 10 mm too, or to face the first).
+    const fits = anneal([holed(0), holed(1)], { width: 80, height: 30, maxDepth: 10, allowSink: true })!;
+    expect(fits).not.toBeNull();
+    const [a, b] = fits;
+    // Wherever they ended up, neither hole lies on the other part's footprint.
+    const box = (p: typeof a) => { const r = p.angle === 180; return { x0: p.tx - (r ? 30 : 0), x1: p.tx + (r ? 0 : 30), h0: r ? p.tx - 40 : p.tx + 30, h1: r ? p.tx - 30 : p.tx + 40 }; };
+    const A = box(a), B = box(b);
+    expect(A.h1 <= B.x0 + 1e-9 || A.h0 >= B.x1 - 1e-9).toBe(true);
+    expect(B.h1 <= A.x0 + 1e-9 || B.h0 >= A.x1 - 1e-9).toBe(true);
+    // In 65 mm there is no room for both pockets and a hole between or beside them.
+    expect(anneal([holed(0), holed(1)], { width: 65, height: 30, maxDepth: 10, allowSink: true, rounds: 2, iterations: 20000 })).toBeNull();
+  });
+
   it('gives the same answer every time, and uses a warm start when it is already valid', () => {
     const items = [item(0, 50, 40, 10), item(1, 50, 40, 10), item(2, 40, 30, 8), item(3, 20, 20, 5)];
     const s = { width: 100, height: 40, maxDepth: 20, allowSink: true };

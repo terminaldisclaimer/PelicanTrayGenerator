@@ -188,7 +188,9 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
       for (let j = i + 1; j < n; j++) {
         const v = ov[i * n + j];
         if (sunk[i] === sunk[j]) { bad += v + fv[i * n + j]; continue; } // same level: no overlap, no finger hole in a neighbour's pocket
-        if (!v) continue;
+        // Different levels but not actually overlapping: they are neighbours, so the
+        // same finger-hole rule applies (a hole must not open into the other's pocket or shaft).
+        if (!v) { bad += fv[i * n + j]; continue; }
         const u = sunk[i] ? j : i, l = sunk[i] ? i : j; // u on the surface, l beneath
         if (!items[u].stackable || depthOf(u) + gapOf(u, l) + depthOf(l) > D) { bad += v; continue; }
         if (v < sh[l].cells) { covered[u] += v; outside[u] += sh[l].cells - v; } // not hidden entirely: u loses that much floor

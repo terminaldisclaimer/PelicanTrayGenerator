@@ -91,7 +91,8 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 - Pocket depth `D = H + c_z + top_margin`.
 
 ### 3.4 Finger cutouts
-- A round scoop, 20 mm across, centred on the pocket edge. Each pocket can
+- A round scoop centred on the pocket edge; its diameter is a setting
+  (default 20 mm). Each pocket can
   have one on any of its four sides: the two long sides and the two ends.
 - Depth: down to the pocket floor. A setting adds extra depth below the
   floor (default 0 mm) for getting a fingertip under the part; the tray grows
