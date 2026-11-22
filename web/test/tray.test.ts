@@ -267,7 +267,9 @@ describe('tray', () => {
     expect([at(2).level, at(3).level]).toEqual([0, 1]); // bigger footprint on top
     expect(at(2).z).toBeCloseTo(t.depth - 10); // top part flush with the surface
     expect(at(3).z).toBeCloseTo(t.depth - 10.2 - 12); // lower part under the top pocket's floor
-    expect(at(3).x).toBeCloseTo(at(2).x); expect(at(3).y).toBeCloseTo(at(2).y);
+    expect(at(3).under).toEqual([2]);
+    // Hidden entirely under the wide part: its 71×51 pocket lies within the 81×61 one above.
+    expect(Math.abs(at(3).x - at(2).x)).toBeLessThanOrEqual(5.01); expect(Math.abs(at(3).y - at(2).y)).toBeLessThanOrEqual(5.01);
     const solid = toManifold(k, t.mesh)!;
     expect(solid).not.toBeNull();
     // Material removed = three pockets (the lower one sits entirely under the upper one).
@@ -291,6 +293,47 @@ describe('tray', () => {
     const flat = buildTrays(k, same, tight);
     expect(flat.stacks).toBe(0);
     expect(flat.trays.length).toBe(2);
+  });
+
+  it('partial stacking: a part tucked partly under its neighbours still fits and lifts straight out', () => {
+    // Two 75×45 pockets (10 deep) fill both rows of a tray that is 27.2 mm deep.
+    // An 80×20×8 strip has no room of its own and is too long to hide under one pocket,
+    // so it goes partly underneath.
+    const parts = [trayPart(boxMesh(75, 45, 10, 'u1'), 1), trayPart(boxMesh(75, 45, 10, 'u2'), 2), trayPart(boxMesh(80, 20, 8, 'strip'), 4)];
+    const o = { ...FAST, length: 100, width: 112, depth: 27.2 };
+    expect(buildTrays(k, parts, { ...o, stacking: false }).trays).toHaveLength(2);
+    const r = buildTrays(k, parts, o);
+    expect(r.trays).toHaveLength(1);
+    expect(r.stacks).toBe(1);
+    const t = r.trays[0];
+    expect(t.depth).toBeCloseTo(27.2);
+    const strip = t.placements.find((p) => p.partId === 4)!;
+    expect(strip.under.length).toBeGreaterThanOrEqual(1);
+    expect(strip.z).toBeCloseTo(t.depth - 10.2 - 8); // just below the 10.2-deep pockets above it
+    const tray = toManifold(k, t.mesh)!;
+    expect(tray).not.toBeNull();
+    // Every part sits in clear space, and stays clear as it is lifted straight up and out.
+    for (const pl of t.placements) {
+      const part = parts.find((p) => p.partId === pl.partId)!.poses[0];
+      const solid = toManifold(k, part.mesh)!;
+      for (const lift of [0, 4, 12, 30]) {
+        const moved = solid.rotate([0, 0, pl.angle]).translate(pl.x, pl.y, pl.z + lift);
+        const clash = moved.intersect(tray);
+        expect(clash.volume()).toBeLessThan(0.01);
+        moved.delete(); clash.delete();
+      }
+      solid.delete();
+    }
+    // The parts above keep at least half their floor to rest on.
+    for (const id of strip.under) {
+      const up = t.placements.find((p) => p.partId === id)!;
+      const floor = tray.slice(t.depth - 10.2 - 0.1); // just under the upper pockets' floors
+      const probe = k.CrossSection.square([75, 45], true).rotate(up.angle).translate(up.x, up.y);
+      const rest = probe.intersect(floor);
+      expect(rest.area() / (75 * 45)).toBeGreaterThan(0.45);
+      floor.delete(); probe.delete(); rest.delete();
+    }
+    tray.delete();
   });
 
   it('the deepest part sets the depth: other parts are not stood on end to squeeze in', () => {

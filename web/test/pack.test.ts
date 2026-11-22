@@ -102,3 +102,41 @@ describe('pack', () => {
     expect(pack(items, { width: 100, height: 100 })).toEqual(pack(items, { width: 100, height: 100 }));
   });
 });
+
+import { sink } from '../src/geom/pack';
+
+describe('sink (partial stacking)', () => {
+  // Two 40×40 surface pockets, 10 deep, with a 20-wide free strip between them, in a 100×40 tray.
+  const uppers = [
+    { id: 1, depth: 10, footprint: rect(40, 40), angle: 0, tx: 0, ty: 0 },
+    { id: 2, depth: 10, footprint: rect(40, 40), angle: 0, tx: 60, ty: 0 },
+  ];
+  const region = { width: 100, height: 40 };
+
+  it('tucks a long shallow part partly under both neighbours', () => {
+    // 70×20 is longer than the strip plus one pocket, so its ends must go under the pockets on both sides.
+    const r = sink(uppers, [{ id: 9, depth: 8, footprint: rect(70, 20) }], { ...region, maxDepth: 20 })!;
+    expect(r).toHaveLength(1);
+    expect(r[0].offset).toBe(10); // just below the floors above it
+    expect(r[0].under.sort()).toEqual([1, 2]);
+  });
+
+  it('uses free surface space when the part simply fits there', () => {
+    const r = sink(uppers, [{ id: 9, depth: 8, footprint: rect(18, 30) }], { ...region, maxDepth: 20 })!;
+    // Either in the strip (nothing above, no offset) or hidden entirely under a neighbour.
+    expect(r[0].under.length === 0 ? r[0].offset : 10).toBe(r[0].offset);
+  });
+
+  it('refuses when there is no depth left beneath, or too much floor would be lost', () => {
+    expect(sink(uppers, [{ id: 9, depth: 12, footprint: rect(50, 20) }], { ...region, maxDepth: 20 })).toBeNull(); // 10 + 12 > 20
+    // A 78×38 part would take nearly all the floor from both pockets without being hidden under either.
+    expect(sink(uppers, [{ id: 9, depth: 5, footprint: rect(78, 38) }], { ...region, maxDepth: 20 })).toBeNull();
+  });
+
+  it('hides a small part completely under one pocket (classic stack) and keeps sunk parts apart', () => {
+    const r = sink(uppers, [{ id: 8, depth: 6, footprint: rect(30, 30) }, { id: 9, depth: 6, footprint: rect(30, 30) }], { ...region, maxDepth: 20 })!;
+    expect(r).toHaveLength(2);
+    expect(r.every((p) => p.under.length === 1 && p.offset === 10)).toBe(true);
+    expect(r[0].under[0]).not.toBe(r[1].under[0]); // one under each
+  });
+});

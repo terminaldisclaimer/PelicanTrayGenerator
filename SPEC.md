@@ -109,12 +109,23 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
      No other part is stood up in a way that would need more depth.
   2. Everything is packed side by side. If it fits in one tray, nothing is
      stacked.
-  3. Otherwise parts are stacked one pair at a time, taking the pair that
-     saves the most tray area first, but only where the combined pocket
-     depths fit within the depth from step 1. After each stack the parts are
-     packed again, and stacking stops as soon as they fit in one tray.
+  3. Otherwise it stacks, always within the depth from step 1:
+     - **Partial stacking first.** The side-by-side layout of the first tray
+       is kept, and each part that did not fit is tucked wherever its
+       footprint is either free tray surface or lies under pockets shallow
+       enough to leave room beneath. It sits just below the deepest pocket
+       above it, and may lie partly under several parts. A part on top keeps
+       at least half its floor to rest on, unless the lower part is hidden
+       completely beneath it (then it rests on that part). Positions that
+       hide the most of the lower part are preferred.
+     - **Whole stacks second.** If that fails, parts are stacked one pair at
+       a time, taking the pair that saves the most tray area first, and
+       repacked after each, stopping as soon as everything fits in one tray.
   4. If they still do not fit, the stacks are undone and the parts overflow
      into more trays.
+- Every sunk part has an open shaft above it up to the tray surface (through
+  the pockets above), so it lifts straight out once the parts over it are
+  removed.
 - The part with the larger footprint goes on top, so it rests on the ledge
   around the lower pocket; where there is no ledge it rests on the part
   below. Lower parts are centred under the top one, turned 90° if that hides

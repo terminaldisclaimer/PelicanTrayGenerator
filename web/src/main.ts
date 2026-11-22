@@ -270,7 +270,8 @@ function renderList() {
       meta.className = 'meta';
       const pose = !p.poseLocked ? 'auto pose' : p.poseIndex >= 0 ? `pose ${p.poseIndex + 1} (locked)` : 'custom pose (locked)';
       const placed = tray?.trays.flatMap((t) => t.placements).find((q) => q.partId === p.partId);
-      const where = placed && placed.stackSize > 1 ? (placed.level === 0 ? ' · top of a stack' : ' · under another part') : '';
+      const above = tray?.trays.flatMap((t) => t.placements).some((q) => q.under.includes(p.partId));
+      const where = placed?.under.length ? ' · tucked under another part' : above ? ' · has a part beneath it' : '';
       meta.textContent = `${fmtDims(p.size, units)} · ${pose}${where}`;
       const actions = document.createElement('div');
       actions.className = 'actions';
@@ -464,13 +465,9 @@ function stackNote(result: TrayInfo): string {
   if (!result.stacks) return '';
   const name = (id: number) => parts.find((p) => p.partId === id)?.mesh.name ?? 'part';
   const lines: string[] = [];
-  for (const t of result.trays) {
-    const tops = t.placements.filter((p) => p.stackSize > 1 && p.level === 0);
-    for (const top of tops) {
-      const under = t.placements.filter((p) => p.stackSize > 1 && p.level > 0 && p.x === top.x && p.y === top.y).sort((a, b) => a.level - b.level);
-      lines.push(`${name(top.partId)} on top of ${under.map((u) => name(u.partId)).join(', then ')}`);
-    }
-  }
+  for (const t of result.trays)
+    for (const pl of t.placements)
+      if (pl.under.length) lines.push(`${name(pl.partId)} under ${pl.under.map(name).join(' and ')}`);
   return ` Stacked to fit: ${lines.join('; ')}.`;
 }
 
