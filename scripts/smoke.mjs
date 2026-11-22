@@ -3,7 +3,7 @@
 // test-results/. Usage: npm run build && node scripts/smoke.mjs
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 const require = createRequire(import.meta.url);
 const { chromium, devices } = require('playwright');
 
@@ -29,6 +29,14 @@ try {
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  // vite preview does not serve _headers, so apply the production CSP here to
+  // prove the app runs under it.
+  const csp = /Content-Security-Policy:\s*(.+)/.exec(readFileSync('web/dist/_headers', 'utf8'))[1].trim();
+  await page.route('**/*', async (route) => {
+    const res = await route.fetch();
+    await route.fulfill({ response: res, headers: { ...res.headers(), 'content-security-policy': csp } });
+  });
   await page.goto(`http://localhost:${port}/`);
   await page.waitForSelector('canvas');
   const width = await page.evaluate(() => document.documentElement.clientWidth);

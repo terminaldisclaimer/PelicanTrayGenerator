@@ -16,7 +16,14 @@ const TYPES = {
 };
 const walk = (d) => readdirSync(d).flatMap((f) => { const p = join(d, f); return statSync(p).isDirectory() ? walk(p) : [p]; });
 const files = {};
+// Security headers come from the same _headers file the assets-only deploy uses.
+const headers = {};
+for (const line of readFileSync(join(dist, '_headers'), 'utf8').split('\n')) {
+  const m = /^\s+([\w-]+):\s*(.+)$/.exec(line);
+  if (m) headers[m[1].toLowerCase()] = m[2].trim();
+}
 for (const p of walk(dist)) {
+  if (p.endsWith('_headers')) continue;
   files['/' + relative(dist, p).split('\\').join('/')] = [TYPES[extname(p)] || 'application/octet-stream', readFileSync(p).toString('base64')];
 }
 
@@ -28,6 +35,7 @@ cfg.main = 'worker.js';
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, 'wrangler.json'), JSON.stringify(cfg, null, 2));
 writeFileSync(join(out, 'worker.js'), `const FILES = ${JSON.stringify(files)};
+const SECURITY = ${JSON.stringify(headers)};
 const decode = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 export default {
   fetch(req) {
@@ -38,9 +46,9 @@ export default {
     const immutable = FILES[path] && path.startsWith('/assets/');
     return new Response(req.method === 'HEAD' ? null : decode(hit[1]), {
       headers: {
+        ...SECURITY,
         'content-type': hit[0],
         'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
-        'x-content-type-options': 'nosniff',
       },
     });
   },

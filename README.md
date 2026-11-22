@@ -32,11 +32,11 @@ disabled.
 In a proxied sandbox, also set `NODE_USE_ENV_PROXY=1` so Node's fetch uses the proxy.
 
 Authenticate with `npx wrangler login` or an exported
-`CLOUDFLARE_API_TOKEN`. Never put the token in a file. The token needs the
-**Workers Scripts: Edit**, **Workers Routes: Edit** (zone), **Zone: Read**,
-**DNS: Edit** and **Access: Apps and Policies: Edit** /
-**Access: Organizations, Identity Providers, and Groups: Edit**
-permissions.
+`CLOUDFLARE_API_TOKEN`. Never put the token in a file. Token scope for deploys: Account → **Workers Scripts: Edit**; Zone
+(`blocknets.org` only) → **Workers Routes: Edit**, **DNS: Edit**,
+**Zone: Read**. `npm run access:setup` additionally needs Account →
+**Access: Apps and Policies: Edit** and **Access: Organizations, Identity
+Providers, and Groups: Edit**; remove those once Access is configured.
 
 ```bash
 npm run deploy                                       # build + wrangler deploy
@@ -48,6 +48,10 @@ If wrangler's asset upload fails with `401 Unauthorized` (this happens
 behind proxies that rewrite the Authorization header), use
 `npm run deploy:inline`. It embeds `web/dist` in a small Worker script and
 deploys to the same name and domain.
+
+Security headers (a strict Content-Security-Policy that blocks all
+third-party scripts and network requests, HSTS, no framing) are in
+`web/public/_headers` and applied by both deploy paths.
 
 Allowed emails are passed in at setup time and are not stored in this
 (public) repository.
