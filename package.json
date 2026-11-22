@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "STL/3MF cutout tray generator — client-side PWA",
+  "description": "STL/3MF cutout tray generator \u2014 client-side PWA",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "deploy": "npm run build && wrangler deploy",
     "access:setup": "node scripts/setup-access.mjs",
-    "verify:access": "node scripts/verify-access.mjs"
+    "verify:access": "node scripts/verify-access.mjs",
+    "deploy:inline": "npm run build && node scripts/deploy-inline.mjs"
   },
   "devDependencies": {
     "@types/three": "^0.187.0",

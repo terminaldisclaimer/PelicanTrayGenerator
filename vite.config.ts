@@ -16,6 +16,7 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: 'auto',
+      useCredentials: true, // manifest fetch must send the Cloudflare Access cookie
       includeAssets: ['icons/*.svg', 'icons/*.png'],
       manifest: {
         name: 'Pelican Cutout Generator',

@@ -44,6 +44,11 @@ ACCESS_EMAILS="you@example.com" npm run access:setup # One-time PIN + allow-list
 npm run verify:access                                # unauthenticated request must hit the Access login
 ```
 
+If wrangler's asset upload fails with `401 Unauthorized` (this happens
+behind proxies that rewrite the Authorization header), use
+`npm run deploy:inline`. It embeds `web/dist` in a small Worker script and
+deploys to the same name and domain.
+
 Allowed emails are passed in at setup time and are not stored in this
 (public) repository.
 
