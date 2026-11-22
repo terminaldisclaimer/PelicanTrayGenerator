@@ -39,11 +39,11 @@ export interface PackSettings {
 }
 
 
-interface Shape { runs: Int32Array; w: number; h: number; minX: number; minY: number; cells: number }
+export interface Shape { runs: Int32Array; w: number; h: number; minX: number; minY: number; cells: number }
 interface Opt { key: number; depth: number; shapes: Shape[]; angles: number[] }
 interface Prepared { id: number; opts: Opt[]; area: number; maxDim: number; minDepth: number; /** Option indices by footprint size, smallest first. */ bySize: number[] }
 
-function rotate(loops: Pt[][], deg: number): Pt[][] {
+export function rotate(loops: Pt[][], deg: number): Pt[][] {
   if (deg === 0) return loops;
   let c = Math.cos((deg * Math.PI) / 180), s = Math.sin((deg * Math.PI) / 180);
   if (deg % 90 === 0) { c = Math.round(c); s = Math.round(s); } // exact quarter turns
@@ -285,110 +285,4 @@ export function pack(items: PackItem[], settings: PackSettings): PackResult {
       }
   }
   return { trays: best!.bins.map((b) => ({ depth: b.depth })), placements: best!.placements, unplaced: best!.unplaced };
-}
-
-// ---------------------------------------------------------------------------
-// Partial stacking: sink extra parts under the ones already laid out.
-// ---------------------------------------------------------------------------
-
-/** A part already placed at the tray surface (from `pack`). */
-export interface SinkUpper { id: number; depth: number; footprint: Pt[][]; angle: number; tx: number; ty: number; /** True = nothing may be tucked under this part. */ noCover?: boolean }
-/** A part to tuck underneath. */
-export interface SinkLower { id: number; depth: number; footprint: Pt[][] }
-export interface SinkPlacement {
-  id: number; angle: number; tx: number; ty: number;
-  /** How far the top of this part's pocket sits below the tray surface. */
-  offset: number;
-  /** Surface parts that lie (partly) above this one. */
-  under: number[];
-}
-export interface SinkSettings {
-  width: number; height: number; cell?: number;
-  /** Deepest pocket allowed (set by the deepest part). */
-  maxDepth: number;
-  /** Most of a surface part's footprint that may hang over lower pockets (it rests on the remainder). */
-  maxCover?: number;
-}
-
-const SINK_ANGLES = [0, 90, 180, 270, 45, 135, 225, 315];
-
-/**
- * Place each lower part somewhere in the tray where every cell of its
- * footprint is either free at the surface (its open shaft) or lies under a
- * surface part whose pocket is shallow enough to leave room beneath:
- * offset = deepest pocket above it, and offset + its own depth ≤ maxDepth.
- * A surface part may lose at most `maxCover` of its floor this way, unless
- * the lower part is hidden entirely beneath it (then it rests on that part).
- * Lower parts never overlap each other. Positions that hide the most of the
- * lower part win. Returns null if any part cannot be placed.
- */
-export function sink(uppers: SinkUpper[], lowers: SinkLower[], settings: SinkSettings): SinkPlacement[] | null {
-  const cell = settings.cell ?? 1, maxCover = settings.maxCover ?? 0.5;
-  const W = Math.floor(settings.width / cell + 1e-9), H = Math.floor(settings.height / cell + 1e-9);
-  // owner[y*W+x]: 0 = free at the surface, k>0 = index+1 of the surface part there, -1 = shaft of a sunk part.
-  const owner = new Int16Array(W * H);
-  const lowerGrid = new Uint8Array(W * H);
-  const cells = new Int32Array(uppers.length + 1); // footprint size of each surface part
-  const covered = new Int32Array(uppers.length + 1); // how much of it already hangs over lower pockets
-  uppers.forEach((u, i) => {
-    const s = rasterize(rotate(u.footprint, u.angle), cell);
-    const px = Math.round((u.tx + s.minX) / cell), py = Math.round((u.ty + s.minY) / cell);
-    for (let r = 0; r < s.runs.length; r += 3) {
-      const y = py + s.runs[r];
-      if (y < 0 || y >= H) continue;
-      for (let x = Math.max(0, px + s.runs[r + 1]); x <= Math.min(W - 1, px + s.runs[r + 2]); x++) { owner[y * W + x] = i + 1; cells[i + 1]++; }
-    }
-  });
-
-  const out: SinkPlacement[] = [];
-  const order = lowers.map((l) => ({ l, shapes: SINK_ANGLES.map((a) => rasterize(rotate(l.footprint, a), cell)) })).sort((a, b) => b.shapes[0].cells - a.shapes[0].cells);
-  const hit = new Int32Array(uppers.length + 1);
-  for (const { l, shapes } of order) {
-    let best: { hidden: number; a: number; px: number; py: number; offset: number; under: number[] } | null = null;
-    for (let a = 0; a < shapes.length; a++) {
-      const s = shapes[a];
-      if (s.w > W || s.h > H) continue;
-      for (let py = 0; py <= H - s.h; py += 2)
-        position: for (let px = 0; px <= W - s.w; px += 2) {
-          hit.fill(0);
-          let hidden = 0;
-          for (let r = 0; r < s.runs.length; r += 3) {
-            const row = (py + s.runs[r]) * W + px;
-            for (let i = row + s.runs[r + 1], e = row + s.runs[r + 2]; i <= e; i++) {
-              if (lowerGrid[i] || owner[i] < 0) continue position; // another sunk part or its shaft
-              const o = owner[i];
-              if (o > 0) {
-                if (uppers[o - 1].noCover) continue position;
-                hit[o]++; hidden++;
-              }
-            }
-          }
-          if (best && hidden <= best.hidden) continue; // cannot beat the best so far
-          let offset = 0;
-          const under: number[] = [];
-          let ok = true;
-          for (let o = 1; o < hit.length && ok; o++) {
-            if (!hit[o]) continue;
-            const whollyBeneath = hit[o] === s.cells; // classic stack: the top part rests on this one
-            if (!whollyBeneath && (covered[o] + hit[o]) / cells[o] > maxCover) ok = false;
-            offset = Math.max(offset, uppers[o - 1].depth);
-            under.push(uppers[o - 1].id);
-          }
-          if (!ok || offset + l.depth > settings.maxDepth + 1e-9) continue;
-          best = { hidden, a, px, py, offset, under };
-        }
-    }
-    if (!best) return null;
-    const s = shapes[best.a];
-    for (let r = 0; r < s.runs.length; r += 3) {
-      const row = (best.py + s.runs[r]) * W + best.px;
-      for (let i = row + s.runs[r + 1], e = row + s.runs[r + 2]; i <= e; i++) {
-        lowerGrid[i] = 1;
-        if (owner[i] > 0) covered[owner[i]]++;
-        else owner[i] = -1;
-      }
-    }
-    out.push({ id: l.id, angle: SINK_ANGLES[best.a], tx: best.px * cell - s.minX, ty: best.py * cell - s.minY, offset: best.offset, under: best.under });
-  }
-  return out;
 }

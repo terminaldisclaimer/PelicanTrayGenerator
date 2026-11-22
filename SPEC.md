@@ -54,15 +54,14 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   resting face that is not square to those axes. The spin about the vertical
   axis is not part of the pose; the packer chooses it.
 - **Automatic turning:** unless a part's pose is locked, the layout may turn
-  it into any of its 90° orientations to make things fit. It first uses only
-  orientations that need no more depth than the deepest part needs lying as
-  low as it can. If the parts then do not fit one tray, it steps the depth up
-  through the next deeper orientations (of any part, including the deepest
-  one), committing the part to that orientation at each step, and keeps the
-  first depth that needs the fewest trays. The steps stop at the case height
-  if one is given, otherwise at one and a half times the starting depth.
-  Until a layout is run, an unlocked part shows its lowest orientation;
-  afterwards it shows the one the layout chose.
+  it into any of its 90° orientations (mirror-image outlines count as
+  different). It first uses only orientations that need no more depth than
+  the deepest part needs lying as low as it can. If the parts do not fit one
+  tray and the tray depth is not fixed, it steps the depth up through the
+  next deeper orientations, to the case height if one is given, otherwise at
+  most half as deep again, and keeps the first depth that fits. With a fixed
+  tray depth, every orientation that fits within it is available from the
+  start.
 - **Lock pose:** each part has a "Lock pose" tick box. Ticked, the part
   keeps exactly the orientation shown (the layout still spins it about the
   vertical axis). Picking an orientation in the pose picker ticks it;
@@ -114,34 +113,18 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   the next.
 - **When it happens (as built):**
   1. The deepest part, lying as low as it can, sets the tray's pocket depth.
-     No other part is stood up in a way that would need more depth.
-  2. Everything is packed side by side. If it fits in one tray, nothing is
-     stacked.
-  3. Otherwise it stacks, always within the depth from step 1:
-     - **Partial stacking first.** The side-by-side layout of the first tray
-       is kept, and each part that did not fit is tucked wherever its
-       footprint is either free tray surface or lies under pockets shallow
-       enough to leave room beneath. It sits just below the deepest pocket
-       above it, and may lie partly under several parts. A part on top keeps
-       at least half its floor to rest on, unless the lower part is hidden
-       completely beneath it (then it rests on that part). Positions that
-       hide the most of the lower part are preferred.
-     - **Search second.** If that fails, it searches over which parts go
-       underneath: parts that shallower neighbours could mostly hide are
-       moved off the surface (largest first) until the rest fit one tray,
-       then tucked under them, backtracking within a time budget.
-     - **Whole stacks third.** If that fails, parts are stacked one pair at
-       a time, taking the pair that saves the most tray area first, and
-       repacked after each, stopping as soon as everything fits in one tray.
-  4. If they still do not fit, the stacks are undone and the parts overflow
-     into more trays.
-- Every sunk part has an open shaft above it up to the tray surface (through
-  the pockets above), so it lifts straight out once the parts over it are
-  removed.
-- The part with the larger footprint goes on top, so it rests on the ledge
-  around the lower pocket; where there is no ledge it rests on the part
-  below. Lower parts are centred under the top one, turned 90° if that hides
-  them better.
+  2. A quick side-by-side packing. If everything fits one tray, nothing is
+     stacked and that layout is used.
+  3. Otherwise a whole-layout search looks for a one-tray layout (§3.7).
+     Stacking is one of its moves: a part may be sunk beneath surface parts
+     whose pocket depth plus its own fits within the depth from step 1. It
+     sits just below the deepest pocket above it and may lie partly under
+     several parts.
+  4. If no one-tray layout is found and the depth is not fixed, the depth is
+     stepped up (see Automatic turning) and the search repeated.
+  5. Failing that, the side-by-side packing over several trays is used.
+- A part on top keeps at least half its floor to rest on, unless the part
+  beneath is hidden completely under it (then it rests on that part).
 - A lower part's finger holes run from the tray surface down to its floor.
 - Settings: "Stack parts if they don't all fit" (on by default), and each
   part has "Stacking: allowed / never".
@@ -157,32 +140,36 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   download.
 
 ### 3.7 Layout / packing
-- **No LLM.** Arrangement is a geometric optimization (2D irregular nesting
-  plus assigning parts to trays). A deterministic optimizer is faster and
-  more reliable, gives the same result for the same inputs, and works
-  offline. Sending part geometry to an LLM would also break the rule that
-  files never leave the browser.
-- **As built:** each footprint (pocket opening + finger scoop, grown by half
-  the wall) is rasterised on a 1 mm grid at every 15° about the vertical
-  axis. Square-on placements are tried first; other angles are used when a
-  part will not otherwise fit in the tray being filled. Parts are placed
-  first-fit, lowest row first, into the first tray with room; a new tray of
-  the same footprint is opened when none has. Up to 24 orderings are tried
-  (by area, by longest side, by depth, then seeded shuffles) within a time
-  budget, cycling between "never deepen a tray", "keep trays shallow" and
-  "fit as much as possible".
-- **Pose is part of the search:** parts left on Auto offer their best three
-  poses; the packer may stand a part on edge when that saves a tray. Locked
-  parts keep their pose. A manual tray depth acts as a limit on which poses
-  are allowed.
-- Objective, in priority order: **fewest trays** → least total stacked
-  height → most compact. To save a tray the packer will stand Auto parts on
-  edge or on end, however deep that makes the tray.
-- **Case inside height** (optional setting) caps how deep any tray may be,
-  which rules out poses that would not fit in the case. If the trays stacked
-  together are taller than the case, the result says so.
-- **Not yet built:** manual drag/rotate/lock in a 2D
-  tray view, moving a part to another tray by hand.
+- **No LLM.** Fitting pockets together is a precise geometric search (a
+  millimetre decides whether two pockets collide). A program can test
+  millions of exact positions; a language model would be estimating
+  coordinates. It also works offline.
+- Every footprint (pocket opening plus finger holes) is grown by half the
+  minimum wall plus about 1 mm of slack and rasterised on a 1 mm grid, at
+  every 15° about the vertical axis. Footprints that do not overlap are
+  therefore at least a wall apart; the tray region is inset so pockets keep
+  the edge margin.
+- **Stage 1, quick packing** (`pack.ts`): parts are placed one at a time,
+  first-fit, trying several orderings, placement rules and pose commitments.
+  It is fast and gives tidy layouts. If its best result is one tray, that is
+  used.
+- **Stage 2, whole-layout search** (`anneal.ts`), when stage 1 needs more
+  than one tray. Each part has a pose, an angle, a position and a level (on
+  the surface, or sunk beneath others). A layout is scored as a whole by how
+  much it breaks the rules, and improved by simulated annealing: move, turn,
+  re-pose, swap, butt against a neighbour, or sink one part at a time,
+  keeping improvements and sometimes accepting a worse layout to escape dead
+  ends. The work is a fixed number of moves with seeded random numbers, so
+  the same input gives the same layout on any device. Once a valid layout is
+  found it is improved for fewer stacked parts, then a shallower tray, and
+  parts that touch nothing are squared up and settled.
+- **Limits.** This kind of packing has no known method that guarantees the
+  best layout in reasonable time. The search is thorough and repeatable but
+  can miss a layout that exists, and stage 2 handles one tray only: if it
+  fails, the parts are spread over several trays by stage 1 without
+  stacking.
+- **Not yet built:** manual drag/rotate/lock in a 2D tray view; moving a
+  part to another tray by hand; a "search longer" control.
 
 ### 3.8 Saving
 - The current project (parts with their meshes, poses, finger cutouts, and

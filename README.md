@@ -27,8 +27,9 @@ npm run build        # type-check + production build into web/dist
 node scripts/smoke.mjs   # mobile (390 px, touch) smoke test in Chromium; needs a build
 ```
 
-Layout: `web/src/mesh` (parsers, pure + tested), `web/src/geom` (pose and
-silhouette on the WASM kernel, tested), `web/src/worker` (heavy
+Layout: `web/src/mesh` (parsers, pure + tested), `web/src/geom` (pose,
+silhouette, pockets, quick packing in `pack.ts`, whole-layout search in
+`anneal.ts`, tray building in `tray.ts`; all tested), `web/src/worker` (heavy
 geometry off the main thread), `web/src/viewer.ts` (Three.js),
 `web/src/ui` (bottom sheet), `web/test` (Vitest).
 

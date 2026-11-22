@@ -113,7 +113,7 @@ const trayPart = (m: TriMesh, id: number, fingers: TrayPart['fingers'] = []): Tr
   const p = posed(m);
   return { partId: id, name: m.name, fingers, poses: [{ poseIndex: 0, mesh: p.mesh, silhouette: p.silhouette, height: p.height }] };
 };
-const FAST = { ...DEFAULT_TRAY, packAttempts: 24, packAngleStep: 90 };
+const FAST = { ...DEFAULT_TRAY, packAttempts: 24, packAngleStep: 90, searchIterations: 30000, searchRounds: 3 };
 /** Point-in-polygon (even-odd over all loops). */
 function inside(loops: number[][][], [x, y]: number[]) {
   let hit = false;
