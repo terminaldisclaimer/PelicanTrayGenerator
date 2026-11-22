@@ -29,6 +29,8 @@ geometry off the main thread), `web/src/viewer.ts` (Three.js),
 domain `pelican.blocknets.org`. The `workers.dev` and preview URLs are
 disabled.
 
+In a proxied sandbox, also set `NODE_USE_ENV_PROXY=1` so Node's fetch uses the proxy.
+
 Authenticate with `npx wrangler login` or an exported
 `CLOUDFLARE_API_TOKEN`. Never put the token in a file. The token needs the
 **Workers Scripts: Edit**, **Workers Routes: Edit** (zone), **Zone: Read**,

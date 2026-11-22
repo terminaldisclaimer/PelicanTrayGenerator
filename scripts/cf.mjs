@@ -13,7 +13,7 @@ export async function cf(path, { method = 'GET', body } = {}) {
   });
   const json = await res.json().catch(() => ({}));
   if (!json.success) {
-    const msg = (json.errors || []).map((e) => `${e.code}: ${e.message}`).join('; ') || res.statusText;
+    const msg = (json.errors || []).map((e) => `${e.code}: ${e.message ?? e.error}`).join('; ') || res.statusText;
     throw new Error(`${method} ${path} failed (${res.status}): ${msg}`);
   }
   return json.result;
