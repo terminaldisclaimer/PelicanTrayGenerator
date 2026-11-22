@@ -29,7 +29,8 @@ try {
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  // The preview server has no /api (library is production-only), so ignore its 404.
+  page.on('console', (m) => m.type() === 'error' && !m.location().url.includes('/api/') && errors.push(m.text()));
   // vite preview does not serve _headers, so apply the production CSP here to
   // prove the app runs under it.
   const csp = /Content-Security-Policy:\s*(.+)/.exec(readFileSync('web/dist/_headers', 'utf8'))[1].trim();

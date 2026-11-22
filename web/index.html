@@ -42,6 +42,11 @@
         <div class="panel" data-panel="parts">
           <p id="empty" class="muted">Add STL or 3MF files from Files, Drive, or drag them here. Files stay on this device.</p>
           <ul id="parts" class="parts"></ul>
+          <section id="library" hidden>
+            <div class="row"><h2>Library</h2><button id="library-refresh" class="btn">Refresh</button></div>
+            <p id="library-empty" class="muted small">No uploaded parts yet. Files sent by the Fusion 360 script appear here.</p>
+            <ul id="library-list" class="parts"></ul>
+          </section>
         </div>
         <div class="panel" data-panel="trays" hidden><p class="muted">Tray layout arrives in a later milestone.</p></div>
         <div class="panel" data-panel="export" hidden><p class="muted">STL / 3MF export arrives in a later milestone.</p></div>

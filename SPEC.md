@@ -233,7 +233,15 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 1. Case interior L × W × H (mm), or the case model. Entered in the app's
    Settings (default 330 × 230 mm footprint until set).
 
-## 13. Later: Fusion 360 import
+## 13. Fusion 360 import
+- **Built:** `fusion/PelicanExport` — a Fusion script that exports every
+  design in a cloud folder as 3MF and uploads it to the parts library
+  (`/api/parts`, Workers KV, 25 MB per file, behind Access via a service
+  token). The app lists the library under Parts. Files added from the device
+  still never leave the browser; library files live in the owner's own
+  Cloudflare account. The Worker is therefore no longer assets-only.
+
+### Alternatives considered
 - **Today:** export 3MF from Fusion (desktop: File → 3D Print / Export → 3MF,
   or Fusion mobile → share) to iCloud/Files/Drive, then open it with the
   app's file picker.

@@ -152,6 +152,64 @@ function renderList() {
   );
 }
 
+// ---------- library (parts uploaded to this site, e.g. by the Fusion script) ----------
+interface LibraryItem { name: string; size?: number; uploaded?: string; version?: string }
+
+async function loadLibrary() {
+  let items: LibraryItem[];
+  try {
+    const res = await fetch('/api/parts', { headers: { accept: 'application/json' } });
+    if (!res.ok || !res.headers.get('content-type')?.includes('json')) return; // no API (dev) or signed out
+    items = await res.json();
+  } catch { return; } // offline
+  $('#library').hidden = false;
+  $('#library-empty').hidden = items.length > 0;
+  items.sort((a, b) => a.name.localeCompare(b.name));
+  $('#library-list').replaceChildren(
+    ...items.map((it) => {
+      const li = document.createElement('li');
+      li.className = 'part';
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = it.name;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const mb = it.size ? `${(it.size / 1048576).toFixed(it.size < 1048576 ? 2 : 1)} MB` : '';
+      meta.textContent = [mb, it.version && `v${it.version}`, it.uploaded?.slice(0, 10)].filter(Boolean).join(' · ');
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      const add = document.createElement('button');
+      add.className = 'btn';
+      add.textContent = 'Add';
+      add.onclick = async () => {
+        try {
+          showProgress(0.02, `Downloading ${it.name}`);
+          const res = await fetch(`/api/parts/${encodeURIComponent(it.name)}`);
+          if (!res.ok) throw new Error(`download failed (${res.status})`);
+          await addFiles([new File([await res.blob()], it.name)]);
+        } catch (e) {
+          hideProgress();
+          toast(`${it.name}: ${e instanceof Error ? e.message : e}`);
+        }
+      };
+      const del = document.createElement('button');
+      del.className = 'icon-btn';
+      del.setAttribute('aria-label', `Delete ${it.name} from library`);
+      del.textContent = '🗑';
+      del.onclick = async () => {
+        if (!confirm(`Delete ${it.name} from the library?`)) return;
+        await fetch(`/api/parts/${encodeURIComponent(it.name)}`, { method: 'DELETE' });
+        loadLibrary();
+      };
+      actions.append(add, del);
+      li.append(name, actions, meta);
+      return li;
+    }),
+  );
+}
+$('#library-refresh').addEventListener('click', loadLibrary);
+loadLibrary();
+
 $('#version').textContent = `Version ${__APP_VERSION__}`;
 setUnits(units);
 viewer.setParts([]);

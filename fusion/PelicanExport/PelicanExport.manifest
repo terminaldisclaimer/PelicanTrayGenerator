@@ -1,0 +1,8 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "author": "",
+  "description": { "": "Export every design in a Fusion folder as 3MF and upload to the Pelican Cutouts library." },
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

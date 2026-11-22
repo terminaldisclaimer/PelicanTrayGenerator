@@ -63,3 +63,5 @@ button, .btn { font: inherit; color: inherit; }
   #view { right: 380px; }
   .progress, .toast { right: 396px; left: auto; width: 420px; }
 }
+
+#library { margin-top: 18px; } #library h2 { font-size: 15px; margin: 0; color: var(--muted); font-weight: 600; }

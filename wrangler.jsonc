@@ -1,12 +1,16 @@
 {
-  // Static-assets-only Worker: no `main` script.
+  // Static assets plus a small Worker for the parts-library API (/api/*).
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "pelican-cutout",
+  "main": "worker/index.js",
   "compatibility_date": "2026-11-01",
   "assets": {
     "directory": "./web/dist",
-    "not_found_handling": "single-page-application"
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
   },
+  "kv_namespaces": [{ "binding": "PARTS", "id": "5f02ef25829f4f3ea87b695d142baba1" }],
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "pelican.blocknets.org", "custom_domain": true }]

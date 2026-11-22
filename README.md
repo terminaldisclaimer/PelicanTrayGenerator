@@ -2,7 +2,9 @@
 
 A client-side, installable PWA. Upload STL or 3MF models of parts, and it
 generates 3D-printable trays with form-fit pockets for a Bambu Lab H3C.
-Your files never leave the browser. The design is in [`SPEC.md`](SPEC.md).
+Files you add from your device never leave the browser. The optional
+**Library** holds parts uploaded to your own Cloudflare account by the
+Fusion 360 script in [`fusion/`](fusion/README.md), behind the same login. The design is in [`SPEC.md`](SPEC.md).
 
 **Status:** M0 walking skeleton. You can upload STL/3MF (native file picker
 or drag-and-drop), see a touch-controlled 3D preview, use the mobile bottom
@@ -25,7 +27,8 @@ geometry off the main thread), `web/src/viewer.ts` (Three.js),
 
 ## Deploy (Cloudflare Workers static assets + Access)
 
-`wrangler.jsonc` deploys `web/dist` as an assets-only Worker on the custom
+`wrangler.jsonc` deploys `web/dist` as static assets, plus a small Worker
+(`worker/`) for the parts-library API on Workers KV, on the custom
 domain `pelican.blocknets.org`. The `workers.dev` and preview URLs are
 disabled.
 

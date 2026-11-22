@@ -1,0 +1,209 @@
+"""PelicanExport — Fusion 360 script.
+
+Exports every design in a Fusion cloud folder as 3MF and uploads each file to
+the Pelican Cutouts parts library (https://<your-site>/api/parts/<name>).
+
+How to use
+  1. Open any design that lives in the folder you want to export.
+  2. Utilities > Add-Ins > Scripts and Add-Ins > run "PelicanExport".
+  3. First run only: enter the site URL and the Cloudflare Access service-token
+     ID and secret. They are saved to ~/.pelican-export.json (readable only by
+     you) — never inside the script.
+  4. Choose whether to include sub-folders. Designs already uploaded at the
+     same Fusion version are skipped.
+
+Each design is opened, its root component exported, and closed without saving.
+"""
+import json
+import os
+import ssl
+import stat
+import tempfile
+import traceback
+import urllib.error
+import urllib.parse
+import urllib.request
+
+import adsk.core
+import adsk.fusion
+
+CONFIG_PATH = os.path.join(os.path.expanduser('~'), '.pelican-export.json')
+MAX_BYTES = 25 * 1024 * 1024
+SAFE = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _.()+,-')
+
+
+def load_config(ui):
+    cfg = {}
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+    changed = False
+    for key, prompt, default in (
+        ('site', 'Site URL', 'https://pelican.blocknets.org'),
+        ('client_id', 'Cloudflare Access service token — Client ID', ''),
+        ('client_secret', 'Cloudflare Access service token — Client Secret', ''),
+    ):
+        if not cfg.get(key):
+            value, cancelled = ui.inputBox(prompt, 'PelicanExport setup', default)
+            if cancelled or not value.strip():
+                return None
+            cfg[key] = value.strip()
+            changed = True
+    cfg['site'] = cfg['site'].rstrip('/')
+    if not cfg['site'].startswith('https://'):
+        ui.messageBox('Site URL must start with https://')
+        return None
+    if changed:
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, indent=2)
+        try:
+            os.chmod(CONFIG_PATH, stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
+    return cfg
+
+
+def ssl_context():
+    # Fusion's bundled Python sometimes lacks root certificates (macOS).
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+def request(cfg, method, path, body=None, headers=None):
+    req = urllib.request.Request(cfg['site'] + path, data=body, method=method)
+    req.add_header('CF-Access-Client-Id', cfg['client_id'])
+    req.add_header('CF-Access-Client-Secret', cfg['client_secret'])
+    req.add_header('User-Agent', 'PelicanExport/1.0')
+    for k, v in (headers or {}).items():
+        req.add_header(k, v)
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        # A redirect means Access rejected the service token (login page).
+        def redirect_request(self, *args, **kwargs):
+            return None
+
+    opener = urllib.request.build_opener(NoRedirect, urllib.request.HTTPSHandler(context=ssl_context()))
+    try:
+        with opener.open(req, timeout=120) as res:
+            return res.status, res.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+
+
+def safe_name(name):
+    cleaned = ''.join(c if c in SAFE else '_' for c in name).strip()[:110]
+    return (cleaned or 'part') + '.3mf'
+
+
+def collect(folder, recursive):
+    files = [f for f in folder.dataFiles if f.fileExtension.lower() == 'f3d']
+    if recursive:
+        for sub in folder.dataFolders:
+            files.extend(collect(sub, True))
+    return files
+
+
+def run(context):
+    app = adsk.core.Application.get()
+    ui = app.userInterface
+    progress = None
+    try:
+        active = app.activeDocument
+        if not active or not active.dataFile:
+            ui.messageBox('Open a saved design from the folder you want to export, then run this script again.')
+            return
+        folder = active.dataFile.parentFolder
+
+        cfg = load_config(ui)
+        if not cfg:
+            return
+
+        status, body = request(cfg, 'GET', '/api/parts')
+        if status != 200:
+            ui.messageBox(
+                'Could not reach the parts library (HTTP {}).\n\n'
+                'Check the service token and that the Access application has a '
+                '"Service Auth" policy for it. To re-enter credentials, delete\n{}'.format(status, CONFIG_PATH))
+            return
+        existing = {p['name']: str(p.get('version', '')) for p in json.loads(body.decode('utf-8'))}
+
+        answer = ui.messageBox(
+            'Export all designs in "{}" as 3MF and upload them?\n\nYes = include sub-folders\nNo = this folder only'.format(folder.name),
+            'PelicanExport', adsk.core.MessageBoxButtonTypes.YesNoCancelButtonType)
+        if answer == adsk.core.DialogResults.DialogCancel:
+            return
+        files = collect(folder, answer == adsk.core.DialogResults.DialogYes)
+        if not files:
+            ui.messageBox('No Fusion designs found in "{}".'.format(folder.name))
+            return
+
+        progress = ui.createProgressDialog()
+        progress.cancelButtonText = 'Cancel'
+        progress.isCancelButtonShown = True
+        progress.show('PelicanExport', 'Starting…', 0, len(files), 0)
+
+        uploaded, skipped, failed = [], [], []
+        seen = set()
+        tmp = tempfile.mkdtemp(prefix='pelican-export-')
+        for i, data_file in enumerate(files):
+            if progress.wasCancelled:
+                break
+            name = safe_name(data_file.name)
+            if name in seen:  # same design name in two folders
+                name = safe_name('{} ({})'.format(data_file.name, data_file.parentFolder.name))
+            seen.add(name)
+            version = str(data_file.versionNumber)
+            progress.message = '{} ({}/{})'.format(data_file.name, i + 1, len(files))
+            progress.progressValue = i
+            adsk.doEvents()
+
+            if existing.get(name) == version:
+                skipped.append(name)
+                continue
+
+            doc = None
+            try:
+                already_open = data_file.id == active.dataFile.id
+                doc = active if already_open else app.documents.open(data_file, True)
+                design = adsk.fusion.Design.cast(doc.products.itemByProductType('DesignProductType'))
+                if not design:
+                    raise RuntimeError('not a design document')
+                path = os.path.join(tmp, name)
+                mgr = design.exportManager
+                options = mgr.createC3MFExportOptions(design.rootComponent, path)
+                if not mgr.execute(options) or not os.path.exists(path):
+                    raise RuntimeError('3MF export failed (does the design contain a solid body?)')
+                with open(path, 'rb') as f:
+                    payload = f.read()
+                os.remove(path)
+                if len(payload) > MAX_BYTES:
+                    raise RuntimeError('3MF is {:.0f} MB; the library limit is 25 MB'.format(len(payload) / 1048576))
+                status, body = request(
+                    cfg, 'PUT', '/api/parts/' + urllib.parse.quote(name), payload,
+                    {'Content-Type': 'application/octet-stream', 'X-Part-Version': version})
+                if status != 200:
+                    raise RuntimeError('upload failed (HTTP {}): {}'.format(status, body[:200].decode('utf-8', 'replace')))
+                uploaded.append(name)
+            except Exception as e:  # keep going with the other designs
+                failed.append('{}: {}'.format(data_file.name, e))
+            finally:
+                if doc and doc != active:
+                    try:
+                        doc.close(False)
+                    except Exception:
+                        pass
+
+        progress.hide()
+        progress = None
+        lines = ['Uploaded: {}'.format(len(uploaded)), 'Unchanged (skipped): {}'.format(len(skipped))]
+        if failed:
+            lines.append('Failed: {}'.format(len(failed)))
+            lines.extend('  ' + f for f in failed[:15])
+        ui.messageBox('\n'.join(lines), 'PelicanExport')
+    except Exception:
+        if progress:
+            progress.hide()
+        ui.messageBox('PelicanExport failed:\n{}'.format(traceback.format_exc()))

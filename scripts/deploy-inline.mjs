@@ -3,7 +3,7 @@
 // breaking the per-upload JWT). Embeds web/dist in a tiny Worker script and
 // deploys that with the normal API token. Same Worker name, domain and
 // workers_dev/preview settings as wrangler.jsonc. Prefer `npm run deploy`.
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, statSync, copyFileSync } from 'node:fs';
 import { join, relative, extname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -34,11 +34,15 @@ cfg.main = 'worker.js';
 
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, 'wrangler.json'), JSON.stringify(cfg, null, 2));
-writeFileSync(join(out, 'worker.js'), `const FILES = ${JSON.stringify(files)};
+copyFileSync('worker/api.js', join(out, 'api.js'));
+writeFileSync(join(out, 'worker.js'), `import { handleApi } from './api.js';
+const FILES = ${JSON.stringify(files)};
 const SECURITY = ${JSON.stringify(headers)};
 const decode = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 export default {
-  fetch(req) {
+  async fetch(req, env) {
+    const api = await handleApi(req, env);
+    if (api) return api;
     if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('Method not allowed', { status: 405 });
     let path = decodeURIComponent(new URL(req.url).pathname);
     if (path.endsWith('/')) path += 'index.html';
