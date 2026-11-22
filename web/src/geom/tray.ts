@@ -19,9 +19,12 @@ export interface TrayOptions {
   wall: number; // minimum between pockets
   edge: number; // minimum between a pocket and the tray edge
   cornerRadius: number;
-  /** Finger cutout: a round scoop on the pocket edge. */
+  /** Finger cutout: a round hole on the pocket edge, as deep as the pocket. */
   fingerDiameter: number;
-  fingerDepthFraction: number; // of the pocket depth
+  /** Extra depth below the pocket floor (mm), to get a fingertip under the part. */
+  fingerExtraDepth: number;
+  /** Swept: a smooth bowl that curves up to the surface, instead of a straight-sided hole. */
+  fingerSwept: boolean;
   pocket: PocketOptions;
   /** Packing effort (orderings tried) and time limit. */
   packAttempts?: number;
@@ -30,7 +33,7 @@ export interface TrayOptions {
 
 export const DEFAULT_TRAY: TrayOptions = {
   length: 300, width: 200, depth: null, maxDepth: null, floor: 2, wall: 3, edge: 4, cornerRadius: 4,
-  fingerDiameter: 20, fingerDepthFraction: 0.6, pocket: DEFAULT_POCKET,
+  fingerDiameter: 20, fingerExtraDepth: 0, fingerSwept: true, pocket: DEFAULT_POCKET,
 };
 
 /** One way a part may lie in the tray. */
@@ -49,18 +52,14 @@ export interface TrayPart {
 }
 
 /**
- * Default finger cutouts for a pose. Thin parts (under 10 mm) get one scoop —
- * a fingertip under the edge levers them out. Anything taller gets a pair on
+ * Default finger cutouts for a pose. Thin parts (under 10 mm) get one hole —
+ * a fingertip at the edge levers them out. Anything taller gets a pair on
  * opposite long sides so it can be pinched and lifted straight up.
  */
 export function autoFingers(height: number): Side[] {
   return height < 10 ? ['top'] : ['top', 'bottom'];
 }
 
-/** How deep a scoop goes: 60 % of the pocket, but all the way down for shallow pockets. */
-export function fingerDepth(pocketDepth: number, fraction: number): number {
-  return pocketDepth <= 15 ? pocketDepth : Math.max(fraction * pocketDepth, 15);
-}
 export interface Placement {
   partId: number;
   poseIndex: number;
@@ -121,9 +120,11 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
   const trash: { delete(): void }[] = [];
   const keep = <T extends { delete(): void }>(x: T): T => { trash.push(x); return x; };
   try {
-    const pocketDepth = (pose: TrayPose) => pose.height + o.pocket.floorClearance + o.pocket.topMargin;
-    const fingerR = o.fingerDiameter / 2;
     const sidesFor = (part: TrayPart, pose: TrayPose) => (part.fingers === 'auto' ? autoFingers(pose.height) : part.fingers);
+    const pocketDepth = (pose: TrayPose) => pose.height + o.pocket.floorClearance + o.pocket.topMargin;
+    /** Depth a part needs below the tray surface: its pocket, or its finger holes if they go deeper. */
+    const neededDepth = (part: TrayPart, pose: TrayPose) => pocketDepth(pose) + (sidesFor(part, pose).length ? Math.max(0, o.fingerExtraDepth) : 0);
+    const fingerR = o.fingerDiameter / 2;
     /** All finger scoops of a pose as one 2D shape, or null if it has none. */
     const scoops = (part: TrayPart, pose: TrayPose) => {
       let all: ReturnType<typeof k.CrossSection.circle> | null = null;
@@ -142,12 +143,12 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
     const tooDeep: string[] = [];
     const items: PackItem[] = [];
     for (const part of parts) {
-      const options = part.poses.filter((pose) => pocketDepth(pose) <= maxPocket + 1e-9).map((pose) => {
+      const options = part.poses.filter((pose) => neededDepth(part, pose) <= maxPocket + 1e-9).map((pose) => {
         let shape = keep(keep(k.CrossSection.ofPolygons(pose.silhouette, 'Positive')).offset(o.pocket.clearance, 'Round', 2, 16));
         const holes = scoops(part, pose);
         if (holes) shape = keep(shape.add(holes));
         const grown = keep(keep(shape.offset(o.wall / 2 + RASTER_SLACK + POLYGON_SLACK, 'Round', 2, 12)).simplify(0.1));
-        return { key: pose.poseIndex, depth: pocketDepth(pose), footprint: grown.toPolygons() as Pt[][] };
+        return { key: pose.poseIndex, depth: neededDepth(part, pose), footprint: grown.toPolygons() as Pt[][] };
       });
       if (!options.length) tooDeep.push(part.name);
       else items.push({ id: part.partId, options });
@@ -182,14 +183,25 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
         onProgress?.(0.15 + (0.75 * done++) / packed.placements.length, `Cutting pocket: ${part.name}`);
         const c = buildCavity(k, pose.mesh, pose.silhouette, pose.height, o.pocket);
         let solid = keep(c.solid);
-        const holes = scoops(part, pose);
-        if (holes) {
-          const d = fingerDepth(c.depth, o.fingerDepthFraction);
-          solid = keep(solid.add(keep(keep(holes.extrude(d + 1)).translate(0, 0, c.top - d))));
+        const sides = sidesFor(part, pose);
+        if (sides.length) {
+          // Finger holes reach the pocket floor, plus any extra depth asked for.
+          const d = c.depth + Math.max(0, o.fingerExtraDepth);
+          if (o.fingerSwept) {
+            // A bowl: full depth at the pocket edge, curving up to the surface.
+            for (const side of sides) {
+              const [fx, fy] = fingerCentre(pose.silhouette, o.pocket.clearance, side);
+              const bowl = keep(keep(keep(k.Manifold.sphere(1, 48)).scale([fingerR, fingerR, d])).translate(fx, fy, c.top));
+              solid = keep(solid.add(bowl));
+            }
+          } else {
+            const holes = scoops(part, pose)!;
+            solid = keep(solid.add(keep(keep(holes.extrude(d + 1)).translate(0, 0, c.top - d))));
+          }
         }
         const x = pl.tx - o.length / 2 + inset, y = pl.ty - o.width / 2 + inset, z = depth - c.top;
         cuts.push(keep(keep(solid.rotate([0, 0, pl.angle])).translate(x, y, z)));
-        placements.push({ partId: part.partId, poseIndex: pose.poseIndex, fingers: sidesFor(part, pose), angle: pl.angle, x, y, z, pocketDepth: c.depth, formFit: c.formFit });
+        placements.push({ partId: part.partId, poseIndex: pose.poseIndex, fingers: sides, angle: pl.angle, x, y, z, pocketDepth: c.depth, formFit: c.formFit });
       }
       onProgress?.(0.92, `Building tray ${t + 1}`);
       const block = keep(outline.extrude(depth));

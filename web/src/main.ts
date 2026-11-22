@@ -111,9 +111,11 @@ function refresh(reframe = true) {
 /** Replace one part with the worker's updated version (after a pose/scale change). */
 async function update(p: PartState, job: Promise<ParsedPart>, reframe = false) {
   try {
+    const hadTray = !!tray;
     const next = await job;
     parts = parts.map((q) => (q.partId === p.partId ? next : q));
     refresh(reframe);
+    if (hadTray) generateTray(); // keep the tray on screen in step with the change
   } catch (e) {
     toast(`${p.mesh.name}: ${e instanceof Error ? e.message : e}`);
   }
@@ -196,7 +198,9 @@ function fingerPicker(p: PartState): HTMLElement {
   preset('Pinch pair', ['top', 'bottom'], !p.fingerAuto && p.fingers.length === 2 && p.fingers.includes('top') && p.fingers.includes('bottom'));
   const hint = document.createElement('p');
   hint.className = 'muted small';
-  hint.textContent = 'Top-down view. Tap a circle to add or remove a finger cutout there.';
+  hint.textContent =
+    (p.fingers.length ? `${p.fingers.length} finger cutout${p.fingers.length === 1 ? '' : 's'}${p.fingerAuto ? ' (chosen automatically)' : ''}.` : 'No finger cutouts on this part.') +
+    ' Top-down view: tap a circle to add or remove one. Depth and the swept shape are set on the Trays tab.';
   wrap.append(svg, row, hint);
   return wrap;
 }
@@ -326,8 +330,8 @@ const toMM = (v: number) => (units === 'mm' ? v : v * MM_PER_IN);
 const fromMM = (v: number, digits = units === 'mm' ? 2 : 3) => String(+(units === 'mm' ? v : v / MM_PER_IN).toFixed(digits));
 
 /** Case inside size and fit settings (mm). The tray is the case size minus the gap on every side. */
-interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; clearance: number; split: number }
-let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, clearance: DEFAULT_TRAY.pocket.clearance, split: DEFAULT_TRAY.pocket.split };
+interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; clearance: number; split: number; fingerExtra: number; fingerSwept: boolean }
+let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, clearance: DEFAULT_TRAY.pocket.clearance, split: DEFAULT_TRAY.pocket.split, fingerExtra: 0, fingerSwept: true };
 try { traySettings = { ...traySettings, ...JSON.parse(localStorage.getItem('tray') || '{}') }; } catch { /* ignore */ }
 let tray: TrayInfo | null = null;
 let showPartsInTray = true;
@@ -340,6 +344,8 @@ function fillTrayInputs() {
   num('#tray-depth').value = traySettings.depth == null ? '' : fromMM(traySettings.depth);
   num('#tray-clearance').value = fromMM(traySettings.clearance);
   num('#tray-split').value = String(Math.round(traySettings.split * 100));
+  num('#tray-finger-extra').value = fromMM(traySettings.fingerExtra);
+  document.querySelectorAll<HTMLButtonElement>('[data-swept]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.swept === '1') === traySettings.fingerSwept)));
   document.querySelectorAll('.u').forEach((e) => (e.textContent = units));
 }
 
@@ -356,7 +362,9 @@ function readTrayInputs(): TraySettings | string {
   if (!(clearance >= 0 && clearance <= 5)) return 'Clearance must be between 0 and 5 mm.';
   if (depth !== null && !(depth > 0)) return 'Depth must be a number, or leave it empty for automatic.';
   if (!(split >= 0 && split <= 1)) return 'Form-fit must be between 0 and 100 %.';
-  return { length, width, height, gap, depth, clearance, split };
+  const fingerExtra = toMM(val('#tray-finger-extra') || 0);
+  if (!(fingerExtra >= 0 && fingerExtra <= 30)) return 'Finger hole extra depth must be between 0 and 30 mm.';
+  return { length, width, height, gap, depth, clearance, split, fingerExtra, fingerSwept: traySettings.fingerSwept };
 }
 
 function renderExport() {
@@ -403,13 +411,14 @@ function showTray() {
   if (tray) viewer.setTrays(tray.trays, tray.width, parts, showPartsInTray);
 }
 
-$('#tray-build').addEventListener('click', async () => {
+async function generateTray() {
   const s = readTrayInputs();
   if (typeof s === 'string') { $('#tray-status').textContent = s; return; }
   traySettings = s;
   try { localStorage.setItem('tray', JSON.stringify(s)); } catch { /* private mode */ }
   const options: TrayOptions = {
     ...DEFAULT_TRAY, length: s.length - 2 * s.gap, width: s.width - 2 * s.gap, depth: s.depth, maxDepth: s.height,
+    fingerExtraDepth: s.fingerExtra, fingerSwept: s.fingerSwept,
     pocket: { ...DEFAULT_TRAY.pocket, clearance: s.clearance, split: s.split },
   };
   const btn = $<HTMLButtonElement>('#tray-build');
@@ -438,7 +447,16 @@ $('#tray-build').addEventListener('click', async () => {
     hideProgress();
     btn.disabled = false;
   }
-});
+}
+$('#tray-build').addEventListener('click', generateTray);
+
+document.querySelectorAll<HTMLButtonElement>('[data-swept]').forEach((b) =>
+  b.addEventListener('click', () => {
+    traySettings.fingerSwept = b.dataset.swept === '1';
+    document.querySelectorAll<HTMLButtonElement>('[data-swept]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+    if (tray) generateTray();
+  }),
+);
 
 document.querySelectorAll<HTMLButtonElement>('[data-show]').forEach((b) =>
   b.addEventListener('click', () => {

@@ -93,9 +93,12 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 ### 3.4 Finger cutouts
 - A round scoop, 20 mm across, centred on the pocket edge. Each pocket can
   have one on any of its four sides: the two long sides and the two ends.
-- Depth: 60 % of the pocket depth (at least 15 mm); pockets 15 mm deep or
-  less are scooped all the way to the floor so a fingertip gets under the
-  part.
+- Depth: down to the pocket floor. A setting adds extra depth below the
+  floor (default 0 mm) for getting a fingertip under the part; the tray grows
+  to keep its floor thickness.
+- Shape: **swept** by default — a smooth bowl that is full depth at the
+  pocket edge and curves up to the surface. Switch it off for a
+  straight-sided hole.
 - **Auto (default):** parts under 10 mm tall get one scoop (lever the part
   up by its edge); taller parts get a pair on opposite long sides so they
   can be pinched and lifted straight out.

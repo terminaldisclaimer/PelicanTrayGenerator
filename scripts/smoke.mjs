@@ -68,6 +68,12 @@ try {
   // Both main buttons must be fully on screen without scrolling sideways.
   const mainVisible = await page.$$eval('.main-row .btn', (els) => els.every((e) => { const r = e.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth; }));
   const fingersAuto = await page.$$eval('.fp-spot[aria-pressed="true"]', (e) => e.length);
+  // "None" clears them all; "Pinch pair" puts two back.
+  await page.tap('.finger-picker button:has-text("None")');
+  await page.waitForFunction(() => document.querySelectorAll('.fp-spot[aria-pressed="true"]').length === 0);
+  const noneHint = await page.textContent('.finger-picker p');
+  await page.tap('.finger-picker button:has-text("Pinch pair")');
+  await page.waitForFunction(() => document.querySelectorAll('.fp-spot[aria-pressed="true"]').length === 2);
   await page.tap('.fp-spot[aria-label*="near long side"]');
   await page.waitForFunction(() => document.querySelectorAll('.fp-spot[aria-pressed="true"]').length === 1);
   await page.tap('.fp-spot[aria-label*="right end"]');
@@ -100,7 +106,7 @@ try {
   await page.screenshot({ path: 'test-results/mobile-half.png' });
   const sw = await page.evaluate(async () => !!(await navigator.serviceWorker?.getRegistration()));
   console.log({ width, overflow, meta, tipped, options, fingersAuto, fingersText, trayStatus, stl: download.suggestedFilename(), stlOk, small, serviceWorker: sw, errors });
-  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · auto pose') || !tipped?.includes('60.0 × 25.0 × 40.0') || !picked || fingersAuto !== 2 || !mainVisible || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
+  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · auto pose') || !tipped?.includes('60.0 × 25.0 × 40.0') || !picked || fingersAuto !== 2 || !noneHint.startsWith('No finger cutouts') || !mainVisible || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
 } finally {
   await browser.close();
   server.kill();

@@ -56,6 +56,14 @@
           <label class="row"><span>Tray depth (<span class="u">mm</span>)</span><input class="num" id="tray-depth" inputmode="decimal" autocomplete="off" placeholder="auto" /></label>
           <label class="row"><span>Clearance around parts (<span class="u">mm</span>)</span><input class="num" id="tray-clearance" inputmode="decimal" autocomplete="off" /></label>
           <label class="row"><span>Form-fit up to (% of part height)</span><input class="num" id="tray-split" inputmode="numeric" autocomplete="off" /></label>
+          <label class="row"><span>Finger holes: extra depth below pocket (<span class="u">mm</span>)</span><input class="num" id="tray-finger-extra" inputmode="decimal" autocomplete="off" /></label>
+          <div class="row">
+            <span>Swept finger holes</span>
+            <div class="seg" role="radiogroup" aria-label="Swept finger holes">
+              <button role="radio" data-swept="1" aria-checked="true">On</button>
+              <button role="radio" data-swept="0" aria-checked="false">Off</button>
+            </div>
+          </div>
           <button id="tray-build" class="btn primary wide">Generate tray</button>
           <p id="tray-status" class="muted small">Enter the inside size of your case, then generate.</p>
           <div class="row" id="tray-view-row" hidden>

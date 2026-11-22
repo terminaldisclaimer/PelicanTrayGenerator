@@ -4,7 +4,7 @@ import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { initKernel } from '../src/geom/kernel';
 import { poseCandidates, posePart, toManifold } from '../src/geom/analyze';
 import { buildCavity, DEFAULT_POCKET } from '../src/geom/pocket';
-import { autoFingers, buildTrays, DEFAULT_TRAY, fingerCentre, fingerDepth, TrayError, type TrayPart } from '../src/geom/tray';
+import { autoFingers, buildTrays, DEFAULT_TRAY, fingerCentre, TrayError, type TrayPart } from '../src/geom/tray';
 import { IDENTITY } from '../src/geom/vec';
 import { parseSTL, writeSTL } from '../src/mesh/stl';
 import { parse3MF } from '../src/mesh/threemf';
@@ -114,6 +114,15 @@ const trayPart = (m: TriMesh, id: number, fingers: TrayPart['fingers'] = []): Tr
   return { partId: id, name: m.name, fingers, poses: [{ poseIndex: 0, mesh: p.mesh, silhouette: p.silhouette, height: p.height }] };
 };
 const FAST = { ...DEFAULT_TRAY, packAttempts: 6 };
+/** Point-in-polygon (even-odd over all loops). */
+function inside(loops: number[][][], [x, y]: number[]) {
+  let hit = false;
+  for (const l of loops) for (let i = 0; i < l.length; i++) {
+    const a = l[i], b = l[(i + 1) % l.length];
+    if ((a[1] > y) !== (b[1] > y) && x < a[0] + ((y - a[1]) / (b[1] - a[1])) * (b[0] - a[0])) hit = !hit;
+  }
+  return hit;
+}
 
 describe('tray', () => {
   it('builds a watertight tray; depth = deepest pocket + floor; volume adds up', () => {
@@ -161,32 +170,52 @@ describe('tray', () => {
     }));
   });
 
-  it('finger cutouts: chosen sides, sensible depth, extra material removed', () => {
+  it('finger cutouts: chosen sides, full depth, swept bowl, extra depth', () => {
     const box = boxMesh(60, 30, 20);
     const sil = posed(box).silhouette;
     expect(fingerCentre(sil, 0.5, 'top')).toEqual([0, 15.5]);
     expect(fingerCentre(sil, 0.5, 'bottom')).toEqual([0, -15.5]);
     expect(fingerCentre(sil, 0.5, 'left')).toEqual([-30.5, 0]);
     expect(fingerCentre(sil, 0.5, 'right')).toEqual([30.5, 0]);
-    // Shallow pockets are scooped to the floor; deep ones 60 % (at least 15 mm).
-    expect(fingerDepth(6.2, 0.6)).toBe(6.2);
-    expect(fingerDepth(20.2, 0.6)).toBe(15);
-    expect(fingerDepth(40, 0.6)).toBe(24);
-    // Thin parts get one lever scoop, taller parts a pinch pair.
+    // Thin parts get one lever hole, taller parts a pinch pair.
     expect(autoFingers(6)).toEqual(['top']);
     expect(autoFingers(20)).toEqual(['top', 'bottom']);
 
-    const vol = (f: TrayPart['fingers']) => buildTrays(k, [trayPart(box, 1, f)], FAST).trays[0];
-    const none = vol([]), one = vol(['top']), two = vol(['top', 'bottom']), auto = vol('auto');
-    // Half a Ø20 disc lies outside the pocket, cut 15 mm deep.
-    const half = (Math.PI * 100) / 2 * 15;
+    const tray = (f: TrayPart['fingers'], extra: object = {}) => buildTrays(k, [trayPart(box, 1, f)], { ...FAST, ...extra }).trays[0];
+    const straight = { fingerSwept: false };
+    const none = tray([], straight), one = tray(['top'], straight), two = tray(['top', 'bottom'], straight), auto = tray('auto', straight);
+    // Straight holes reach the pocket floor: half a Ø20 disc outside the pocket × 20.2 mm.
+    const half = (Math.PI * 100) / 2 * 20.2;
     expect((none.volume - one.volume) / half).toBeCloseTo(1, 1);
     expect((none.volume - two.volume) / (2 * half)).toBeCloseTo(1, 1);
     expect(auto.volume).toBeCloseTo(two.volume, 3);
     expect(auto.placements[0].fingers).toEqual(['top', 'bottom']);
-    const solid = toManifold(k, two.mesh)!;
-    expect(solid).not.toBeNull();
-    solid.delete();
+    expect(tray([]).placements[0].fingers).toEqual([]); // "None" really means none
+    expect(tray([]).volume).toBeCloseTo(none.volume, 6);
+
+    // Swept (default): a bowl of the same depth — a quarter ellipsoid lies outside the pocket.
+    const swept = tray(['top']);
+    const quarter = ((4 / 3) * Math.PI * 10 * 10 * 20.2) / 4;
+    expect((none.volume - swept.volume) / quarter).toBeCloseTo(1, 1);
+    const s1 = toManifold(k, swept.mesh)!;
+    // Full depth right at the pocket edge, shallower further out, gone beyond the rim.
+    const at = (y: number, z: number) => { const cut = s1.slice(z).toPolygons(); return inside(cut, [swept.placements[0].x, swept.placements[0].y + y]); };
+    expect(at(15.5 + 2, swept.depth - 15)).toBe(false); // hole: no material 2 mm out, 15 mm down
+    expect(at(15.5 + 9, swept.depth - 15)).toBe(true); // bowl has curved back in by 9 mm out
+    expect(at(15.5 + 9, swept.depth - 2)).toBe(false); // near the surface it is still open at 9 mm
+    s1.delete();
+
+    // Extra depth: holes go below the pocket floor and the tray grows to keep its floor.
+    const deeper = tray(['top'], { fingerSwept: false, fingerExtraDepth: 5 });
+    expect(deeper.depth).toBeCloseTo(one.depth + 5);
+    expect(deeper.placements[0].z).toBeCloseTo(one.placements[0].z + 5);
+    const s2 = toManifold(k, deeper.mesh)!;
+    // 3 mm below the pocket floor the only opening left is the finger hole's full Ø20 disc.
+    const open = 300 * 200 - (4 - Math.PI) * 16 - s2.slice(deeper.depth - 20.2 - 3).area();
+    expect(open / (Math.PI * 100)).toBeCloseTo(1, 1);
+    s2.delete();
+    // Parts without finger holes do not make the tray deeper.
+    expect(tray([], { fingerExtraDepth: 5 }).depth).toBeCloseTo(none.depth);
   });
 
   it('chooses another allowed pose when that is what fits', () => {
