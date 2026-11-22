@@ -65,11 +65,24 @@ function kindOf(name: string): FileKind | null {
 /** Parts uploaded moments ago, shown until the server's listing catches up. */
 const justUploaded = new Map<string, { name: string; size: number; uploaded: string; until: number }>();
 
+/** The library's parts as last fetched; the list shows those not already in the project. */
+let libraryItems: LibraryItem[] | null = null;
+
 /** Library names allow letters, digits, spaces and _.()+,- only. */
 function libraryName(fileName: string): string {
   const m = /^(.*)\.(stl|3mf)$/i.exec(fileName);
   const base = (m ? m[1] : fileName).replace(/[^\w .()+,\-]/g, '_').trim().slice(0, 110) || 'part';
   return `${base}.${(m ? m[2] : 'stl').toLowerCase()}`;
+}
+
+/** True when a part of the open project came from this library file. */
+function inProject(item: string): boolean {
+  const stem = item.replace(/\.(stl|3mf)$/i, '');
+  return parts.some((p) => {
+    // Parts are named after their file, plus " · body" when the file holds several.
+    const key = libraryName(`${p.mesh.name}.stl`).slice(0, -4);
+    return key === stem || key.startsWith(`${stem} _ `);
+  });
 }
 
 /** Keep a copy of a part added from this device in the library (best effort). */
@@ -257,6 +270,7 @@ function fingerPicker(p: PartState): HTMLElement {
 }
 
 function renderList() {
+  renderLibrary();
   const ul = $('#parts');
   $('#empty').hidden = parts.length > 0;
   ul.replaceChildren(
@@ -712,9 +726,19 @@ async function loadLibrary() {
     if (items.some((x) => x.name === name) || Date.now() > it.until) justUploaded.delete(name);
     else items.push({ name, size: it.size, uploaded: it.uploaded });
   }
+  libraryItems = items.sort((a, b) => a.name.localeCompare(b.name));
+  renderLibrary();
+}
+
+/** List the library parts that are not in the project; a part comes back when it is removed from the project. */
+function renderLibrary() {
+  if (!libraryItems) return;
+  const items = libraryItems.filter((it) => !inProject(it.name));
   $('#library').hidden = false;
   $('#library-empty').hidden = items.length > 0;
-  items.sort((a, b) => a.name.localeCompare(b.name));
+  $('#library-empty').textContent = libraryItems.length
+    ? 'Every part in your library is already in this project.'
+    : 'No parts yet. Parts you add, and files sent by the Fusion 360 add-in, appear here.';
   $('#library-list').replaceChildren(
     ...items.map((it) => {
       const li = document.createElement('li');
