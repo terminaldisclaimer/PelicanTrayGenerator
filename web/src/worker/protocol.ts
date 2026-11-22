@@ -1,6 +1,7 @@
 import type { TriMesh } from '../mesh/types';
 import type { Silhouette } from '../geom/analyze';
 import type { Side, Tray, TrayOptions } from '../geom/tray';
+import type { Footprint, Shell, ShellOptions } from '../geom/shell';
 
 export type FileKind = 'stl' | '3mf';
 export type PoseAction = 'next' | 'x90' | 'y90' | 'z90' | 'flip';
@@ -25,7 +26,10 @@ export type WorkerRequest =
   /** Replace all parts with previously saved ones. */
   | { id: number; type: 'restore'; parts: SavedPart[] }
   /** Arrange every loaded part into trays and cut the pockets. */
-  | { id: number; type: 'tray'; options: TrayOptions };
+  | { id: number; type: 'tray'; options: TrayOptions; shell?: ShellRequest | null };
+
+/** A rigid shell to build around every tray: `outer` is the footprint of tray + shell. */
+export interface ShellRequest { outer: Footprint; options: ShellOptions }
 
 /** A part as posed on the bed: mesh in mm resting on z=0, plus its top-down outline. */
 export interface ParsedPart {
@@ -53,7 +57,11 @@ export interface ParsedPart {
 }
 
 /** Generated trays, plus every part as it now lies (Auto parts may have been re-posed). */
-export interface TrayInfo { trays: Tray[]; stacks: number; length: number; width: number; parts: ParsedPart[] }
+export interface TrayInfo {
+  trays: Tray[]; stacks: number; length: number; width: number; parts: ParsedPart[];
+  /** One shell per tray (same order), or null when no shell was asked for. */
+  shells: Shell[] | null;
+}
 
 /** A part as stored in a saved project: its mesh in mm plus the user's choices. */
 export interface SavedPart {

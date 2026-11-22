@@ -139,6 +139,27 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 - Every exported mesh is checked to be manifold and watertight before
   download.
 
+### 3.6a Rigid shell (on by default)
+- A separate PLA/PETG body around each tray, shaped like a cup. **The shell's
+  outside is the footprint that has to fit the case** (case interior − 2 × gap);
+  the tray is smaller by the shell wall on every side, so tray + shell never
+  grow past the case.
+- Wall: 3 mm by default (1.2–15 mm). The wall stands **4 mm above the tray
+  top** (the rim).
+- Bottom: a 1 mm floor under the tray, and under that a **2 mm step** set in
+  by the wall plus 0.3 mm of play. Stacked, the step of the tray above drops
+  2 mm into the recess the rim below makes, leaving 2 mm of headroom over the
+  parts. The floor is what joins the step to the walls.
+- Heights: a tray on its own is tray depth + 7 mm (4 rim + 1 floor + 2 step);
+  each tray in a stack takes tray depth + 5 mm. The case inside height limits
+  the tray depth after taking the shell off.
+- Gap between tray and shell: 0 by default (printed as one multi-material
+  piece); set about 0.2 mm to print the two separately and drop the tray in.
+- Exported as its own STL per tray, standing on its step. Printed that way up
+  it needs supports under the ledge around the step.
+- Code: `web/src/geom/shell.ts`; the packer and tray code only ever see the
+  smaller tray footprint.
+
 ### 3.7 Layout / packing
 - **No LLM.** Fitting pockets together is a precise geometric search (a
   millimetre decides whether two pockets collide). A program can test
@@ -286,7 +307,8 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 | Tray floor | 2 mm |
 | Case fit clearance | 1 mm per side |
 | Finger cutout | 20 mm wide, 60 % depth, on |
-| Tray corner radius | 4 mm |
+| Outside corner radius | 4 mm |
+| Shell wall / rim / bottom step / floor | 3 / 4 / 2 / 1 mm |
 
 ## 12. Open items
 1. Case interior L × W × H (mm), or the case model. Entered in the app's
