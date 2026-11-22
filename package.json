@@ -14,7 +14,7 @@
     "access:setup": "node scripts/setup-access.mjs",
     "verify:access": "node scripts/verify-access.mjs",
     "deploy:inline": "npm run build && node scripts/deploy-inline.mjs",
-    "fusion:zip": "cd fusion && rm -f PelicanExport.zip && zip -r -q PelicanExport.zip PelicanExport \"Install (Mac).command\" \"Install (Windows).bat\" README.md -x \"*/__pycache__/*\""
+    "fusion:zip": "cd fusion && rm -f PelicanExport.zip && zip -r -q PelicanExport.zip PelicanExport \"Install (Mac).command\" \"Install (Windows).bat\" README.md -x \"*/__pycache__/*\" && rm -f PelicanExport-script.zip && zip -r -q PelicanExport-script.zip PelicanExport -x \"*/__pycache__/*\""
   },
   "devDependencies": {
     "@types/three": "^0.187.0",

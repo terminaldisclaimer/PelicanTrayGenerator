@@ -1,11 +1,13 @@
-"""PelicanExport — Fusion 360 script.
+"""PelicanExport — Fusion 360 add-in.
+
+Adds a "Pelican Export" button to the Utilities tab (Add-Ins panel).
 
 Exports every design in a Fusion cloud folder as 3MF and uploads each file to
 the Pelican Cutouts parts library (https://<your-site>/api/parts/<name>).
 
 How to use
   1. Open any design that lives in the folder you want to export.
-  2. Utilities > Add-Ins > Scripts and Add-Ins > run "PelicanExport".
+  2. Click Utilities > Pelican Export.
   3. First run only: enter the site URL and the Cloudflare Access service-token
      ID and secret. They are saved to ~/.pelican-export.json (readable only by
      you) — never inside the script.
@@ -106,9 +108,7 @@ def collect(folder, recursive):
     return files
 
 
-def run(context):
-    app = adsk.core.Application.get()
-    ui = app.userInterface
+def export_folder(app, ui):
     progress = None
     try:
         active = app.activeDocument
@@ -207,3 +207,76 @@ def run(context):
         if progress:
             progress.hide()
         ui.messageBox('PelicanExport failed:\n{}'.format(traceback.format_exc()))
+
+
+# ---------------------------------------------------------------- add-in UI
+CMD_ID = 'pelicanExportCmd'
+WORKSPACE_ID = 'FusionSolidEnvironment'
+TAB_ID = 'ToolsTab'  # the "Utilities" tab
+PANEL_ID = 'SolidScriptsAddinsPanel'  # its "Add-Ins" panel
+_handlers = []  # keep references so Fusion does not garbage-collect them
+
+
+class _Execute(adsk.core.CommandEventHandler):
+    def notify(self, args):
+        app = adsk.core.Application.get()
+        export_folder(app, app.userInterface)
+
+
+class _Created(adsk.core.CommandCreatedEventHandler):
+    def notify(self, args):
+        handler = _Execute()
+        args.command.execute.add(handler)
+        _handlers.append(handler)
+
+
+def _panel(ui):
+    workspace = ui.workspaces.itemById(WORKSPACE_ID)
+    tab = workspace.toolbarTabs.itemById(TAB_ID) if workspace else None
+    panel = tab.toolbarPanels.itemById(PANEL_ID) if tab else None
+    return panel or ui.allToolbarPanels.itemById(PANEL_ID)
+
+
+def run(context):
+    ui = None
+    try:
+        app = adsk.core.Application.get()
+        ui = app.userInterface
+        cmd = ui.commandDefinitions.itemById(CMD_ID)
+        if cmd:
+            cmd.deleteMe()
+        resources = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+        cmd = ui.commandDefinitions.addButtonDefinition(
+            CMD_ID, 'Pelican Export',
+            'Export every design in this folder as 3MF and upload to the Pelican Cutouts library.',
+            resources)
+        created = _Created()
+        cmd.commandCreated.add(created)
+        _handlers.append(created)
+        panel = _panel(ui)
+        if not panel:
+            ui.messageBox('PelicanExport: could not find the Utilities > Add-Ins panel.')
+            return
+        old = panel.controls.itemById(CMD_ID)
+        if old:
+            old.deleteMe()
+        control = panel.controls.addCommand(cmd)
+        control.isPromotedByDefault = True
+        control.isPromoted = True
+    except Exception:
+        if ui:
+            ui.messageBox('PelicanExport failed to start:\n{}'.format(traceback.format_exc()))
+
+
+def stop(context):
+    try:
+        ui = adsk.core.Application.get().userInterface
+        panel = _panel(ui)
+        control = panel.controls.itemById(CMD_ID) if panel else None
+        if control:
+            control.deleteMe()
+        cmd = ui.commandDefinitions.itemById(CMD_ID)
+        if cmd:
+            cmd.deleteMe()
+    except Exception:
+        pass

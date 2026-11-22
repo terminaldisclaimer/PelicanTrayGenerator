@@ -1,8 +1,13 @@
 {
   "autodeskProduct": "Fusion360",
-  "type": "script",
+  "type": "addin",
+  "id": "7c1d5f0e-3b0a-4f5e-9a54-2f6f0b1c9d21",
   "author": "",
-  "description": { "": "Export every design in a Fusion folder as 3MF and upload to the Pelican Cutouts library." },
+  "description": {
+    "": "Adds Utilities > Pelican Export: export every design in a Fusion folder as 3MF and upload to the Pelican Cutouts library."
+  },
+  "version": "1.0.0",
+  "runOnStartup": true,
   "supportedOS": "windows|mac",
   "editEnabled": true
 }

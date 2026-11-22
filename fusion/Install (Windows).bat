@@ -1,6 +1,6 @@
 @echo off
-rem Copies the PelicanExport script into Fusion 360's Scripts folder.
-set "DEST=%APPDATA%\Autodesk\Autodesk Fusion 360\API\Scripts"
+rem Copies the PelicanExport script into Fusion 360's AddIns folder.
+set "DEST=%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns"
 if not exist "%APPDATA%\Autodesk\Autodesk Fusion 360" (
   echo Fusion 360 does not appear to be installed for this user.
   pause
@@ -15,6 +15,5 @@ if errorlevel 1 (
   exit /b 1
 )
 echo Installed to: %DEST%\PelicanExport
-echo In Fusion: Utilities ^> Add-Ins ^> Scripts and Add-Ins ^> PelicanExport ^> Run.
-echo (Restart Fusion if it was already open.)
+echo Restart Fusion, then click Utilities ^> Pelican Export.
 pause

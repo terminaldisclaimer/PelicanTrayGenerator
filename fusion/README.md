@@ -1,6 +1,7 @@
 # PelicanExport — Fusion 360 → parts library
 
-A Fusion 360 script. It exports every design in a Fusion cloud folder as
+A Fusion 360 add-in. It adds a **Pelican Export** button to the Utilities
+tab, which exports every design in a Fusion cloud folder as
 3MF and uploads the files to the app's parts library. They then appear
 under **Parts → Library** in the app, ready to add.
 
@@ -20,20 +21,20 @@ Access without a browser login):
 - Action: **Service Auth**. Include: **Service Token** → `fusion-export`.
 - Save. Your existing email policy stays as it is.
 
-**3. Install the script:**
+**3. Install the add-in:**
 
 - Unzip `PelicanExport.zip` and double-click **Install (Mac).command** or
-  **Install (Windows).bat**. It copies the script into Fusion's Scripts
-  folder, so it shows up in Utilities → Add-Ins → Scripts and Add-Ins.
-  On a Mac, if it's blocked the first time, right-click the file → Open.
-- Or by hand: in Scripts and Add-Ins, click the **+** next to "My Scripts"
-  and select the `PelicanExport` folder.
-- To rebuild the zip from the repo: `npm run fusion:zip`.
+  **Install (Windows).bat**, then restart Fusion. On a Mac, if it's blocked
+  the first time, right-click the file → Open.
+- Or by hand: Utilities → Add-Ins → Scripts and Add-Ins → **+** → add the
+  `PelicanExport` folder (or `PelicanExport-script.zip`), then switch on
+  **Run** and **Run on Startup** for it.
+- To rebuild the zips from the repo: `npm run fusion:zip`.
 
 ## Use
 
 1. Open any design in the folder you want to export.
-2. Run **PelicanExport**.
+2. Click **Utilities → Pelican Export** (in the Add-Ins panel).
 3. On the first run, enter the site URL and the Client ID and Secret. They
    are saved to `~/.pelican-export.json` on your computer. Delete that file
    to re-enter them.
