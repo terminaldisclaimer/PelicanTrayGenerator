@@ -44,6 +44,10 @@ export interface AnnealSettings {
   iterations?: number;
   rounds?: number;
   seed?: number;
+  /** Called at the start of each round with (round, rounds, smallest violation so far in cells). */
+  progress?: (round: number, rounds: number, violationCells: number) => void;
+  /** Called once with the smallest rule violation reached, in grid cells (0 = a valid layout). */
+  report?: (violationCells: number) => void;
 }
 export interface AnnealPlacement {
   id: number; key: number; angle: number; tx: number; ty: number; depth: number;
@@ -314,6 +318,7 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
   for (let i = 0; i < n; i++) totalCells += sh[i].cells;
   const feasibility = (s: [number, number]) => s[0] + 0.01 * s[1];
   for (let round = 0; round < rounds && best[0] > TOLERANCE; round++) {
+    settings.progress?.(round, rounds, best[0]);
     if (round % 2 === 1) {
       // Odd rounds: a fresh random layout, in case the starting one sits in a dead end.
       for (let i = 0; i < n; i++) { place(i, opt[i], ang[i], ri(W), ri(H)); sunk[i] = 0; }
@@ -343,6 +348,7 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
   // Footprints carry about 1 mm of slack each beyond the half wall (for the
   // grid), so a leftover overlap of a single 1 mm cell still leaves the full
   // wall between pockets. Anything more is a real clash.
+  settings.report?.(best[0]);
   if (best[0] > TOLERANCE) return null;
 
   // ---- tidy up: square parts to the tray and settle them down/left where that changes nothing else ----

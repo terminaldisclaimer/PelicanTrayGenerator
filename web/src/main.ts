@@ -538,6 +538,7 @@ function clearTray() {
   tray = null;
   viewer.setTrays(null);
   $('#tray-view-row').hidden = true;
+  $('#tray-harder').hidden = true;
   $('#tray-status').textContent = 'Parts changed — generate the tray again.';
   renderExport();
 }
@@ -558,7 +559,7 @@ function stackNote(result: TrayInfo): string {
   return ` Stacked to fit: ${lines.join('; ')}.`;
 }
 
-async function generateTray() {
+async function generateTray(hard = false) {
   const s = readTrayInputs();
   if (typeof s === 'string') { $('#tray-status').textContent = s; return; }
   traySettings = s;
@@ -571,6 +572,7 @@ async function generateTray() {
   const options: TrayOptions = {
     ...DEFAULT_TRAY, ...inside, depth: s.depth,
     edge: s.edge,
+    searchEffort: hard ? 'hard' : 'normal',
     maxDepth: s.height === null ? null : s.height - (shell ? shellExtraHeight(shell.options) : 0),
     fingerDiameter: s.fingerDia, fingerExtraDepth: s.fingerExtra, fingerSwept: s.fingerSwept, stacking: s.stacking, stackGap: s.stackGap,
     pocket: { ...DEFAULT_TRAY.pocket, clearance: s.clearance, split: s.split },
@@ -600,6 +602,9 @@ async function generateTray() {
       ` About ${(volume / 1000).toFixed(0)} cm³ of material before infill` + (so ? `, plus ${(shellVolume / 1000).toFixed(0)} cm³ for the shell.` : '.') +
       (s.height !== null && stack > s.height + 1e-6 ? ` Note: stacked, the trays are ${fmtLen(stack, units)} ${units} tall — more than the case height of ${fmtLen(s.height, units)} ${units}.` : n > 1 ? ` Stacked height ${fmtLen(stack, units)} ${units}.` : '');
     $('#tray-view-row').hidden = false;
+    // More than one tray: a longer search may still find a one-tray layout.
+    $('#tray-harder').hidden = n <= 1 || hard;
+    if (n > 1) $('#tray-status').textContent += hard ? ' The longer search did not find a one-tray layout either.' : ' The normal search did not find a one-tray layout; a longer search sometimes does.';
     renderExport();
   } catch (e) {
     $('#tray-status').textContent = e instanceof Error ? e.message : String(e);
@@ -608,7 +613,8 @@ async function generateTray() {
     btn.disabled = false;
   }
 }
-$('#tray-build').addEventListener('click', generateTray);
+$('#tray-build').addEventListener('click', () => generateTray());
+$('#tray-harder').addEventListener('click', () => generateTray(true));
 
 document.querySelectorAll<HTMLButtonElement>('[data-stack]').forEach((b) =>
   b.addEventListener('click', () => {

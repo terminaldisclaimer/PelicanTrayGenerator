@@ -36,6 +36,11 @@ export interface TrayOptions {
   /** Effort of the whole-layout search: moves per round, and rounds. */
   searchIterations?: number;
   searchRounds?: number;
+  searchSeed?: number;
+  /** 'hard' = many times the normal search effort, from several starting points (slow). */
+  searchEffort?: 'normal' | 'hard';
+  /** Diagnostic: smallest rule violation the search reached (grid cells), per search run. */
+  searchReport?: (violationCells: number, maxDepth: number) => void;
   /** Step for spinning parts about Z when packing (degrees; default 15). */
   packAngleStep?: number;
   packTimeMs?: number;
@@ -290,13 +295,24 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
     if (packed.trays.length > 1) {
       onProgress?.(0.12, o.stacking ? 'Searching for a one-tray layout (stacking allowed)' : 'Searching for a one-tray layout');
       const start = new Map(packed.placements.filter((p) => p.tray === 0).map((p) => [p.id, p]));
-      const found = anneal(
-        units.map((u) => {
-          const p = start.get(u.id);
-          return { id: u.id, stackable: u.part.stackable !== false, gap: Math.max(0, u.part.stackGap ?? o.stackGap), options: options(u), start: p && { key: p.key, angle: p.angle, tx: p.tx, ty: p.ty } };
-        }),
-        { ...region, softMargin, maxDepth: D, allowSink: o.stacking, angleStep: o.packAngleStep, iterations: o.searchIterations, rounds: o.searchRounds },
-      );
+      const annealItems = units.map((u) => {
+        const p = start.get(u.id);
+        return { id: u.id, stackable: u.part.stackable !== false, gap: Math.max(0, u.part.stackGap ?? o.stackGap), options: options(u), start: p && { key: p.key, angle: p.angle, tx: p.tx, ty: p.ty } };
+      });
+      const hard = o.searchEffort === 'hard';
+      // Normal: one run. Hard: far more moves per run, from several different starting points.
+      const seeds = o.searchSeed !== undefined ? [o.searchSeed] : hard ? [1, 2, 3] : [1];
+      let found: ReturnType<typeof anneal> = null;
+      for (let k2 = 0; k2 < seeds.length && !found; k2++) {
+        found = anneal(annealItems, {
+          ...region, softMargin, maxDepth: D, allowSink: o.stacking, angleStep: o.packAngleStep,
+          iterations: o.searchIterations ?? (hard ? 400000 : undefined), rounds: o.searchRounds ?? (hard ? 12 : undefined), seed: seeds[k2],
+          report: o.searchReport && ((v) => o.searchReport!(v, D)),
+          progress: (round, rounds, v) => onProgress?.(
+            0.12 + (0.8 * (k2 * rounds + round)) / (seeds.length * rounds),
+            `Searching for a one-tray layout${seeds.length > 1 ? ` (attempt ${k2 + 1} of ${seeds.length})` : ''}: closest so far ${v.toFixed(0)} mm² of clash`),
+        });
+      }
       if (found) {
         const above = new Set(found.flatMap((f) => f.under));
         entries = found.map((f) => ({

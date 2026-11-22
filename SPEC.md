@@ -203,8 +203,12 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   can miss a layout that exists, and stage 2 handles one tray only: if it
   fails, the parts are spread over several trays by stage 1 without
   stacking.
+- **Search harder.** When the result is more than one tray, a button reruns
+  stage 2 with many times the moves, from three different starting points,
+  showing how close it has got. It can find layouts the normal search
+  misses, at the cost of up to a few minutes.
 - **Not yet built:** manual drag/rotate/lock in a 2D tray view; moving a
-  part to another tray by hand; a "search longer" control.
+  part to another tray by hand; cancelling a long search.
 
 ### 3.8 Saving
 - The current project (parts with their meshes, poses, finger cutouts, and
