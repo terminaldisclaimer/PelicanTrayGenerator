@@ -20,6 +20,8 @@ import json
 import os
 import ssl
 import stat
+import subprocess
+import sys
 import tempfile
 import traceback
 import urllib.error
@@ -65,21 +67,43 @@ def load_config(ui):
     return cfg
 
 
+_SSL_CONTEXT = None
+MAC_KEYCHAINS = (
+    '/System/Library/Keychains/SystemRootCertificates.keychain',  # Apple's trusted roots
+    '/Library/Keychains/System.keychain',  # roots installed by an administrator (e.g. a company proxy)
+)
+
+
 def ssl_context():
     """Fusion's bundled Python on macOS ships without root certificates, so
-    load them from wherever we can find a trusted bundle."""
+    load the ones macOS itself trusts from the system keychains. Certificate
+    verification stays on. (On Windows the default context already uses the
+    Windows certificate store.)"""
+    global _SSL_CONTEXT
+    if _SSL_CONTEXT:
+        return _SSL_CONTEXT
     ctx = ssl.create_default_context()
+    if sys.platform == 'darwin':
+        for keychain in MAC_KEYCHAINS:
+            try:
+                pem = subprocess.run(
+                    ['/usr/bin/security', 'find-certificate', '-a', '-p', keychain],
+                    capture_output=True, text=True, timeout=30).stdout
+                if 'BEGIN CERTIFICATE' in pem:
+                    ctx.load_verify_locations(cadata=pem)
+            except Exception:
+                pass
+        if os.path.exists('/etc/ssl/cert.pem'):
+            try:
+                ctx.load_verify_locations(cafile='/etc/ssl/cert.pem')
+            except Exception:
+                pass
     try:
         import certifi
         ctx.load_verify_locations(cafile=certifi.where())
     except Exception:
         pass
-    for bundle in ('/etc/ssl/cert.pem', '/private/etc/ssl/cert.pem'):  # macOS system bundle
-        if os.path.exists(bundle):
-            try:
-                ctx.load_verify_locations(cafile=bundle)
-            except Exception:
-                pass
+    _SSL_CONTEXT = ctx
     return ctx
 
 
