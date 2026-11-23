@@ -227,6 +227,14 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 - **Not yet built:** manual drag/rotate/lock in a 2D tray view; moving a
   part to another tray by hand; cancelling a long search.
 
+### 3.7b Floor and walls
+- "Floor under the deepest pocket" (Trays tab, default 4 mm, 0.8–30): the
+  tray material left under the deepest pocket. With an automatic depth the
+  tray gets deeper by the same amount; with a set depth or a case height it
+  comes out of the room for parts.
+- "Wall between pockets" (default 3 mm, 0.8–20): the least material between
+  neighbouring pockets.
+
 ### 3.7a Lifting the tray out
 - "Finger holes to lift the tray out" (Trays tab; long sides, ends, or off;
   on by default): two holes, one against each of the chosen pair of sides.

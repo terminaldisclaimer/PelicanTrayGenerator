@@ -417,8 +417,8 @@ const toMM = (v: number) => (units === 'mm' ? v : v * MM_PER_IN);
 const fromMM = (v: number, digits = units === 'mm' ? 2 : 3) => String(+(units === 'mm' ? v : v / MM_PER_IN).toFixed(digits));
 
 /** Case inside size and fit settings (mm). The tray is the case size minus the gap on every side. */
-interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; edge: number; clearance: number; minFeature: number; split: number; fingerDia: number; fingerExtra: number; fingerSwept: boolean; stacking: boolean; stackGap: number; lift: boolean; liftDia: number; liftSides: 'long' | 'short'; shell: boolean; shellWall: number; shellRim: number; shellPlug: number; shellGap: number; liner: boolean; linerThick: number }
-let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, edge: 2, clearance: DEFAULT_TRAY.pocket.clearance, minFeature: 0, split: DEFAULT_TRAY.pocket.split, fingerDia: DEFAULT_TRAY.fingerDiameter, fingerExtra: 0, fingerSwept: true, stacking: true, stackGap: 0, lift: true, liftDia: DEFAULT_LIFT.diameter, liftSides: 'long', shell: true, shellWall: DEFAULT_SHELL.wall, shellRim: DEFAULT_SHELL.rim, shellPlug: DEFAULT_SHELL.plug, shellGap: DEFAULT_SHELL.gap, liner: false, linerThick: 6 };
+interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; edge: number; floor: number; wall: number; clearance: number; minFeature: number; split: number; fingerDia: number; fingerExtra: number; fingerSwept: boolean; stacking: boolean; stackGap: number; lift: boolean; liftDia: number; liftSides: 'long' | 'short'; shell: boolean; shellWall: number; shellRim: number; shellPlug: number; shellGap: number; liner: boolean; linerThick: number }
+let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, edge: 2, floor: 4, wall: DEFAULT_TRAY.wall, clearance: DEFAULT_TRAY.pocket.clearance, minFeature: 0, split: DEFAULT_TRAY.pocket.split, fingerDia: DEFAULT_TRAY.fingerDiameter, fingerExtra: 0, fingerSwept: true, stacking: true, stackGap: 0, lift: true, liftDia: DEFAULT_LIFT.diameter, liftSides: 'long', shell: true, shellWall: DEFAULT_SHELL.wall, shellRim: DEFAULT_SHELL.rim, shellPlug: DEFAULT_SHELL.plug, shellGap: DEFAULT_SHELL.gap, liner: false, linerThick: 6 };
 try { traySettings = { ...traySettings, ...JSON.parse(localStorage.getItem('tray') || '{}') }; } catch { /* ignore */ }
 let tray: TrayInfo | null = null;
 /** Shell settings and outside footprint (tray + shell) used for the tray on screen; null = no shell. */
@@ -433,6 +433,8 @@ function fillTrayInputs() {
   num('#tray-depth').value = traySettings.depth == null ? '' : fromMM(traySettings.depth);
   num('#tray-clearance').value = fromMM(traySettings.clearance);
   num('#tray-edge').value = fromMM(traySettings.edge);
+  num('#tray-floor').value = fromMM(traySettings.floor);
+  num('#tray-wall').value = fromMM(traySettings.wall);
   num('#tray-min-feature').value = fromMM(traySettings.minFeature);
   num('#tray-stack-gap').value = fromMM(traySettings.stackGap);
   num('#tray-lift-dia').value = fromMM(traySettings.liftDia);
@@ -480,6 +482,11 @@ function readTrayInputs(): TraySettings | string {
   if (!(split >= 0 && split <= 1)) return 'Form-fit must be between 0 and 100 %.';
   const edge = toMM(val('#tray-edge'));
   if (!(edge >= 0.8 && edge <= 20)) return 'Minimum tray thickness at the edge must be between 0.8 and 20 mm.';
+  const floor = toMM(val('#tray-floor'));
+  if (!(floor >= 0.8 && floor <= 30)) return 'Floor under the deepest pocket must be between 0.8 and 30 mm.';
+  if (depth !== null && floor >= depth) return 'The floor is as thick as the whole tray. Lower it or raise the tray depth.';
+  const wall = toMM(val('#tray-wall'));
+  if (!(wall >= 0.8 && wall <= 20)) return 'Wall between pockets must be between 0.8 and 20 mm.';
   const minFeature = toMM(val('#tray-min-feature') || 0);
   if (!(minFeature >= 0 && minFeature <= 20)) return 'Ignore part details smaller than: enter 0 to 20 mm (0 follows every detail).';
   const liftDia = toMM(val('#tray-lift-dia') || DEFAULT_LIFT.diameter);
@@ -502,9 +509,9 @@ function readTrayInputs(): TraySettings | string {
     if (problem) return problem;
     if (traySettings.liner && !(linerThick >= 1 && linerThick <= 20)) return 'TPU liner thickness must be between 1 and 20 mm.';
     if (traySettings.liner && shellGap > 0) return 'The TPU liner is printed onto the shell, so set the gap between tray and shell to 0 (or switch the liner off).';
-    if (height !== null && height - shellExtraHeight(o) <= DEFAULT_TRAY.floor) return `The case height leaves no room for a tray inside the shell (the shell alone takes ${fmtLen(shellExtraHeight(o), units)} ${units}).`;
+    if (height !== null && height - shellExtraHeight(o) <= floor) return `The case height leaves no room for a tray inside the shell (the shell alone takes ${fmtLen(shellExtraHeight(o), units)} ${units}).`;
   }
-  return { length, width, height, gap, depth, edge, clearance, minFeature, split, fingerDia, fingerExtra, fingerSwept: traySettings.fingerSwept, stacking: traySettings.stacking, stackGap, lift: traySettings.lift, liftDia, liftSides: traySettings.liftSides, shell, shellWall, shellRim, shellPlug, shellGap, liner: traySettings.liner, linerThick };
+  return { length, width, height, gap, depth, edge, floor, wall, clearance, minFeature, split, fingerDia, fingerExtra, fingerSwept: traySettings.fingerSwept, stacking: traySettings.stacking, stackGap, lift: traySettings.lift, liftDia, liftSides: traySettings.liftSides, shell, shellWall, shellRim, shellPlug, shellGap, liner: traySettings.liner, linerThick };
 }
 
 const shellOptions = (s: Pick<TraySettings, 'shellWall' | 'shellRim' | 'shellPlug' | 'shellGap'>): ShellOptions => ({ ...DEFAULT_SHELL, wall: s.shellWall, rim: s.shellRim, plug: s.shellPlug, gap: s.shellGap });
@@ -621,7 +628,7 @@ function trayRequest(effort: Effort) {
   const inside = shell ? trayInsideShell(outer, shell.options) : outer;
   const options: TrayOptions = {
     ...DEFAULT_TRAY, ...inside, depth: s.depth,
-    edge: s.edge,
+    edge: s.edge, floor: s.floor, wall: s.wall,
     searchEffort: effort,
     lift: s.lift ? { ...DEFAULT_LIFT, diameter: s.liftDia, sides: s.liftSides } : null,
     maxDepth: s.height === null ? null : s.height - (shell ? shellExtraHeight(shell.options) : 0),
