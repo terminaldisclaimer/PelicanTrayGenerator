@@ -1,6 +1,6 @@
 import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import type { TriMesh } from '../mesh/types';
-import { BED, TrayError } from './tray';
+import { BED, liftBore, TrayError, type LiftHole } from './tray';
 
 /**
  * Rigid PLA/PETG shell around a tray.
@@ -76,9 +76,9 @@ export interface Shell {
 
 /**
  * Build the shell for a tray `trayDepth` deep. `outer` is the footprint of tray + shell.
- * `holes` are round holes through the floor and step (tray coordinates), e.g. for lifting the tray out.
+ * `holes` are the tray's lift-out grips (tray coordinates): their side holes carry on out through the wall.
  */
-export function buildShell(k: ManifoldToplevel, outer: Footprint, trayDepth: number, s: ShellOptions, name = 'shell', holes: { x: number; y: number; r: number }[] = []): Shell {
+export function buildShell(k: ManifoldToplevel, outer: Footprint, trayDepth: number, s: ShellOptions, name = 'shell', holes: LiftHole[] = []): Shell {
   const problem = shellProblem(outer, s);
   if (problem) throw new TrayError(problem);
   const trash: { delete(): void }[] = [];
@@ -99,10 +99,7 @@ export function buildShell(k: ManifoldToplevel, outer: Footprint, trayDepth: num
       const step = s.fit > 0 ? keep(cup.offset(-s.fit, 'Round', 2, 32)) : cup;
       solid = keep(solid.add(keep(keep(step.extrude(s.plug)).translate(0, 0, -s.floor - s.plug))));
     }
-    for (const h of holes) {
-      const bore = keep(keep(keep(k.CrossSection.circle(h.r, 48)).extrude(s.floor + s.plug + 2)).translate(h.x, h.y, -s.floor - s.plug - 1));
-      solid = keep(solid.subtract(bore));
-    }
+    for (const h of holes) solid = keep(solid.subtract(liftBore(k, h, h.z ?? trayDepth / 2, keep)));
     if (solid.isEmpty()) throw new Error('Shell geometry came out empty');
     const mesh = solid.getMesh();
     const v = mesh.vertProperties, t = mesh.triVerts, np = mesh.numProp;

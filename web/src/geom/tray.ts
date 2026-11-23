@@ -35,9 +35,9 @@ export interface TrayOptions {
   /** Packing effort (orderings tried) and time limit. */
   packAttempts?: number;
   /**
-   * Finger holes for lifting the whole tray out of the case: a swooped scoop at
-   * the surface that drops into a round hole right through the tray (and the
-   * shell under it). null = none.
+   * Finger grips for lifting the whole tray out of the case: a compact scoop in
+   * the top face that meets a round hole out through the side of the tray (and
+   * the shell wall). null = none.
    */
   lift?: LiftOptions | null;
   /** Effort of the whole-layout search: moves per round, and rounds. */
@@ -57,33 +57,47 @@ export interface TrayOptions {
 }
 
 export interface LiftOptions {
-  /** Diameter of the through hole (mm). */
+  /** Diameter of the finger hole through the side (mm). The scoop above it is a little wider. */
   diameter: number;
   /** Which pair of sides the two holes sit against: the long sides, or the short ends. */
   sides: 'long' | 'short';
-  /** Length of the swoop along the tray edge (mm), and how deep it is at its centre. */
-  scoopLength: number;
-  scoopDepth: number;
 }
-export const DEFAULT_LIFT: LiftOptions = { diameter: 20, sides: 'long', scoopLength: 50, scoopDepth: 14 };
+/** 20 mm takes a large man's index fingertip; smaller is tight. */
+export const DEFAULT_LIFT: LiftOptions = { diameter: 20, sides: 'long' };
+/** How much wider than the finger hole the scoop is at the surface, per side (mm). */
+const LIFT_FLARE = 2;
+/** Tray left above the side hole, which the finger hooks under (mm). */
+const LIFT_BRIDGE = 4;
 
-/** One lift-out hole in tray coordinates (origin at the tray centre). */
-export interface LiftHole { x: number; y: number; r: number; /** Half-lengths of the swoop along X and Y. */ ax: number; ay: number; depth: number }
+/**
+ * One lift-out grip in tray coordinates (origin at the tray centre): a round
+ * scoop of radius `r` in the top face at (x, y), and a hole of radius `rb`
+ * running from the bottom of it out through the nearest side (direction nx, ny).
+ */
+export interface LiftHole { x: number; y: number; r: number; rb: number; nx: number; ny: number; /** Height of the side hole's centre above the tray bottom; set when the tray is cut. */ z?: number }
 
-/** Where the lift-out holes go by default (the middle of each side) for a tray of this size. */
+/** Where the lift-out grips go by default (the middle of each side) for a tray of this size. */
 export function liftHoles(o: Pick<TrayOptions, 'length' | 'width' | 'edge' | 'lift'>): LiftHole[] {
   const l = o.lift;
   if (!l) return [];
-  const r = l.diameter / 2;
+  const rb = l.diameter / 2, r = rb + LIFT_FLARE;
   // "Long sides" are the two edges that run along the tray's longer dimension.
   const alongX = (o.length >= o.width) === (l.sides === 'long');
-  const half = Math.max(r, l.scoopLength / 2);
-  if (alongX) {
-    const y = o.width / 2 - o.edge - r;
-    return [-1, 1].map((sgn) => ({ x: 0, y: sgn * y, r, ax: Math.min(half, o.length / 2 - o.edge), ay: r, depth: l.scoopDepth }));
-  }
-  const x = o.length / 2 - o.edge - r;
-  return [-1, 1].map((sgn) => ({ x: sgn * x, y: 0, r, ax: r, ay: Math.min(half, o.width / 2 - o.edge), depth: l.scoopDepth }));
+  if (alongX) return [-1, 1].map((sgn) => ({ x: 0, y: sgn * (o.width / 2 - o.edge - r), r, rb, nx: 0, ny: sgn }));
+  return [-1, 1].map((sgn) => ({ x: sgn * (o.length / 2 - o.edge - r), y: 0, r, rb, nx: sgn, ny: 0 }));
+}
+
+/** The round hole of a lift grip: from the scoop's centre straight out through the side. */
+export function liftBore(k: ManifoldToplevel, h: LiftHole, z: number, keep: <T extends { delete(): void }>(x: T) => T): Manifold {
+  const rod = keep(keep(k.Manifold.cylinder(h.r + 100, h.rb, h.rb, 48)).rotate([0, 90, 0])); // along +X
+  return keep(keep(rod.rotate([0, 0, (Math.atan2(h.ny, h.nx) * 180) / Math.PI])).translate(h.x, h.y, z));
+}
+
+/** Saved positions along each side, applied to the grips as they are shaped now. */
+function liftsAt(o: TrayOptions, saved: { x: number; y: number }[] | undefined): LiftHole[] {
+  const now = liftHoles(o);
+  if (!saved || saved.length !== now.length) return now;
+  return now.map((h, i) => (h.ny !== 0 ? { ...h, x: saved[i].x } : { ...h, y: saved[i].y }));
 }
 
 /** A finished arrangement in a form that can be saved and cut again later without searching. */
@@ -242,7 +256,7 @@ export function buildFromLayout(k: ManifoldToplevel, parts: TrayPart[], o: TrayO
     if (!part || !pose) throw new TrayError('The saved layout no longer matches the parts. Generate the tray again.');
     return { tray: e.tray, part, pose, angle: e.angle, tx: e.tx, ty: e.ty, offset: e.offset, level: e.level, stackSize: e.stackSize, under: e.under };
   });
-  return cutPlan(k, o, { entries, trayDepths: layout.trayDepths, stacks: layout.stacks, depth: 0, deeper: [], inset: layout.inset, lifts: layout.lifts ?? layout.trayDepths.map(() => liftHoles(o)) }, onProgress);
+  return cutPlan(k, o, { entries, trayDepths: layout.trayDepths, stacks: layout.stacks, depth: 0, deeper: [], inset: layout.inset, lifts: layout.trayDepths.map((_, t) => liftsAt(o, layout.lifts?.[t])) }, onProgress);
 }
 
 /** Lay the parts out without cutting anything: how many trays would it take? (Used to test "what if" changes.) */
@@ -327,14 +341,22 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
     // outline is grown by half a wall (parts carry the other half) plus slack.
     const defaultLifts = liftHoles(o);
     const liftGrow = o.wall / 2 + RASTER_SLACK + POLYGON_SLACK;
-    /** Outline of a lift hole's swoop, grown by its clearance, centred on (cx, cy). */
-    const liftLoop = (h: LiftHole, cx: number, cy: number): Pt[] => {
-      const loop: Pt[] = [];
-      for (let i = 0; i < 48; i++) { const t = (i / 48) * 2 * Math.PI; loop.push([cx + (h.ax + liftGrow) * Math.cos(t), cy + (h.ay + liftGrow) * Math.sin(t)]); }
-      return loop;
+    /**
+     * Area a lift grip keeps clear, relative to its centre: the scoop grown by its
+     * clearance, running straight out to the tray edge (the side hole is there).
+     */
+    const liftLoop = (h: LiftHole): Pt[] => {
+      const R = h.r + liftGrow, E = h.r + o.edge - inset, loop: Pt[] = [];
+      const put = (u: number, v: number) => loop.push(h.ny !== 0 ? [u, h.ny * v] : [h.nx * v, u]);
+      for (let i = 0; i <= 24; i++) { const t = Math.PI + (i / 24) * Math.PI; put(R * Math.cos(t), R * Math.sin(t)); }
+      put(R, E); put(-R, E);
+      let area = 0;
+      for (let i = 0; i < loop.length; i++) { const [x1, y1] = loop[i], [x2, y2] = loop[(i + 1) % loop.length]; area += x1 * y2 - x2 * y1; }
+      return area < 0 ? loop.reverse() : loop;
     };
+    const moved = (loop: Pt[], dx: number, dy: number): Pt[] => loop.map(([x, y]) => [x + dx, y + dy]);
     // For the quick packing they sit in the middle of their sides, as fixed blocked areas.
-    const blocked: Pt[][][] = defaultLifts.map((h) => [liftLoop(h, h.x + o.length / 2 - inset, h.y + o.width / 2 - inset)]);
+    const blocked: Pt[][][] = defaultLifts.map((h) => [moved(liftLoop(h), h.x + o.length / 2 - inset, h.y + o.width / 2 - inset)]);
     const packWith = (items: PackItem[], quick: boolean, withLifts = true) =>
       pack(items, { ...region, attempts: quick ? 16 : o.packAttempts ?? 96, timeBudgetMs: quick ? 400 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep, fixedDepth: o.depth !== null, softMargin, blocked: withLifts ? blocked : [] });
 
@@ -396,10 +418,10 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
       // In the search the lift-out holes are not fixed: each slides along its own
       // side to wherever it is least in the way (they need not face each other).
       defaultLifts.forEach((h, i) => {
-        const alongX = h.ax >= h.ay, cx = h.x + o.length / 2 - inset, cy = h.y + o.width / 2 - inset;
+        const cx = h.x + o.length / 2 - inset, cy = h.y + o.width / 2 - inset, loop = liftLoop(h);
         annealItems.push({
-          id: -1 - i, stackable: false, options: [{ key: 0, depth: 0, footprint: [liftLoop(h, 0, 0)] }],
-          rail: alongX ? { axis: 'x', at: cy - (h.ay + liftGrow) } : { axis: 'y', at: cx - (h.ax + liftGrow) },
+          id: -1 - i, stackable: false, options: [{ key: 0, depth: 0, footprint: [loop] }],
+          rail: h.ny !== 0 ? { axis: 'x', at: cy + Math.min(...loop.map((p) => p[1])) } : { axis: 'y', at: cx + Math.min(...loop.map((p) => p[0])) },
           start: { key: 0, angle: 0, tx: cx, ty: cy },
         });
       });
@@ -422,7 +444,7 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
         // Lift holes: keep each one's side, take its position along the side from the search.
         lifts = [defaultLifts.map((h, i) => {
           const f = found!.find((x) => x.id === -1 - i)!;
-          return h.ax >= h.ay ? { ...h, x: f.tx - o.length / 2 + inset } : { ...h, y: f.ty - o.width / 2 + inset };
+          return h.ny !== 0 ? { ...h, x: f.tx - o.length / 2 + inset } : { ...h, y: f.ty - o.width / 2 + inset };
         })];
         found = found.filter((f) => f.id >= 0);
         const above = new Set(found.flatMap((f) => f.under));
@@ -508,11 +530,14 @@ function cutPlan(k: ManifoldToplevel, o: TrayOptions, plan: Plan, onProgress?: (
           : keep(keep(keep(k.CrossSection.circle(fingerR, 32)).extrude(h.d + 1)).translate(h.x, h.y, depth - h.d))));
         cuts.push(pieces.length === 1 ? pieces[0] : keep(k.Manifold.hull(pieces)));
       }
-      // Lift-out holes: a round hole right through, with a swoop leading into it at the surface.
-      const lifts = plan.lifts[t] ?? [];
+      // Lift-out grips: a scoop in the top face that narrows down into a round
+      // hole running out through the side, leaving a bridge to hook a finger under.
+      const lifts = (plan.lifts[t] ?? []).map((h) => ({ ...h, z: Math.max(o.floor + h.rb, depth - LIFT_BRIDGE - h.rb) }));
       for (const h of lifts) {
-        cuts.push(keep(keep(keep(k.CrossSection.circle(h.r, 48)).extrude(depth + 2)).translate(h.x, h.y, -1)));
-        cuts.push(keep(keep(keep(k.Manifold.sphere(1, 40)).scale([h.ax, h.ay, Math.min(h.depth, depth - 1)])).translate(h.x, h.y, depth)));
+        const mouth = keep(keep(keep(k.Manifold.sphere(1, 48)).scale([h.r, h.r, 2])).translate(h.x, h.y, depth + 0.5));
+        const pit = keep(keep(k.Manifold.sphere(h.rb, 48)).translate(h.x, h.y, h.z));
+        cuts.push(keep(k.Manifold.hull([mouth, pit])));
+        cuts.push(liftBore(k, h, h.z, keep));
       }
       onProgress?.(0.92, `Building tray ${t + 1}`);
       const block = keep(outline.extrude(depth));
@@ -535,8 +560,7 @@ function cutPlan(k: ManifoldToplevel, o: TrayOptions, plan: Plan, onProgress?: (
         }
       }
       const floorArea = keep(tray.slice(Math.min(1, o.floor / 2))).area(), full = keep(block.slice(Math.min(1, o.floor / 2))).area();
-      const liftArea = lifts.reduce((a, h) => a + Math.PI * h.r * h.r, 0); // the lift-out holes are meant to go through
-      if (floorArea < (full - liftArea) * 0.999) throw new Error('Layout check failed: a pocket or finger hole breaks through the tray floor. Please report this.');
+      if (floorArea < full * 0.999) throw new Error('Layout check failed: a pocket or finger hole breaks through the tray floor. Please report this.');
       trays.push({ mesh: toTriMesh(tray, `tray-${t + 1}`), depth, placements, volume: tray.volume(), lifts });
     }
     return {

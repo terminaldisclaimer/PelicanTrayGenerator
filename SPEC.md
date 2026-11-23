@@ -230,11 +230,14 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 ### 3.7a Lifting the tray out
 - "Finger holes to lift the tray out" (Trays tab; long sides, ends, or off;
   on by default): two holes, one against each of the chosen pair of sides.
-- Each is a round hole (diameter setting, default 20 mm) right through the
-  tray and through the floor and bottom step of the shell, with a swoop at
-  the surface leading into it: 50 mm long along the tray edge, 14 mm deep at
-  the hole. The minimum tray thickness is kept between the hole and the
-  outside edge.
+- Each is a compact grip sized for a man's index finger: a round scoop in the
+  top face (finger hole diameter + 4 mm across) that narrows down into a
+  round hole (diameter setting, default 20 mm) running out through the side
+  of the tray and through the shell wall. 4 mm of tray, plus the shell rim,
+  is left above the side hole as a bridge to hook the finger under. The tray
+  and shell floors stay whole. In a tray too shallow for hole plus bridge
+  the bridge gets thinner (the hole never goes into the floor).
+- It keeps clear only its own scoop and the strip between it and the edge.
 - The two holes do not have to face each other. In the quick packing they
   sit in the middle of their sides; in the whole-layout search each slides
   along its own side to wherever it is least in the way. Pockets and finger
