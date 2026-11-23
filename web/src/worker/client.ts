@@ -1,4 +1,4 @@
-import type { Side, TrayOptions } from '../geom/tray';
+import type { LayoutData, Side, TrayOptions } from '../geom/tray';
 import type { FileKind, ParsedPart, PoseAction, SavedPart, ShellRequest, Suggestion, TrayInfo, WorkerRequest, WorkerResponse } from './protocol';
 
 type Progress = (fraction: number, label: string, suggestion?: Suggestion) => void;
@@ -91,8 +91,8 @@ export class GeometryClient {
   suggest(options: TrayOptions, progress?: Progress) {
     return this.call<{ list: Suggestion[]; tried: number }>({ type: 'suggest', options }, [], progress);
   }
-  tray(options: TrayOptions, shell: ShellRequest | null, progress?: Progress) {
-    return this.call<TrayInfo>({ type: 'tray', options, shell }, [], progress);
+  tray(options: TrayOptions, shell: ShellRequest | null, progress?: Progress, layout?: LayoutData) {
+    return this.call<TrayInfo>({ type: 'tray', options, shell, layout }, [], progress);
   }
   remove(partId: number) {
     return this.call({ type: 'remove', partId });

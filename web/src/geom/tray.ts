@@ -34,6 +34,12 @@ export interface TrayOptions {
   stackGap: number;
   /** Packing effort (orderings tried) and time limit. */
   packAttempts?: number;
+  /**
+   * Finger holes for lifting the whole tray out of the case: a swooped scoop at
+   * the surface that drops into a round hole right through the tray (and the
+   * shell under it). null = none.
+   */
+  lift?: LiftOptions | null;
   /** Effort of the whole-layout search: moves per round, and rounds. */
   searchIterations?: number;
   searchRounds?: number;
@@ -48,6 +54,46 @@ export interface TrayOptions {
   /** Step for spinning parts about Z when packing (degrees; default 15). */
   packAngleStep?: number;
   packTimeMs?: number;
+}
+
+export interface LiftOptions {
+  /** Diameter of the through hole (mm). */
+  diameter: number;
+  /** Which pair of sides the two holes sit against: the long sides, or the short ends. */
+  sides: 'long' | 'short';
+  /** Length of the swoop along the tray edge (mm), and how deep it is at its centre. */
+  scoopLength: number;
+  scoopDepth: number;
+}
+export const DEFAULT_LIFT: LiftOptions = { diameter: 20, sides: 'long', scoopLength: 50, scoopDepth: 14 };
+
+/** One lift-out hole in tray coordinates (origin at the tray centre). */
+export interface LiftHole { x: number; y: number; r: number; /** Half-lengths of the swoop along X and Y. */ ax: number; ay: number; depth: number }
+
+/** Where the lift-out holes go by default (the middle of each side) for a tray of this size. */
+export function liftHoles(o: Pick<TrayOptions, 'length' | 'width' | 'edge' | 'lift'>): LiftHole[] {
+  const l = o.lift;
+  if (!l) return [];
+  const r = l.diameter / 2;
+  // "Long sides" are the two edges that run along the tray's longer dimension.
+  const alongX = (o.length >= o.width) === (l.sides === 'long');
+  const half = Math.max(r, l.scoopLength / 2);
+  if (alongX) {
+    const y = o.width / 2 - o.edge - r;
+    return [-1, 1].map((sgn) => ({ x: 0, y: sgn * y, r, ax: Math.min(half, o.length / 2 - o.edge), ay: r, depth: l.scoopDepth }));
+  }
+  const x = o.length / 2 - o.edge - r;
+  return [-1, 1].map((sgn) => ({ x: sgn * x, y: 0, r, ax: r, ay: Math.min(half, o.width / 2 - o.edge), depth: l.scoopDepth }));
+}
+
+/** A finished arrangement in a form that can be saved and cut again later without searching. */
+export interface LayoutData {
+  trayDepths: number[];
+  /** Lift-out holes of each tray, where the layout put them along their sides. */
+  lifts?: LiftHole[][];
+  inset: number;
+  stacks: number;
+  entries: { tray: number; partId: number; poseIndex: number; angle: number; tx: number; ty: number; offset: number; level: number; stackSize: number; under: number[] }[];
 }
 
 export const DEFAULT_TRAY: TrayOptions = {
@@ -124,8 +170,8 @@ export interface Placement {
   /** Parts that lie (partly) on top of this one; empty when nothing is above it. */
   under: number[];
 }
-export interface Tray { mesh: TriMesh; depth: number; placements: Placement[]; volume: number }
-export interface TrayResult { trays: Tray[]; /** Number of stacks that were formed. */ stacks: number }
+export interface Tray { mesh: TriMesh; depth: number; placements: Placement[]; volume: number; /** Lift-out holes through this tray (tray coordinates). */ lifts: LiftHole[] }
+export interface TrayResult { trays: Tray[]; /** Number of stacks that were formed. */ stacks: number; /** The arrangement itself, for saving. */ layout: LayoutData }
 
 /** User-facing problem with the request (shown as a message, not a crash). */
 export class TrayError extends Error {}
@@ -185,6 +231,20 @@ export function buildTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOption
   return cutPlan(k, o, planBest(k, parts, o, onProgress), onProgress);
 }
 
+/**
+ * Cut trays from a saved arrangement, with no searching. The parts and their
+ * poses must be the ones the layout was made for.
+ */
+export function buildFromLayout(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, layout: LayoutData, onProgress?: (fraction: number, label: string) => void): TrayResult {
+  const entries: Entry[] = layout.entries.map((e) => {
+    const part = parts.find((p) => p.partId === e.partId);
+    const pose = part?.poses.find((p) => p.poseIndex === e.poseIndex);
+    if (!part || !pose) throw new TrayError('The saved layout no longer matches the parts. Generate the tray again.');
+    return { tray: e.tray, part, pose, angle: e.angle, tx: e.tx, ty: e.ty, offset: e.offset, level: e.level, stackSize: e.stackSize, under: e.under };
+  });
+  return cutPlan(k, o, { entries, trayDepths: layout.trayDepths, stacks: layout.stacks, depth: 0, deeper: [], inset: layout.inset, lifts: layout.lifts ?? layout.trayDepths.map(() => liftHoles(o)) }, onProgress);
+}
+
 /** Lay the parts out without cutting anything: how many trays would it take? (Used to test "what if" changes.) */
 export function planTrays(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, onProgress?: (fraction: number, label: string) => void): { trays: number; stacks: number; depths: number[] } {
   const plan = planBest(k, parts, o, onProgress);
@@ -217,7 +277,7 @@ function planBest(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, onProg
 /** One pocket to cut: a part in a pose, turned and positioned, possibly sunk below the surface. */
 interface Entry { tray: number; part: TrayPart; pose: TrayPose; angle: number; tx: number; ty: number; offset: number; level: number; stackSize: number; under: number[] }
 /** A finished arrangement, before any geometry is cut. */
-interface Plan { entries: Entry[]; trayDepths: number[]; stacks: number; depth: number; deeper: number[]; inset: number }
+interface Plan { entries: Entry[]; trayDepths: number[]; stacks: number; depth: number; deeper: number[]; inset: number; /** Lift-out holes per tray. */ lifts: LiftHole[][] }
 
 /** Decide poses, positions and stacking for one maximum pocket depth (see buildTrays). */
 function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depthCap: number | null, onProgress?: (fraction: number, label: string) => void): Plan {
@@ -263,8 +323,20 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
     // Finger holes are not grown, so they keep the whole edge margin themselves:
     // no cut may come closer than `edge` to the outside of the tray.
     const softMargin = Math.ceil(o.edge - inset - 1e-9);
-    const packWith = (items: PackItem[], quick: boolean) =>
-      pack(items, { ...region, attempts: quick ? 16 : o.packAttempts ?? 96, timeBudgetMs: quick ? 400 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep, fixedDepth: o.depth !== null, softMargin });
+    // The tray's lift-out holes are fixed: nothing may be placed on them. Their
+    // outline is grown by half a wall (parts carry the other half) plus slack.
+    const defaultLifts = liftHoles(o);
+    const liftGrow = o.wall / 2 + RASTER_SLACK + POLYGON_SLACK;
+    /** Outline of a lift hole's swoop, grown by its clearance, centred on (cx, cy). */
+    const liftLoop = (h: LiftHole, cx: number, cy: number): Pt[] => {
+      const loop: Pt[] = [];
+      for (let i = 0; i < 48; i++) { const t = (i / 48) * 2 * Math.PI; loop.push([cx + (h.ax + liftGrow) * Math.cos(t), cy + (h.ay + liftGrow) * Math.sin(t)]); }
+      return loop;
+    };
+    // For the quick packing they sit in the middle of their sides, as fixed blocked areas.
+    const blocked: Pt[][][] = defaultLifts.map((h) => [liftLoop(h, h.x + o.length / 2 - inset, h.y + o.width / 2 - inset)]);
+    const packWith = (items: PackItem[], quick: boolean, withLifts = true) =>
+      pack(items, { ...region, attempts: quick ? 16 : o.packAttempts ?? 96, timeBudgetMs: quick ? 400 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep, fixedDepth: o.depth !== null, softMargin, blocked: withLifts ? blocked : [] });
 
     // ---- 1. Allowed poses and the depth the deepest part sets ----
     onProgress?.(0.03, 'Measuring parts');
@@ -279,7 +351,7 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
       const choices = within
         .map((pose) => { const holes = scoops(part, pose); return { pose, depth: neededDepth(part, pose), footprint: grown(openingOf(pose)), soft: holes ? (holes.toPolygons() as Pt[][]) : undefined }; })
         // ...that can go in an empty tray at all, at some angle.
-        .filter((c) => !packWith([{ id: 0, options: [{ key: 0, depth: c.depth, footprint: c.footprint, soft: c.soft }] }], true).unplaced.length)
+        .filter((c) => !packWith([{ id: 0, options: [{ key: 0, depth: c.depth, footprint: c.footprint, soft: c.soft }] }], true, false).unplaced.length)
         .sort((a, b) => a.depth - b.depth);
       if (!choices.length) { tooBig.push(part.name); continue; }
       units.push({ id: part.partId, choices, part, depth: choices[0].depth });
@@ -298,27 +370,38 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
     // ---- 2. Side by side, quickly ----
     onProgress?.(0.1, 'Arranging parts');
     const packed = packWith(units.map((u) => ({ id: u.id, options: options(u) })), false);
-    if (packed.unplaced.length) {
-      const names = packed.unplaced.map((id) => parts.find((p) => p.partId === id)?.name ?? '?');
-      throw new TrayError(`Too big for a ${o.length.toFixed(1)} × ${o.width.toFixed(1)} mm tray in any allowed pose: ${names.join(', ')}.`);
-    }
+    // A part can be left over here only because the lift-out holes sit in the middle
+    // of their sides for this quick pass; the search below is free to slide them.
+    const leftOver = packed.unplaced.length > 0;
     const unitOf = (id: number) => units.find((u) => u.id === id)!;
     const choiceOf = (id: number, key: number) => unitOf(id).choices.find((c) => c.pose.poseIndex === key)!;
     let entries: Entry[] = packed.placements.map((pl) => ({
       tray: pl.tray, part: unitOf(pl.id).part, pose: choiceOf(pl.id, pl.key).pose, angle: pl.angle, tx: pl.tx, ty: pl.ty, offset: 0, level: 0, stackSize: 1, under: [],
     }));
     let trayDepths = packed.trays.map((t) => t.depth);
+    let lifts: LiftHole[][] = packed.trays.map(() => defaultLifts);
     let stacks = 0;
+    let solved = false; // did the whole-layout search find a one-tray layout?
 
     // ---- 3. If that needs more than one tray: search whole layouts ----
     // Pose, angle, position and level (on the surface, or sunk under others) of
     // every part are searched together for a layout that fits one tray.
-    if (packed.trays.length > 1) {
+    if (packed.trays.length > 1 || leftOver) {
       onProgress?.(0.12, o.stacking ? 'Searching for a one-tray layout (stacking allowed)' : 'Searching for a one-tray layout');
       const start = new Map(packed.placements.filter((p) => p.tray === 0).map((p) => [p.id, p]));
-      const annealItems = units.map((u) => {
+      const annealItems: Parameters<typeof anneal>[0] = units.map((u) => {
         const p = start.get(u.id);
         return { id: u.id, stackable: u.part.stackable !== false, gap: Math.max(0, u.part.stackGap ?? o.stackGap), options: options(u), start: p && { key: p.key, angle: p.angle, tx: p.tx, ty: p.ty } };
+      });
+      // In the search the lift-out holes are not fixed: each slides along its own
+      // side to wherever it is least in the way (they need not face each other).
+      defaultLifts.forEach((h, i) => {
+        const alongX = h.ax >= h.ay, cx = h.x + o.length / 2 - inset, cy = h.y + o.width / 2 - inset;
+        annealItems.push({
+          id: -1 - i, stackable: false, options: [{ key: 0, depth: 0, footprint: [liftLoop(h, 0, 0)] }],
+          rail: alongX ? { axis: 'x', at: cy - (h.ay + liftGrow) } : { axis: 'y', at: cx - (h.ax + liftGrow) },
+          start: { key: 0, angle: 0, tx: cx, ty: cy },
+        });
       });
       const hard = o.searchEffort === 'hard', thorough = o.searchEffort === 'thorough';
       // Normal: one run. Hard: far more moves per run, from several different starting points.
@@ -335,6 +418,13 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
         });
       }
       if (found) {
+        solved = true;
+        // Lift holes: keep each one's side, take its position along the side from the search.
+        lifts = [defaultLifts.map((h, i) => {
+          const f = found!.find((x) => x.id === -1 - i)!;
+          return h.ax >= h.ay ? { ...h, x: f.tx - o.length / 2 + inset } : { ...h, y: f.ty - o.width / 2 + inset };
+        })];
+        found = found.filter((f) => f.id >= 0);
         const above = new Set(found.flatMap((f) => f.under));
         entries = found.map((f) => ({
           tray: 0, part: unitOf(f.id).part, pose: choiceOf(f.id, f.key).pose, angle: f.angle, tx: f.tx, ty: f.ty,
@@ -345,7 +435,11 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
       }
     }
 
-    return { entries, trayDepths, stacks, depth: D, deeper, inset };
+    if (leftOver && !solved) {
+      const names = packed.unplaced.map((id) => parts.find((p) => p.partId === id)?.name ?? '?');
+      throw new TrayError(`No room in a ${o.length.toFixed(1)} × ${o.width.toFixed(1)} mm tray for: ${names.join(', ')}${defaultLifts.length ? ' (with the lift-out finger holes)' : ''}.`);
+    }
+    return { entries, trayDepths, stacks, depth: D, deeper, inset, lifts };
   } finally {
     for (const t of trash) t.delete();
   }
@@ -414,6 +508,12 @@ function cutPlan(k: ManifoldToplevel, o: TrayOptions, plan: Plan, onProgress?: (
           : keep(keep(keep(k.CrossSection.circle(fingerR, 32)).extrude(h.d + 1)).translate(h.x, h.y, depth - h.d))));
         cuts.push(pieces.length === 1 ? pieces[0] : keep(k.Manifold.hull(pieces)));
       }
+      // Lift-out holes: a round hole right through, with a swoop leading into it at the surface.
+      const lifts = plan.lifts[t] ?? [];
+      for (const h of lifts) {
+        cuts.push(keep(keep(keep(k.CrossSection.circle(h.r, 48)).extrude(depth + 2)).translate(h.x, h.y, -1)));
+        cuts.push(keep(keep(keep(k.Manifold.sphere(1, 40)).scale([h.ax, h.ay, Math.min(h.depth, depth - 1)])).translate(h.x, h.y, depth)));
+      }
       onProgress?.(0.92, `Building tray ${t + 1}`);
       const block = keep(outline.extrude(depth));
       const allCuts = cuts.length === 1 ? cuts[0] : keep(k.Manifold.union(cuts));
@@ -435,10 +535,17 @@ function cutPlan(k: ManifoldToplevel, o: TrayOptions, plan: Plan, onProgress?: (
         }
       }
       const floorArea = keep(tray.slice(Math.min(1, o.floor / 2))).area(), full = keep(block.slice(Math.min(1, o.floor / 2))).area();
-      if (floorArea < full * 0.9999) throw new Error('Layout check failed: a pocket or finger hole breaks through the tray floor. Please report this.');
-      trays.push({ mesh: toTriMesh(tray, `tray-${t + 1}`), depth, placements, volume: tray.volume() });
+      const liftArea = lifts.reduce((a, h) => a + Math.PI * h.r * h.r, 0); // the lift-out holes are meant to go through
+      if (floorArea < (full - liftArea) * 0.999) throw new Error('Layout check failed: a pocket or finger hole breaks through the tray floor. Please report this.');
+      trays.push({ mesh: toTriMesh(tray, `tray-${t + 1}`), depth, placements, volume: tray.volume(), lifts });
     }
-    return { trays, stacks: plan.stacks };
+    return {
+      trays, stacks: plan.stacks,
+      layout: {
+        trayDepths: plan.trayDepths, inset: plan.inset, stacks: plan.stacks, lifts: plan.lifts,
+        entries: plan.entries.map((e) => ({ tray: e.tray, partId: e.part.partId, poseIndex: e.pose.poseIndex, angle: e.angle, tx: e.tx, ty: e.ty, offset: e.offset, level: e.level, stackSize: e.stackSize, under: e.under })),
+      },
+    };
   } finally {
     for (const t of trash) t.delete();
   }

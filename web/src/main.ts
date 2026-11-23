@@ -3,7 +3,7 @@ import { Viewer, renderThumbnail } from './viewer';
 import { initSheet } from './ui/sheet';
 import { GeometryClient } from './worker/client';
 import type { Change, ParsedPart, FileKind, Suggestion, TrayInfo } from './worker/protocol';
-import { DEFAULT_TRAY, fingerCentre, SIDES, type Side, type TrayOptions } from './geom/tray';
+import { DEFAULT_LIFT, DEFAULT_TRAY, fingerCentre, SIDES, type LayoutData, type Side, type TrayOptions } from './geom/tray';
 import { DEFAULT_SHELL, shellExtraHeight, shellPitch, shellProblem, trayInsideShell, type Footprint, type ShellOptions } from './geom/shell';
 import { writeSTL } from './mesh/stl';
 import { cloudDelete, cloudList, cloudLoad, cloudName, cloudSave, deleteProject, listProjects, loadProject, saveProject, type Project } from './storage';
@@ -416,8 +416,8 @@ const toMM = (v: number) => (units === 'mm' ? v : v * MM_PER_IN);
 const fromMM = (v: number, digits = units === 'mm' ? 2 : 3) => String(+(units === 'mm' ? v : v / MM_PER_IN).toFixed(digits));
 
 /** Case inside size and fit settings (mm). The tray is the case size minus the gap on every side. */
-interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; edge: number; clearance: number; minFeature: number; split: number; fingerDia: number; fingerExtra: number; fingerSwept: boolean; stacking: boolean; stackGap: number; shell: boolean; shellWall: number; shellRim: number; shellPlug: number; shellGap: number }
-let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, edge: 2, clearance: DEFAULT_TRAY.pocket.clearance, minFeature: 0, split: DEFAULT_TRAY.pocket.split, fingerDia: DEFAULT_TRAY.fingerDiameter, fingerExtra: 0, fingerSwept: true, stacking: true, stackGap: 0, shell: true, shellWall: DEFAULT_SHELL.wall, shellRim: DEFAULT_SHELL.rim, shellPlug: DEFAULT_SHELL.plug, shellGap: DEFAULT_SHELL.gap };
+interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; edge: number; clearance: number; minFeature: number; split: number; fingerDia: number; fingerExtra: number; fingerSwept: boolean; stacking: boolean; stackGap: number; lift: boolean; liftDia: number; liftSides: 'long' | 'short'; shell: boolean; shellWall: number; shellRim: number; shellPlug: number; shellGap: number }
+let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, edge: 2, clearance: DEFAULT_TRAY.pocket.clearance, minFeature: 0, split: DEFAULT_TRAY.pocket.split, fingerDia: DEFAULT_TRAY.fingerDiameter, fingerExtra: 0, fingerSwept: true, stacking: true, stackGap: 0, lift: true, liftDia: DEFAULT_LIFT.diameter, liftSides: 'long', shell: true, shellWall: DEFAULT_SHELL.wall, shellRim: DEFAULT_SHELL.rim, shellPlug: DEFAULT_SHELL.plug, shellGap: DEFAULT_SHELL.gap };
 try { traySettings = { ...traySettings, ...JSON.parse(localStorage.getItem('tray') || '{}') }; } catch { /* ignore */ }
 let tray: TrayInfo | null = null;
 /** Shell settings and outside footprint (tray + shell) used for the tray on screen; null = no shell. */
@@ -434,11 +434,24 @@ function fillTrayInputs() {
   num('#tray-edge').value = fromMM(traySettings.edge);
   num('#tray-min-feature').value = fromMM(traySettings.minFeature);
   num('#tray-stack-gap').value = fromMM(traySettings.stackGap);
+  num('#tray-lift-dia').value = fromMM(traySettings.liftDia);
+  document.querySelectorAll<HTMLButtonElement>('[data-lift]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.lift === (traySettings.lift ? traySettings.liftSides : 'off'))));
+  $('#lift-rows').hidden = !traySettings.lift;
   num('#tray-split').value = String(Math.round(traySettings.split * 100));
   num('#tray-finger-dia').value = fromMM(traySettings.fingerDia);
   num('#tray-finger-extra').value = fromMM(traySettings.fingerExtra);
   document.querySelectorAll<HTMLButtonElement>('[data-swept]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.swept === '1') === traySettings.fingerSwept)));
-  document.querySelectorAll<HTMLButtonElement>('[data-stack]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.stack === '1') === traySettings.stacking)));
+  document.querySelectorAll<HTMLButtonElement>('[data-lift]').forEach((b) =>
+  b.addEventListener('click', () => {
+    traySettings.lift = b.dataset.lift !== 'off';
+    if (traySettings.lift) traySettings.liftSides = b.dataset.lift as 'long' | 'short';
+    document.querySelectorAll<HTMLButtonElement>('[data-lift]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+    $('#lift-rows').hidden = !traySettings.lift;
+    if (tray) generateTray();
+  }),
+);
+
+document.querySelectorAll<HTMLButtonElement>('[data-stack]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.stack === '1') === traySettings.stacking)));
   num('#shell-wall').value = fromMM(traySettings.shellWall);
   num('#shell-rim').value = fromMM(traySettings.shellRim);
   num('#shell-plug').value = fromMM(traySettings.shellPlug);
@@ -465,6 +478,8 @@ function readTrayInputs(): TraySettings | string {
   if (!(edge >= 0.8 && edge <= 20)) return 'Minimum tray thickness at the edge must be between 0.8 and 20 mm.';
   const minFeature = toMM(val('#tray-min-feature') || 0);
   if (!(minFeature >= 0 && minFeature <= 20)) return 'Ignore part details smaller than: enter 0 to 20 mm (0 follows every detail).';
+  const liftDia = toMM(val('#tray-lift-dia') || DEFAULT_LIFT.diameter);
+  if (traySettings.lift && !(liftDia >= 12 && liftDia <= 40)) return 'Lift-out hole diameter must be between 12 and 40 mm.';
   const stackGap = toMM(val('#tray-stack-gap') || 0);
   if (!(stackGap >= 0 && stackGap <= 30)) return 'Gap between stacked parts must be between 0 and 30 mm.';
   const fingerDia = toMM(val('#tray-finger-dia'));
@@ -482,7 +497,7 @@ function readTrayInputs(): TraySettings | string {
     if (problem) return problem;
     if (height !== null && height - shellExtraHeight(o) <= DEFAULT_TRAY.floor) return `The case height leaves no room for a tray inside the shell (the shell alone takes ${fmtLen(shellExtraHeight(o), units)} ${units}).`;
   }
-  return { length, width, height, gap, depth, edge, clearance, minFeature, split, fingerDia, fingerExtra, fingerSwept: traySettings.fingerSwept, stacking: traySettings.stacking, stackGap, shell, shellWall, shellRim, shellPlug, shellGap };
+  return { length, width, height, gap, depth, edge, clearance, minFeature, split, fingerDia, fingerExtra, fingerSwept: traySettings.fingerSwept, stacking: traySettings.stacking, stackGap, lift: traySettings.lift, liftDia, liftSides: traySettings.liftSides, shell, shellWall, shellRim, shellPlug, shellGap };
 }
 
 const shellOptions = (s: Pick<TraySettings, 'shellWall' | 'shellRim' | 'shellPlug' | 'shellGap'>): ShellOptions => ({ ...DEFAULT_SHELL, wall: s.shellWall, rim: s.shellRim, plug: s.shellPlug, gap: s.shellGap });
@@ -537,6 +552,7 @@ function renderExport() {
 }
 
 function clearTray() {
+  if (!restoring) savedLayout = null; // the arrangement no longer matches the parts
   if (!tray) return;
   tray = null;
   viewer.setTrays(null);
@@ -564,6 +580,10 @@ function stackNote(result: TrayInfo): string {
 }
 
 type Effort = 'normal' | 'thorough' | 'hard';
+/** The arrangement on screen in a saveable form: parts are referred to by their position in the parts list. */
+interface SavedLayout { options: TrayOptions; shell: ReturnType<typeof shellRequestOf>; outer: Footprint; height: number | null; layout: LayoutData }
+const shellRequestOf = (s: TraySettings, outer: Footprint) => (s.shell ? { outer, options: shellOptions(s) } : null);
+let savedLayout: SavedLayout | null = null;
 /** Search effort of the last layout, reused when a part edit regenerates it. */
 let lastEffort: Effort = 'normal';
 
@@ -582,11 +602,50 @@ function trayRequest(effort: Effort) {
     ...DEFAULT_TRAY, ...inside, depth: s.depth,
     edge: s.edge,
     searchEffort: effort,
+    lift: s.lift ? { ...DEFAULT_LIFT, diameter: s.liftDia, sides: s.liftSides } : null,
     maxDepth: s.height === null ? null : s.height - (shell ? shellExtraHeight(shell.options) : 0),
     fingerDiameter: s.fingerDia, fingerExtraDepth: s.fingerExtra, fingerSwept: s.fingerSwept, stacking: s.stacking, stackGap: s.stackGap,
     pocket: { ...DEFAULT_TRAY.pocket, clearance: s.clearance, split: s.split, minFeature: s.minFeature },
   };
   return { s, shell, outer, options };
+}
+
+/** Put a finished result on screen and describe it. */
+function showResult(result: TrayInfo, shell: SavedLayout['shell'], outer: Footprint, height: number | null, note: string) {
+  trayShell = shell;
+  parts = result.parts; // unlocked parts now lie the way the layout chose
+  picker = null;
+  tray = result;
+  renderList();
+  showTray();
+  const n = result.trays.length, count = result.trays.reduce((c, t) => c + t.placements.length, 0);
+  const volume = result.trays.reduce((v, t) => v + t.volume, 0);
+  const so = shell?.options;
+  // In a stack each shell's bottom step sits inside the rim below, so only the lowest step adds height.
+  const stack = so ? result.trays.reduce((v, t) => v + shellPitch(t.depth, so), so.plug) : result.trays.reduce((v, t) => v + t.depth, 0);
+  const shellVolume = result.shells?.reduce((v, x) => v + x.volume, 0) ?? 0;
+  const dims = (l: number, w: number) => fmtDims([l, w, 0], units).replace(/ × [\d.]+ (mm|in)$/, ' $1');
+  $('#tray-status').textContent =
+    `${n === 1 ? '1 tray' : `${n} trays`} of ${dims(outer.length, outer.width)}${so ? ` with the shell (tray inside ${dims(result.length, result.width)})` : ''}, ${count} pocket${count === 1 ? '' : 's'}. ` +
+    result.trays.map((t, i) => `Tray ${i + 1}: ${t.placements.length} part${t.placements.length === 1 ? '' : 's'}, ${fmtLen(t.depth, units)} ${units} deep${result.shells ? `, ${fmtLen(result.shells[i].height, units)} ${units} tall in its shell` : ''}.`).join(' ') +
+    stackNote(result) +
+    ` About ${(volume / 1000).toFixed(0)} cm³ of material before infill` + (so ? `, plus ${(shellVolume / 1000).toFixed(0)} cm³ for the shell.` : '.') +
+    (height !== null && stack > height + 1e-6 ? ` Note: stacked, the trays are ${fmtLen(stack, units)} ${units} tall — more than the case height of ${fmtLen(height, units)} ${units}.` : n > 1 ? ` Stacked height ${fmtLen(stack, units)} ${units}.` : '') +
+    note;
+  $('#tray-view-row').hidden = false;
+  renderExport();
+  return n;
+}
+
+/** Remember the arrangement with the project, so it comes back exactly as it is. */
+function rememberLayout(result: TrayInfo, options: TrayOptions, shell: SavedLayout['shell'], outer: Footprint, height: number | null) {
+  const index = new Map(parts.map((p, i) => [p.partId, i]));
+  const at = (id: number) => index.get(id) ?? -1;
+  savedLayout = {
+    options, shell, outer, height,
+    layout: { ...result.layout, entries: result.layout.entries.map((e) => ({ ...e, partId: at(e.partId), under: e.under.map(at) })) },
+  };
+  scheduleSave();
 }
 
 async function generateTray(effort: Effort = lastEffort) {
@@ -600,32 +659,13 @@ async function generateTray(effort: Effort = lastEffort) {
   try {
     showProgress(0.02, 'Generating tray');
     const result = await geo.tray(options, shell, showProgress);
-    trayShell = shell;
-    parts = result.parts; // Auto parts now lie the way the layout chose
-    picker = null;
-    tray = result;
-    renderList();
-    showTray();
-    const n = result.trays.length, count = result.trays.reduce((c, t) => c + t.placements.length, 0);
-    const volume = result.trays.reduce((v, t) => v + t.volume, 0);
-    const so = shell?.options;
-    // In a stack each shell's bottom step sits inside the rim below, so only the lowest step adds height.
-    const stack = so ? result.trays.reduce((v, t) => v + shellPitch(t.depth, so), so.plug) : result.trays.reduce((v, t) => v + t.depth, 0);
-    const shellVolume = result.shells?.reduce((v, x) => v + x.volume, 0) ?? 0;
-    const dims = (l: number, w: number) => fmtDims([l, w, 0], units).replace(/ × [\d.]+ (mm|in)$/, ' $1');
-    $('#tray-status').textContent =
-      `${n === 1 ? '1 tray' : `${n} trays`} of ${dims(outer.length, outer.width)}${so ? ` with the shell (tray inside ${dims(result.length, result.width)})` : ''}, ${count} pocket${count === 1 ? '' : 's'}. ` +
-      result.trays.map((t, i) => `Tray ${i + 1}: ${t.placements.length} part${t.placements.length === 1 ? '' : 's'}, ${fmtLen(t.depth, units)} ${units} deep${result.shells ? `, ${fmtLen(result.shells[i].height, units)} ${units} tall in its shell` : ''}.`).join(' ') +
-      stackNote(result) +
-      ` About ${(volume / 1000).toFixed(0)} cm³ of material before infill` + (so ? `, plus ${(shellVolume / 1000).toFixed(0)} cm³ for the shell.` : '.') +
-      (s.height !== null && stack > s.height + 1e-6 ? ` Note: stacked, the trays are ${fmtLen(stack, units)} ${units} tall — more than the case height of ${fmtLen(s.height, units)} ${units}.` : n > 1 ? ` Stacked height ${fmtLen(stack, units)} ${units}.` : '');
-    $('#tray-view-row').hidden = false;
+    const n = showResult(result, shell, outer, s.height, '');
+    rememberLayout(result, options, shell, outer, s.height);
     // More than one tray: a longer search may still find a one-tray layout.
     $('#tray-harder').hidden = n <= 1 || hard;
     $('#tray-suggest').hidden = n <= 1;
     if (n <= 1) $('#suggest').hidden = true;
     if (n > 1) $('#tray-status').textContent += hard ? ' The longer search did not find a one-tray layout either.' : ' This search did not find a one-tray layout; a longer search sometimes does.';
-    renderExport();
   } catch (e) {
     $('#tray-status').textContent = e instanceof Error ? e.message : String(e);
   } finally {
@@ -633,6 +673,26 @@ async function generateTray(effort: Effort = lastEffort) {
     btn.disabled = false;
   }
 }
+
+/** Show a project's saved arrangement again: cut it as it was, with no searching. */
+async function restoreLayout(saved: SavedLayout) {
+  if (!saved?.layout?.entries || saved.layout.entries.some((e) => !parts[e.partId])) return;
+  try {
+    showProgress(0.02, 'Restoring the saved layout');
+    const id = (i: number) => parts[i].partId;
+    const layout: LayoutData = { ...saved.layout, entries: saved.layout.entries.map((e) => ({ ...e, partId: id(e.partId), under: e.under.map(id) })) };
+    const result = await geo.tray(saved.options, saved.shell, showProgress, layout);
+    const n = showResult(result, saved.shell, saved.outer, saved.height, ' (Saved layout.)');
+    savedLayout = saved;
+    $('#tray-harder').hidden = true;
+    $('#tray-suggest').hidden = n <= 1;
+  } catch (e) {
+    $('#tray-status').textContent = `The saved layout could not be restored (${e instanceof Error ? e.message : e}). Generate the tray again.`;
+  } finally {
+    hideProgress();
+  }
+}
+
 $('#tray-build').addEventListener('click', () => generateTray('normal'));
 $('#tray-harder').addEventListener('click', () => generateTray('hard'));
 
@@ -803,7 +863,7 @@ async function uploadProject() {
 async function saveNow(uploadNow = false) {
   try {
     const saved = await geo.exportParts();
-    const project: Project = { name: projectName, savedAt: new Date().toISOString(), settings: { ...traySettings }, parts: saved };
+    const project: Project = { name: projectName, savedAt: new Date().toISOString(), settings: { ...traySettings }, parts: saved, layout: savedLayout ?? undefined };
     await saveProject(project);
     lastProject = project;
     try { localStorage.setItem('project', projectName); } catch { /* private mode */ }
@@ -841,6 +901,7 @@ async function openProject(name: string) {
     clearTray();
     viewer.setParts(parts);
     renderList();
+    if (p.layout) await restoreLayout(p.layout as SavedLayout);
     $('#project-status').textContent = `“${projectName}” — opened (${parts.length} part${parts.length === 1 ? '' : 's'}).`;
     $('#save-state').textContent = `${projectName} · saved`;
   } catch (e) {

@@ -10,6 +10,11 @@ export interface Project {
   /** Case/tray settings as shown on the Trays tab (mm). */
   settings: Record<string, unknown>;
   parts: SavedPart[];
+  /**
+   * The generated tray arrangement, if any, so it can be shown again without
+   * searching. Parts are referred to by their position in `parts`.
+   */
+  layout?: unknown;
 }
 
 const DB = 'pelican-cutouts', STORE = 'projects';
@@ -51,7 +56,7 @@ export async function listProjects(): Promise<{ name: string; savedAt: string; p
 export function encodeProject(p: Project): ArrayBuffer {
   let offset = 0;
   const header = {
-    format: 1, name: p.name, savedAt: p.savedAt, settings: p.settings,
+    format: 1, name: p.name, savedAt: p.savedAt, settings: p.settings, layout: p.layout,
     parts: p.parts.map((part) => {
       const entry = { ...part, positions: undefined, offset, floats: part.positions.length };
       offset += part.positions.byteLength;
@@ -79,7 +84,7 @@ export function decodeProject(buf: ArrayBuffer): Project {
   const header = JSON.parse(new TextDecoder().decode(bytes.subarray(8, 8 + headLen)));
   const base = 8 + headLen + ((4 - ((8 + headLen) % 4)) % 4);
   return {
-    name: header.name, savedAt: header.savedAt, settings: header.settings,
+    name: header.name, savedAt: header.savedAt, settings: header.settings, layout: header.layout,
     parts: header.parts.map((e: SavedPart & { offset: number; floats: number }) => {
       const { offset, floats, ...rest } = e;
       return { ...rest, positions: new Float32Array(buf.slice(base + offset, base + offset + floats * 4)) };

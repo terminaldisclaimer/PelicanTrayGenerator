@@ -117,6 +117,9 @@ try {
   await page.waitForTimeout(1200);
   await page.reload();
   await page.waitForSelector('.part .name');
+  // The generated layout was saved with the project and comes back without searching again.
+  await page.waitForFunction(() => document.querySelector('#tray-status')?.textContent.includes('Saved layout'), null, { timeout: 30000 });
+  const layoutBack = await page.textContent('#tray-status');
   const restored = { gap: await page.inputValue('.gap-row input'), name: await page.textContent('.part .name'), fingers: await page.textContent('.pose-row button:nth-child(2)'), length: await page.inputValue('#tray-length') };
 
   // Tap targets ≥ 44px for visible buttons
@@ -128,7 +131,7 @@ try {
   await page.screenshot({ path: 'test-results/mobile-half.png' });
   const sw = await page.evaluate(async () => !!(await navigator.serviceWorker?.getRegistration()));
   console.log({ width, overflow, meta, tipped, options, restored, fingersAuto, fingersText, trayStatus, stl: download.suggestedFilename(), stlOk, small, serviceWorker: sw, errors });
-  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · pose may be turned') || !tipped?.includes('60.0 × 25.0 × 40.0 mm · pose locked') || !lockedBox || unlockedBox || !picked || gapEmpty !== '' || gapSet !== '2.5' || !saveVisible || !/saved \d/.test(saveState) || restored.name !== 'box' || restored.gap !== '2.5' || !restored.fingers.includes('Finger cutouts: 2') || restored.fingers.includes('auto') || restored.length !== '120' || fingersAuto !== 2 || kept !== 1 || !noneHint.startsWith('No finger cutouts') || noneDrawn !== 0 || holesDrawn !== 2 || !mainVisible || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
+  if (width !== 390 || overflow || !meta?.includes('60.0 × 40.0 × 25.0 mm · pose may be turned') || !tipped?.includes('60.0 × 25.0 × 40.0 mm · pose locked') || !lockedBox || unlockedBox || !picked || gapEmpty !== '' || gapSet !== '2.5' || !saveVisible || !/saved \d/.test(saveState) || restored.name !== 'box' || !layoutBack.startsWith('1 tray') || restored.gap !== '2.5' || !restored.fingers.includes('Finger cutouts: 2') || restored.fingers.includes('auto') || restored.length !== '120' || fingersAuto !== 2 || kept !== 1 || !noneHint.startsWith('No finger cutouts') || noneDrawn !== 0 || holesDrawn !== 2 || !mainVisible || !fingersText.includes('Finger cutouts: 2') || fingersText.includes('auto') || !stlOk || !trayStatus.includes('118.0 × 88.0 mm') || !trayStatus.includes('27.2 mm deep') || small.length || errors.length) failed = true;
 } finally {
   await browser.close();
   server.kill();

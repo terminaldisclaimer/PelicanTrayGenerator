@@ -19,7 +19,8 @@
  *  - a surface part keeps at least (1 − maxCover) of its floor, not counting
  *    sunk parts hidden entirely beneath it (it rests on those).
  */
-import { rasterizeOption, type PackOption, type Shape } from './pack';
+import { rasterize, rasterizeOption, type PackOption, type Shape } from './pack';
+import type { Pt } from './hull2d';
 
 export interface AnnealItem {
   id: number;
@@ -28,6 +29,12 @@ export interface AnnealItem {
   stackable: boolean;
   /** Vertical room (mm) to leave between this part and one stacked with it. Default 0. */
   gap?: number;
+  /**
+   * A fixture that only slides along one edge of the tray (e.g. a lift-out
+   * hole): it moves along `axis`, never turns, and its other coordinate (the
+   * lower-left corner of its footprint, mm) stays at `at`.
+   */
+  rail?: { axis: 'x' | 'y'; at: number };
   /** Where a previous layout put it (optional warm start). */
   start?: { key: number; angle: number; tx: number; ty: number };
 }
@@ -35,6 +42,8 @@ export interface AnnealSettings {
   width: number; height: number; cell?: number;
   /** Cells of tray material a finger hole must leave to the edge of the region. */
   softMargin?: number;
+  /** Areas nothing may be placed on (region coordinates, already grown by the clearance they need). */
+  blocked?: Pt[][][];
   /** Deepest pocket allowed, including anything stacked. */
   maxDepth: number;
   allowSink: boolean;
@@ -150,10 +159,17 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
   const fv = new Float64Array(n * n); // finger holes of either cutting into the other's footprint
   const out = new Float64Array(n); // finger-hole cells too close to, or past, the tray edge
   const margin = settings.softMargin ?? 0;
+  // Fixed obstacles (e.g. the tray's lift-out holes): shapes at set positions that every part must avoid.
+  const blocks = (settings.blocked ?? []).map((loops) => { const b = withRows(rasterize(loops, cell)); return { b, x: Math.round(b.minX / cell), y: Math.round(b.minY / cell) }; });
   const covered = new Float64Array(n);
   const outside = new Float64Array(n);
 
   const place = (i: number, o: number, a: number, x: number, y: number): boolean => {
+    const rail = items[i].rail;
+    if (rail) {
+      if (a !== 0) return false;
+      if (rail.axis === 'x') y = Math.round(rail.at / cell); else x = Math.round(rail.at / cell);
+    }
     const s = shape(i, o, a);
     if (!s) return false;
     opt[i] = o; ang[i] = a; sh[i] = s;
@@ -170,6 +186,7 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
         if (x0 < margin) o += Math.min(x1, margin - 1) - x0 + 1;
         if (x1 >= W - margin) o += x1 - Math.max(x0, W - margin) + 1;
       }
+    for (const { b, x, y } of blocks) o += overlap(sh[i], px[i], py[i], b, x, y) + intrusion(sh[i], px[i], py[i], b, x, y);
     out[i] = o;
     for (let j = 0; j < n; j++) {
       if (j === i) continue;

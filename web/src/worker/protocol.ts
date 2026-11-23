@@ -1,6 +1,6 @@
 import type { TriMesh } from '../mesh/types';
 import type { Silhouette } from '../geom/analyze';
-import type { Side, Tray, TrayOptions } from '../geom/tray';
+import type { LayoutData, Side, Tray, TrayOptions } from '../geom/tray';
 import type { Footprint, Shell, ShellOptions } from '../geom/shell';
 
 export type FileKind = 'stl' | '3mf';
@@ -30,7 +30,7 @@ export type WorkerRequest =
   /** Try relaxing one rule at a time and report which changes let everything fit one tray. */
   | { id: number; type: 'suggest'; options: TrayOptions }
   /** Arrange every loaded part into trays and cut the pockets. */
-  | { id: number; type: 'tray'; options: TrayOptions; shell?: ShellRequest | null };
+  | { id: number; type: 'tray'; options: TrayOptions; shell?: ShellRequest | null; /** Cut this saved arrangement instead of searching for one. */ layout?: LayoutData };
 
 /** A rigid shell to build around every tray: `outer` is the footprint of tray + shell. */
 export interface ShellRequest { outer: Footprint; options: ShellOptions }
@@ -65,6 +65,8 @@ export interface ParsedPart {
 /** Generated trays, plus every part as it now lies (Auto parts may have been re-posed). */
 export interface TrayInfo {
   trays: Tray[]; stacks: number; length: number; width: number; parts: ParsedPart[];
+  /** The arrangement, for saving with the project. */
+  layout: LayoutData;
   /** One shell per tray (same order), or null when no shell was asked for. */
   shells: Shell[] | null;
 }

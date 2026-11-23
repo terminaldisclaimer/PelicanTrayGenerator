@@ -93,6 +93,17 @@
             <label class="row"><span>Shell bottom step, drops into the rim below (<span class="u">mm</span>)</span><input class="num" id="shell-plug" inputmode="decimal" autocomplete="off" /></label>
             <label class="row"><span>Gap between tray and shell, per side (<span class="u">mm</span>)</span><input class="num" id="shell-gap" inputmode="decimal" autocomplete="off" /></label>
           </div>
+          <div class="row">
+            <span>Finger holes to lift the tray out</span>
+            <div class="seg" role="radiogroup" aria-label="Finger holes to lift the tray out">
+              <button role="radio" data-lift="long" aria-checked="true">Long sides</button>
+              <button role="radio" data-lift="short" aria-checked="false">Ends</button>
+              <button role="radio" data-lift="off" aria-checked="false">Off</button>
+            </div>
+          </div>
+          <div id="lift-rows">
+            <label class="row"><span>Lift-out hole diameter (<span class="u">mm</span>)</span><input class="num" id="tray-lift-dia" inputmode="decimal" autocomplete="off" /></label>
+          </div>
           <label class="row"><span>Gap between stacked parts (<span class="u">mm</span>)</span><input class="num" id="tray-stack-gap" inputmode="decimal" autocomplete="off" /></label>
           <button id="tray-build" class="btn primary wide">Generate tray</button>
           <button id="tray-harder" class="btn wide" hidden>Search harder for one tray (can take a few minutes)</button>

@@ -7,7 +7,7 @@ import type { TriMesh } from '../mesh/types';
 import { initKernel } from '../geom/kernel';
 import { poseCandidates, posePart, type PoseCandidate } from '../geom/analyze';
 import { FLIP, mul, ROT_X90, ROT_Y90, ROT_Z90, type Mat3 } from '../geom/vec';
-import { autoFingers, buildTrays, distinctPoses, planTrays, TrayError, type Side, type TrayOptions, type TrayPart } from '../geom/tray';
+import { autoFingers, buildFromLayout, buildTrays, distinctPoses, planTrays, TrayError, type Side, type TrayOptions, type TrayPart } from '../geom/tray';
 import { buildShell, shellProblem } from '../geom/shell';
 import type { ParsedPart, PoseAction, Suggestion, WorkerRequest, WorkerResponse } from './protocol';
 
@@ -282,7 +282,8 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       if (shellError) throw new TrayError(shellError);
       post({ id: req.id, type: 'progress', fraction: 0.01, label: 'Preparing parts' });
       const list = await trayParts();
-      const result = buildTrays(k, list, req.options, (fraction, label) => post({ id: req.id, type: 'progress', fraction, label }));
+      const progress = (fraction: number, label: string) => post({ id: req.id, type: 'progress', fraction, label });
+      const result = req.layout ? buildFromLayout(k, list, req.options, req.layout, progress) : buildTrays(k, list, req.options, progress);
       // Auto parts take the pose the packer chose (still unlocked).
       for (const t of result.trays)
         for (const pl of t.placements) {
@@ -292,9 +293,9 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const now: ParsedPart[] = [];
       for (const id of parts.keys()) now.push(await describe(id));
       const sh = req.shell;
-      const shells = sh ? result.trays.map((t, i) => buildShell(k, sh.outer, t.depth, sh.options, `shell-${i + 1}`)) : null;
+      const shells = sh ? result.trays.map((t, i) => buildShell(k, sh.outer, t.depth, sh.options, `shell-${i + 1}`, t.lifts)) : null;
       post(
-        { id: req.id, type: 'tray', tray: { trays: result.trays, stacks: result.stacks, length: req.options.length, width: req.options.width, parts: now, shells } },
+        { id: req.id, type: 'tray', tray: { trays: result.trays, stacks: result.stacks, layout: result.layout, length: req.options.length, width: req.options.width, parts: now, shells } },
         [...result.trays.map((t) => t.mesh.positions.buffer as ArrayBuffer), ...now.map((p) => p.mesh.positions.buffer as ArrayBuffer), ...(shells ?? []).map((s) => s.mesh.positions.buffer as ArrayBuffer)],
       );
     } else if (req.type === 'suggest') {

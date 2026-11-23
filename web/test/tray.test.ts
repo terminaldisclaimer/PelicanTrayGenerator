@@ -4,7 +4,8 @@ import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { initKernel } from '../src/geom/kernel';
 import { poseCandidates, posePart, toManifold } from '../src/geom/analyze';
 import { buildCavity, DEFAULT_POCKET } from '../src/geom/pocket';
-import { autoFingers, buildTrays, DEFAULT_TRAY, distinctPoses, fingerCentre, TrayError, type TrayPart } from '../src/geom/tray';
+import { autoFingers, buildFromLayout, buildTrays, DEFAULT_LIFT, DEFAULT_TRAY, distinctPoses, fingerCentre, liftHoles, TrayError, type TrayPart } from '../src/geom/tray';
+import { buildShell, DEFAULT_SHELL } from '../src/geom/shell';
 import { IDENTITY } from '../src/geom/vec';
 import { parseSTL, writeSTL } from '../src/mesh/stl';
 import { parse3MF } from '../src/mesh/threemf';
@@ -495,6 +496,67 @@ describe('tray', () => {
     const left = probe.intersect(mid);
     expect(left.area()).toBeLessThan(0.5);
     mid.delete(); probe.delete(); left.delete(); tray.delete();
+  });
+
+  it('lift-out holes: a swoop into a hole right through the tray and the shell, kept clear by the layout', () => {
+    const o = { ...FAST, length: 160, width: 100, lift: DEFAULT_LIFT };
+    const holes = liftHoles(o);
+    // One against each long side, in the middle by default, 4 mm of tray left outside each.
+    expect(holes.map((h) => [h.x, h.y])).toEqual([[0, -36], [0, 36]]);
+    const parts = [trayPart(boxMesh(60, 30, 20, 'a'), 1), trayPart(boxMesh(50, 30, 12, 'b'), 2)];
+    const t = buildTrays(k, parts, o).trays[0];
+    const tray = toManifold(k, t.mesh)!;
+    expect(tray).not.toBeNull();
+    const area = (z: number, cs: ReturnType<typeof k.CrossSection.circle>) => { const cut = tray.slice(z), kept = cs.intersect(cut); const a = kept.area(); cut.delete(); kept.delete(); return a; };
+    for (const h of t.lifts) {
+      // Open all the way down: no tray material inside the Ø20 hole at the floor, mid-height or the top.
+      const bore = k.CrossSection.circle(h.r - 0.2, 48).translate(h.x, h.y);
+      for (const z of [0.5, t.depth / 2, t.depth - 0.5]) expect(area(z, bore)).toBeLessThan(0.5);
+      // The swoop: 20 mm along the edge from the hole it is open just under the surface, but solid 11 mm down.
+      const out = k.CrossSection.circle(2, 16).translate(h.x + 20, h.y);
+      expect(area(t.depth - 1, out)).toBeLessThan(0.5);
+      expect(area(t.depth - 11, out)).toBeGreaterThan(11);
+      // 4 mm of tray remains between the hole and the outside edge.
+      const skin = k.CrossSection.square([16, 3.6], true).translate(h.x, Math.sign(h.y) * (50 - 1.9));
+      expect(area(t.depth / 2, skin) / (16 * 3.6)).toBeGreaterThan(0.99);
+      bore.delete(); out.delete(); skin.delete();
+    }
+    tray.delete();
+    // The shell has the same holes through its floor and bottom step.
+    const outer = { length: 166, width: 106, cornerRadius: 4 };
+    const plain = buildShell(k, outer, t.depth, DEFAULT_SHELL), holed = buildShell(k, outer, t.depth, DEFAULT_SHELL, 'shell', t.lifts);
+    const below = DEFAULT_SHELL.floor + DEFAULT_SHELL.plug;
+    expect((plain.volume - holed.volume) / (2 * Math.PI * 100 * below)).toBeCloseTo(1, 1);
+  });
+
+  it('lift-out holes slide along their sides, independently, to make room', () => {
+    // A 60×50 part fills the tray's width, so it cannot sit beside a hole in the middle of either long side.
+    // In a 130 mm tray there is only room if both holes move off-centre.
+    const o = { ...FAST, length: 130, width: 80, lift: DEFAULT_LIFT };
+    const r = buildTrays(k, [trayPart(boxMesh(60, 50, 10, 'wide'), 1)], o);
+    expect(r.trays).toHaveLength(1);
+    const t = r.trays[0];
+    expect(t.lifts).toHaveLength(2);
+    expect(t.lifts.map((h) => Math.sign(h.y)).sort()).toEqual([-1, 1]); // still one on each long side
+    expect(t.lifts.every((h) => Math.abs(h.y) === 26)).toBe(true); // against their own side
+    expect(t.lifts.every((h) => Math.abs(h.x) > 5)).toBe(true); // moved along it
+    // Without lift holes the same part fits trivially; with them fixed in the middle it could not.
+    expect(buildTrays(k, [trayPart(boxMesh(60, 50, 10, 'wide'), 1)], { ...o, lift: null }).trays[0].lifts).toEqual([]);
+  });
+
+  it('a saved layout is cut again exactly, with no search', () => {
+    const parts = [trayPart(boxMesh(60, 40, 25, 'a'), 1, 'auto'), trayPart(boxMesh(30, 30, 10, 'b'), 2, ['top'])];
+    const o = { ...FAST, length: 150, width: 110, lift: DEFAULT_LIFT };
+    const first = buildTrays(k, parts, o);
+    const saved = JSON.parse(JSON.stringify(first.layout)); // as it comes back from a saved project
+    const again = buildFromLayout(k, parts, o, saved);
+    expect(again.trays).toHaveLength(first.trays.length);
+    expect(again.trays[0].placements).toEqual(first.trays[0].placements);
+    expect(again.trays[0].lifts).toEqual(first.trays[0].lifts);
+    expect(again.trays[0].volume).toBeCloseTo(first.trays[0].volume, 3);
+    expect(again.trays[0].mesh.positions.length).toBe(first.trays[0].mesh.positions.length);
+    // If the parts no longer match, it says so instead of cutting something wrong.
+    expect(() => buildFromLayout(k, [parts[0]], o, saved)).toThrow(/no longer matches/);
   });
 
   it('exports as a valid binary STL', () => {

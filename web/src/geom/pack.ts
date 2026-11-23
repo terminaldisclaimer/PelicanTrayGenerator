@@ -40,6 +40,8 @@ export interface PackSettings {
   angleStep?: number;
   /** Cells of tray material a finger hole must leave to the edge of the region. */
   softMargin?: number;
+  /** Areas nothing may be placed on (region coordinates, already grown by the clearance they need). */
+  blocked?: Pt[][][];
   /** True when the tray depth is fixed by the user: a deeper pose then costs nothing. */
   fixedDepth?: boolean;
   /** Height every tray adds on top of its deepest pocket (the floor), mm. */
@@ -135,11 +137,26 @@ class Bin {
   private occSoft: Uint8Array;
   private prefixSoft: Int32Array;
   private anySoft = false;
-  constructor(readonly W: number, readonly H: number, readonly softMargin = 0) {
+  private hasBlocked = false;
+  constructor(readonly W: number, readonly H: number, readonly softMargin = 0, blocked: Int32Array[] = []) {
     this.occ = new Uint8Array(W * H);
     this.prefix = new Int32Array((W + 1) * H);
     this.occSoft = new Uint8Array(W * H);
     this.prefixSoft = new Int32Array((W + 1) * H);
+    // Blocked areas count as already occupied.
+    for (const runs of blocked)
+      for (let i = 0; i < runs.length; i += 3) {
+        const row = runs[i];
+        if (row < 0 || row >= H) continue;
+        const x0 = Math.max(0, runs[i + 1]), x1 = Math.min(W - 1, runs[i + 2]);
+        if (x1 >= x0) this.occ.fill(1, row * W + x0, row * W + x1 + 1);
+      }
+    this.hasBlocked = blocked.length > 0;
+    if (blocked.length)
+      for (let row = 0; row < H; row++) {
+        let acc = 0;
+        for (let x = 0; x < W; x++) { acc += this.occ[row * W + x]; this.prefix[row * (W + 1) + x + 1] = acc; }
+      }
   }
   private free(s: Shape, px: number, py: number): boolean {
     const r = s.runs, P = this.prefix, stride = this.W + 1;
@@ -170,7 +187,7 @@ class Bin {
     if (s.w > this.W || s.h > this.H) return null;
     // Rows above everything placed so far are empty, so the search can stop there.
     // A part with finger holes may need to sit a little in from the edge, so look further.
-    const maxY = Math.min(this.H - s.h, this.top + (s.soft ? 40 : 0));
+    const maxY = this.hasBlocked ? this.H - s.h : Math.min(this.H - s.h, this.top + (s.soft ? 40 : 0));
     for (let py = 0; py <= maxY; py++) for (let px = 0; px <= this.W - s.w; px++) if (this.free(s, px, py)) return [px, py];
     return null;
   }
@@ -236,14 +253,14 @@ interface Solution { bins: Bin[]; placements: PackPlacement[]; unplaced: number[
 type Policy = 0 | 1 | 2 | 3;
 const PASSES: number[][][] = [[[0, 1, 2, 3]], [[0, 2], [1, 3]], [[1, 3], [0, 2]], [[0, 1, 2, 3]]];
 
-function attempt(order: Prepared[], W: number, H: number, cell: number, depthWeight: number, overhead: number, policy: Policy = 0, choose?: (item: Prepared) => Opt[], softMargin = 0): Solution {
+function attempt(order: Prepared[], W: number, H: number, cell: number, depthWeight: number, overhead: number, policy: Policy = 0, choose?: (item: Prepared) => Opt[], softMargin = 0, blocked: Int32Array[] = []): Solution {
   const bins: Bin[] = [];
   const placements: PackPlacement[] = [];
   const unplaced: number[] = [];
   for (const item of order) {
     let done = false;
     for (let b = 0; b <= bins.length && !done; b++) {
-      const bin = b < bins.length ? bins[b] : new Bin(W, H, softMargin);
+      const bin = b < bins.length ? bins[b] : new Bin(W, H, softMargin, blocked);
       let best = null as { cost: number; opt: Opt; a: number; px: number; py: number } | null;
       // Quarter turns first (in the order the policy prefers); other angles only
       // if the part will not go in square, so skewing is used to save a tray.
@@ -309,6 +326,7 @@ export function pack(items: PackItem[], settings: PackSettings): PackResult {
     [...prepared].sort((a, b) => b.maxDim - a.maxDim || b.area - a.area),
     [...prepared].sort((a, b) => b.minDepth - a.minDepth || b.area - a.area),
   ];
+  const blockedRuns = (settings.blocked ?? []).map((loops) => rasterizeRel(loops, cell, 0, 0));
   const attempts = settings.attempts ?? 96;
   const start = Date.now();
   const weights = settings.fixedDepth ? [0, 0, 0] : [1e6, 4, 0.25];
@@ -362,7 +380,7 @@ export function pack(items: PackItem[], settings: PackSettings): PackResult {
         if (done >= attempts) break search;
         // The time limit is only a safety net for slow devices; it never cuts the first pass short.
         if (round > 0 && settings.timeBudgetMs && Date.now() - start > settings.timeBudgetMs) break search;
-        consider(attempt(order, W, H, cell, weights[(done + policy) % 3], overhead, policy as Policy, plans[p], settings.softMargin ?? 0));
+        consider(attempt(order, W, H, cell, weights[(done + policy) % 3], overhead, policy as Policy, plans[p], settings.softMargin ?? 0, blockedRuns));
         done++;
         if (best!.score[0] === 0 && best!.score[1] === 1 && (settings.fixedDepth || done >= 3)) break search; // everything in one tray
       }

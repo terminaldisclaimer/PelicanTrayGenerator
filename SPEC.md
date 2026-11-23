@@ -227,12 +227,30 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 - **Not yet built:** manual drag/rotate/lock in a 2D tray view; moving a
   part to another tray by hand; cancelling a long search.
 
+### 3.7a Lifting the tray out
+- "Finger holes to lift the tray out" (Trays tab; long sides, ends, or off;
+  on by default): two holes, one against each of the chosen pair of sides.
+- Each is a round hole (diameter setting, default 20 mm) right through the
+  tray and through the floor and bottom step of the shell, with a swoop at
+  the surface leading into it: 50 mm long along the tray edge, 14 mm deep at
+  the hole. The minimum tray thickness is kept between the hole and the
+  outside edge.
+- The two holes do not have to face each other. In the quick packing they
+  sit in the middle of their sides; in the whole-layout search each slides
+  along its own side to wherever it is least in the way. Pockets and finger
+  holes keep clear of them, and nothing is stacked under them.
+
 ### 3.8 Saving
 - The current project (parts with their meshes, poses, finger cutouts, and
   the case settings) is saved automatically in the browser's IndexedDB on
   the device and reopened on the next visit.
 - Settings tab: Save as…, New project, and a list of saved projects to open
-  or delete. Generated trays are not stored; they are regenerated.
+  or delete.
+- **The layout is saved too.** The generated arrangement (which tray each
+  part is in, its pose, angle, position and level, and where the lift-out
+  holes ended up) is stored with the project. Opening the project cuts that
+  same arrangement again with no search. Changing a part or its settings
+  discards the saved layout, since it no longer matches.
 - Parts added from the device are also copied to the Library (the owner's
   Cloudflare account, behind Access), so they can be reused on other devices.
 
