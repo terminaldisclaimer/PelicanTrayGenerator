@@ -62,4 +62,35 @@ describe('parts API', () => {
     await handleApi(req('DELETE', '/api/projects/My%20tray'), env);
     expect(await (await handleApi(req('GET', '/api/projects'), env)).json()).toEqual([]);
   });
+
+  it('library folders: create, file parts, move them, and keep the folder on re-upload', async () => {
+    const env = { PARTS: fakeKV() };
+    const names = async () => (await (await handleApi(req('GET', '/api/folders'), env)).json()) as string[];
+    const folderOf = async (n: string) => ((await (await handleApi(req('GET', '/api/parts'), env)).json()) as { name: string; folder?: string }[]).find((p) => p.name === n)?.folder;
+    expect(await names()).toEqual([]);
+    expect((await handleApi(req('PUT', '/api/folders/AVS'), env)).status).toBe(200);
+    expect((await handleApi(req('PUT', '/api/folders/bad%2Fname'), env)).status).toBe(400);
+    await handleApi(req('PUT', '/api/parts/a.3mf', { body: new Uint8Array([1]), headers: { 'X-Part-Version': '3' } }), env);
+    expect(await folderOf('a.3mf')).toBeUndefined();
+    // Move into a folder, even one not created first; the file and its details are kept.
+    expect((await handleApi(req('POST', '/api/parts/a.3mf', { body: JSON.stringify({ folder: 'Camera kit' }) }), env)).status).toBe(200);
+    expect(await folderOf('a.3mf')).toBe('Camera kit');
+    expect(await names()).toEqual(['AVS', 'Camera kit']);
+    expect(await (await handleApi(req('GET', '/api/parts'), env)).json()).toMatchObject([{ name: 'a.3mf', size: 1, version: '3', folder: 'Camera kit' }]);
+    expect(new Uint8Array(await (await handleApi(req('GET', '/api/parts/a.3mf'), env)).arrayBuffer())).toEqual(new Uint8Array([1]));
+    // Re-uploading (e.g. from Fusion) without naming a folder leaves it where it is; naming one files it there.
+    await handleApi(req('PUT', '/api/parts/a.3mf', { body: new Uint8Array([1, 2]) }), env);
+    expect(await folderOf('a.3mf')).toBe('Camera kit');
+    await handleApi(req('PUT', '/api/parts/b.stl', { body: new Uint8Array([5]), headers: { 'X-Part-Folder': 'AVS' } }), env);
+    expect(await folderOf('b.stl')).toBe('AVS');
+    // A folder with parts in it cannot be removed; an empty one can.
+    expect((await handleApi(req('DELETE', '/api/folders/AVS'), env)).status).toBe(409);
+    await handleApi(req('POST', '/api/parts/b.stl', { body: JSON.stringify({ folder: '' }) }), env);
+    expect(await folderOf('b.stl')).toBeUndefined();
+    expect((await handleApi(req('DELETE', '/api/folders/AVS'), env)).status).toBe(200);
+    expect(await names()).toEqual(['Camera kit']);
+    expect((await handleApi(req('POST', '/api/parts/missing.stl', { body: JSON.stringify({ folder: 'AVS' }) }), env)).status).toBe(404);
+    // The folder list is not a part or a project.
+    expect(await (await handleApi(req('GET', '/api/projects'), env)).json()).toEqual([]);
+  });
 });

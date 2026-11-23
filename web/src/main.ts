@@ -65,9 +65,9 @@ function kindOf(name: string): FileKind | null {
 }
 
 /** Parts uploaded moments ago, shown until the server's listing catches up. */
-const justUploaded = new Map<string, { name: string; size: number; uploaded: string; until: number }>();
+const justUploaded = new Map<string, { name: string; size: number; uploaded: string; until: number; folder?: string }>();
 
-/** The library's parts as last fetched; the list shows those not already in the project. */
+/** The library's parts as last fetched. */
 let libraryItems: LibraryItem[] | null = null;
 
 /** Library names allow letters, digits, spaces and _.()+,- only. */
@@ -91,10 +91,13 @@ function inProject(item: string): boolean {
 async function uploadToLibrary(file: File, buf: ArrayBuffer) {
   if (buf.byteLength > 25 * 1024 * 1024) { toast(`${file.name} is over 25 MB, so it was not added to the library.`); return; }
   try {
-    const res = await fetch(`/api/parts/${encodeURIComponent(libraryName(file.name))}`, { method: 'PUT', body: buf, headers: { 'content-type': 'application/octet-stream' } });
+    // A new part goes into the folder that is open; one already in the library stays in its own folder.
+    const name = libraryName(file.name), known = libraryItems?.find((x) => x.name === name);
+    const folder = known ? known.folder : libraryFolder || undefined;
+    const res = await fetch(`/api/parts/${encodeURIComponent(name)}`, { method: 'PUT', body: buf, headers: { 'content-type': 'application/octet-stream', ...(!known && folder ? { 'X-Part-Folder': encodeURIComponent(folder) } : {}) } });
     if (res.ok) {
       // The library's listing can lag a minute behind an upload, so show the new part straight away.
-      justUploaded.set(libraryName(file.name), { name: libraryName(file.name), size: buf.byteLength, uploaded: new Date().toISOString(), until: Date.now() + 120_000 });
+      justUploaded.set(name, { name, size: buf.byteLength, uploaded: new Date().toISOString(), until: Date.now() + 120_000, folder });
       loadLibrary();
     }
     else if (res.headers.get('content-type')?.includes('json')) toast(`${file.name} was not added to the library: ${(await res.json()).error ?? res.status}`);
@@ -1031,31 +1034,92 @@ $('#project-new').addEventListener('click', async () => {
 });
 
 // ---------- library (parts uploaded to this site, e.g. by the Fusion script) ----------
-interface LibraryItem { name: string; size?: number; uploaded?: string; version?: string }
+interface LibraryItem { name: string; size?: number; uploaded?: string; version?: string; folder?: string }
+/** Folders that exist (created, or holding a part), and the one that is open ('' = parts in no folder). */
+let libraryFolders: string[] = [];
+let libraryFolder = '';
+try { libraryFolder = localStorage.getItem('libraryFolder') ?? ''; } catch { /* private mode */ }
+/** Moves made moments ago: the server's listing can lag, so they are shown straight away. */
+const justMoved = new Map<string, { folder: string; until: number }>();
+const FOLDER_NAME = /^[\w .()+,\-]{1,40}$/;
 
 async function loadLibrary() {
-  let items: LibraryItem[];
+  let items: LibraryItem[], folders: string[] = [];
   try {
-    const res = await fetch('/api/parts', { headers: { accept: 'application/json' } });
+    const [res, fres] = await Promise.all([fetch('/api/parts', { headers: { accept: 'application/json' } }), fetch('/api/folders', { headers: { accept: 'application/json' } })]);
     if (!res.ok || !res.headers.get('content-type')?.includes('json')) return; // no API (dev) or signed out
     items = await res.json();
+    if (fres.ok && fres.headers.get('content-type')?.includes('json')) folders = await fres.json();
   } catch { return; } // offline
   for (const [name, it] of justUploaded) {
     if (items.some((x) => x.name === name) || Date.now() > it.until) justUploaded.delete(name);
-    else items.push({ name, size: it.size, uploaded: it.uploaded });
+    else items.push({ name, size: it.size, uploaded: it.uploaded, folder: it.folder });
+  }
+  for (const [name, mv] of justMoved) {
+    const it = items.find((x) => x.name === name);
+    if (!it || (it.folder ?? '') === mv.folder || Date.now() > mv.until) justMoved.delete(name);
+    else it.folder = mv.folder || undefined;
   }
   libraryItems = items.sort((a, b) => a.name.localeCompare(b.name));
+  libraryFolders = [...new Set([...folders, ...libraryFolders.filter((f) => recentFolders.has(f)), ...items.map((x) => x.folder ?? '').filter(Boolean)])].sort((a, b) => a.localeCompare(b));
+  renderLibrary();
+}
+/** Folders made in this session, kept in the list until the server's listing shows them. */
+const recentFolders = new Set<string>();
+
+function openFolder(name: string) {
+  libraryFolder = name;
+  try { localStorage.setItem('libraryFolder', name); } catch { /* private mode */ }
   renderLibrary();
 }
 
-/** List the library parts that are not in the project; a part comes back when it is removed from the project. */
+/** Ask for a new folder's name and create it. Returns the name, or null if cancelled or refused. */
+async function newFolder(): Promise<string | null> {
+  const name = prompt('Name for the new folder')?.trim();
+  if (!name) return null;
+  if (!FOLDER_NAME.test(name)) { toast('Folder names can use letters, digits, spaces and _.()+,- (up to 40 characters).'); return null; }
+  try {
+    const res = await fetch(`/api/folders/${encodeURIComponent(name)}`, { method: 'PUT' });
+    if (!res.ok) throw new Error(String(res.status));
+  } catch (e) { toast(`Could not create the folder (${e instanceof Error ? e.message : e}).`); return null; }
+  recentFolders.add(name);
+  if (!libraryFolders.includes(name)) libraryFolders = [...libraryFolders, name].sort((a, b) => a.localeCompare(b));
+  return name;
+}
+
+async function moveToFolder(it: LibraryItem, folder: string) {
+  try {
+    const res = await fetch(`/api/parts/${encodeURIComponent(it.name)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ folder }) });
+    if (!res.ok) throw new Error(String(res.status));
+    justMoved.set(it.name, { folder, until: Date.now() + 120_000 });
+    it.folder = folder || undefined;
+    toast(`${it.name} moved to ${folder || 'No folder'}.`);
+  } catch (e) { toast(`Could not move ${it.name} (${e instanceof Error ? e.message : e}).`); }
+  renderLibrary();
+}
+
+/** Show the open folder's parts. Parts stay listed after they are added, so one can be added several times. */
 function renderLibrary() {
   if (!libraryItems) return;
-  const items = libraryItems.filter((it) => !inProject(it.name));
+  const all = libraryItems;
+  const unfiled = all.some((it) => !it.folder);
+  // The open folder may be gone (deleted, or emptied of unfiled parts): fall back to the first there is.
+  if (libraryFolder ? !libraryFolders.includes(libraryFolder) : !unfiled && libraryFolders.length) libraryFolder = libraryFolders[0] ?? '';
+  const count = (f: string) => all.filter((it) => (it.folder ?? '') === f).length;
+  const pick = $('#library-folder') as HTMLSelectElement;
+  pick.replaceChildren(
+    ...[...libraryFolders, ...(unfiled || !libraryFolders.length ? [''] : [])].map((f) => {
+      const o = document.createElement('option');
+      o.value = f; o.textContent = `${f || 'No folder'} (${count(f)})`; o.selected = f === libraryFolder;
+      return o;
+    }),
+  );
+  const items = all.filter((it) => (it.folder ?? '') === libraryFolder);
   $('#library').hidden = false;
+  $('#library-delete-folder').hidden = !(libraryFolder && items.length === 0);
   $('#library-empty').hidden = items.length > 0;
-  $('#library-empty').textContent = libraryItems.length
-    ? 'Every part in your library is already in this project.'
+  $('#library-empty').textContent = all.length
+    ? 'This folder is empty. Use "Move" on a part in another folder to put it here.'
     : 'No parts yet. Parts you add, and files sent by the Fusion 360 add-in, appear here.';
   $('#library-list').replaceChildren(
     ...items.map((it) => {
@@ -1067,7 +1131,7 @@ function renderLibrary() {
       const meta = document.createElement('div');
       meta.className = 'meta';
       const mb = it.size ? `${(it.size / 1048576).toFixed(it.size < 1048576 ? 2 : 1)} MB` : '';
-      meta.textContent = [mb, it.version && `v${it.version}`, it.uploaded?.slice(0, 10)].filter(Boolean).join(' · ');
+      meta.textContent = [mb, it.version && `v${it.version}`, it.uploaded?.slice(0, 10), inProject(it.name) && 'in this project'].filter(Boolean).join(' · ');
       const actions = document.createElement('div');
       actions.className = 'actions';
       const add = document.createElement('button');
@@ -1084,6 +1148,19 @@ function renderLibrary() {
           toast(`${it.name}: ${e instanceof Error ? e.message : e}`);
         }
       };
+      const move = document.createElement('select');
+      move.className = 'btn';
+      move.setAttribute('aria-label', `Move ${it.name} to another folder`);
+      const opt = (value: string, label: string, disabled = false) => { const o = document.createElement('option'); o.value = value; o.textContent = label; o.disabled = disabled; return o; };
+      move.append(opt('', 'Move…', true), ...libraryFolders.filter((f) => f !== libraryFolder).map((f) => opt(`f:${f}`, f)), opt('new', 'New folder…'), ...(libraryFolder ? [opt('f:', 'No folder')] : []));
+      move.selectedIndex = 0;
+      move.onchange = async () => {
+        const v = move.value;
+        move.selectedIndex = 0;
+        const target = v === 'new' ? await newFolder() : v.slice(2);
+        if (target === null) return;
+        await moveToFolder(it, target);
+      };
       const del = document.createElement('button');
       del.className = 'icon-btn';
       del.setAttribute('aria-label', `Delete ${it.name} from library`);
@@ -1093,12 +1170,25 @@ function renderLibrary() {
         await fetch(`/api/parts/${encodeURIComponent(it.name)}`, { method: 'DELETE' });
         loadLibrary();
       };
-      actions.append(add, del);
+      actions.append(add, move, del);
       li.append(name, actions, meta);
       return li;
     }),
   );
 }
+($('#library-folder') as HTMLSelectElement).addEventListener('change', (e) => openFolder((e.target as HTMLSelectElement).value));
+$('#library-new-folder').addEventListener('click', async () => { const name = await newFolder(); if (name) openFolder(name); });
+$('#library-delete-folder').addEventListener('click', async () => {
+  const name = libraryFolder;
+  if (!name || !confirm(`Delete the empty folder "${name}"?`)) return;
+  try {
+    const res = await fetch(`/api/folders/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(res.status === 409 ? 'it still has parts in it' : String(res.status));
+    recentFolders.delete(name);
+    libraryFolders = libraryFolders.filter((f) => f !== name);
+    openFolder(libraryFolders[0] ?? '');
+  } catch (e) { toast(`Could not delete the folder: ${e instanceof Error ? e.message : e}.`); }
+});
 $('#library-refresh').addEventListener('click', loadLibrary);
 loadLibrary();
 

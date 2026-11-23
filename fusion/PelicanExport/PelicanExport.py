@@ -181,6 +181,7 @@ def export_folder(app, ui):
         progress.show('PelicanExport', 'Starting…', 0, len(files), 0)
 
         uploaded, skipped, failed = [], [], []
+        library_folder = ''.join(c if c in SAFE else '_' for c in folder.name).strip()[:40]
         seen = set()
         tmp = tempfile.mkdtemp(prefix='pelican-export-')
         for i, data_file in enumerate(files):
@@ -216,9 +217,12 @@ def export_folder(app, ui):
                 os.remove(path)
                 if len(payload) > MAX_BYTES:
                     raise RuntimeError('3MF is {:.0f} MB; the library limit is 25 MB'.format(len(payload) / 1048576))
-                status, body = request(
-                    cfg, 'PUT', '/api/parts/' + urllib.parse.quote(name), payload,
-                    {'Content-Type': 'application/octet-stream', 'X-Part-Version': version})
+                headers = {'Content-Type': 'application/octet-stream', 'X-Part-Version': version}
+                if name not in existing and library_folder:
+                    # New parts are filed in a library folder named after the Fusion folder.
+                    # Parts already in the library stay in whichever folder they were moved to.
+                    headers['X-Part-Folder'] = urllib.parse.quote(library_folder)
+                status, body = request(cfg, 'PUT', '/api/parts/' + urllib.parse.quote(name), payload, headers)
                 if status != 200:
                     raise RuntimeError('upload failed (HTTP {}): {}'.format(status, body[:200].decode('utf-8', 'replace')))
                 uploaded.append(name)

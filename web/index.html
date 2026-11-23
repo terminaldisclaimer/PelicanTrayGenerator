@@ -50,6 +50,11 @@
           <ul id="parts" class="parts"></ul>
           <section id="library" hidden>
             <div class="row"><h2>Library</h2><button id="library-refresh" class="btn">Refresh</button></div>
+            <div class="row" id="library-folders">
+              <select id="library-folder" class="btn" aria-label="Library folder"></select>
+              <button id="library-new-folder" class="btn">New folder</button>
+              <button id="library-delete-folder" class="btn" hidden>Delete folder</button>
+            </div>
             <p id="library-empty" class="muted small">No parts yet. Parts you add, and files sent by the Fusion 360 add-in, appear here.</p>
             <ul id="library-list" class="parts"></ul>
           </section>

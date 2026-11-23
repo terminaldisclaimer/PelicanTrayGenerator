@@ -103,3 +103,8 @@ label.row { cursor: text; }
 .gap-row .num { width: 84px; }
 .suggest-text { font-size: 15px; line-height: 1.35; }
 #suggest { margin-top: 12px; }
+
+#library-folders { gap: 8px; justify-content: flex-start; }
+#library-folder { flex: 1; min-width: 0; }
+select.btn { appearance: auto; max-width: 100%; }
+#library-list select.btn { max-width: 96px; }

@@ -265,6 +265,15 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   discards the saved layout, since it no longer matches.
 - Parts added from the device are also copied to the Library (the owner's
   Cloudflare account, behind Access), so they can be reused on other devices.
+- **Library folders.** Every library part can sit in a folder; the Library
+  shows one folder at a time (picker with part counts), with "New folder",
+  and "Delete folder" for an empty one. Each part has Add, a "Move…" picker
+  (other folders, a new folder, or no folder) and delete. Part names stay
+  unique across the whole library. A part added from the device goes into
+  the open folder; the Fusion add-in files new parts in a folder named after
+  the Fusion folder; re-uploading an existing part leaves it where it is.
+- Adding a part from the library leaves it listed (marked "in this
+  project"), so it can be added more than once.
 
 ## 4. Export (Bambu H3C)
 - **STL**: one binary STL per tray, in mm.
