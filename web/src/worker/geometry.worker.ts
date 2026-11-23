@@ -8,7 +8,7 @@ import { initKernel } from '../geom/kernel';
 import { poseCandidates, posePart, type PoseCandidate } from '../geom/analyze';
 import { FLIP, mul, ROT_X90, ROT_Y90, ROT_Z90, type Mat3 } from '../geom/vec';
 import { autoFingers, buildFromLayout, buildTrays, distinctPoses, planTrays, TrayError, type Side, type TrayOptions, type TrayPart } from '../geom/tray';
-import { buildShell, shellProblem } from '../geom/shell';
+import { buildShell, shellProblem, splitLiner } from '../geom/shell';
 import type { ParsedPart, PoseAction, Suggestion, WorkerRequest, WorkerResponse } from './protocol';
 
 const post = (msg: WorkerResponse, transfer: Transferable[] = []) =>
@@ -293,7 +293,16 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const now: ParsedPart[] = [];
       for (const id of parts.keys()) now.push(await describe(id));
       const sh = req.shell;
-      const shells = sh ? result.trays.map((t, i) => buildShell(k, sh.outer, t.depth, sh.options, `shell-${i + 1}`, t.lifts)) : null;
+      if (sh?.liner && sh.options.gap > 0) throw new TrayError('The TPU liner is printed onto the shell, so the gap between tray and shell has to be 0.');
+      const shells = sh ? result.trays.map((t, i) => {
+        let core: TriMesh | null = null;
+        if (sh.liner) {
+          progress(0.98, `Splitting tray ${i + 1} into liner and rigid core`);
+          const split = splitLiner(k, t.mesh, t.depth, sh.liner);
+          t.mesh = split.liner; t.volume = split.volume; core = split.core;
+        }
+        return buildShell(k, sh.outer, t.depth, sh.options, `shell-${i + 1}`, t.lifts, core);
+      }) : null;
       post(
         { id: req.id, type: 'tray', tray: { trays: result.trays, stacks: result.stacks, layout: result.layout, length: req.options.length, width: req.options.width, parts: now, shells } },
         [...result.trays.map((t) => t.mesh.positions.buffer as ArrayBuffer), ...now.map((p) => p.mesh.positions.buffer as ArrayBuffer), ...(shells ?? []).map((s) => s.mesh.positions.buffer as ArrayBuffer)],

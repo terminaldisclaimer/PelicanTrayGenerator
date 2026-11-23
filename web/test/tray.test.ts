@@ -5,7 +5,7 @@ import { initKernel } from '../src/geom/kernel';
 import { poseCandidates, posePart, toManifold } from '../src/geom/analyze';
 import { buildCavity, DEFAULT_POCKET } from '../src/geom/pocket';
 import { autoFingers, buildFromLayout, buildTrays, DEFAULT_LIFT, DEFAULT_TRAY, distinctPoses, fingerCentre, liftHoles, TrayError, type TrayPart } from '../src/geom/tray';
-import { buildShell, DEFAULT_SHELL } from '../src/geom/shell';
+import { buildShell, splitLiner, DEFAULT_SHELL } from '../src/geom/shell';
 import { IDENTITY } from '../src/geom/vec';
 import { parseSTL, writeSTL } from '../src/mesh/stl';
 import { parse3MF } from '../src/mesh/threemf';
@@ -535,6 +535,44 @@ describe('tray', () => {
     const plain = buildShell(k, outer, t.depth, DEFAULT_SHELL), holed = buildShell(k, outer, t.depth, DEFAULT_SHELL, 'shell', t.lifts);
     expect((plain.volume - holed.volume) / (2 * Math.PI * 100 * DEFAULT_SHELL.wall)).toBeCloseTo(1, 1);
   });
+
+  it('TPU liner: the tray splits into a soft liner of the set thickness and a rigid core that joins the shell', () => {
+    const o = { ...FAST, length: 160, width: 100, lift: DEFAULT_LIFT };
+    const t = buildTrays(k, [trayPart(boxMesh(50, 30, 34, 'glass'), 1)], o).trays[0];
+    const split = splitLiner(k, t.mesh, t.depth, 6);
+    expect(split.core).not.toBeNull();
+    // Nothing is lost or doubled, and a good share of this mostly empty tray becomes rigid.
+    expect(split.volume + split.coreVolume).toBeCloseTo(t.volume, 0);
+    expect(split.coreVolume / t.volume).toBeGreaterThan(0.3);
+    const core = toManifold(k, split.core!)!, liner = toManifold(k, split.liner)!;
+    expect(liner).not.toBeNull();
+    // At least 6 mm of liner on top, and around and under the pocket.
+    const b = core.boundingBox();
+    expect(b.max[2]).toBeLessThanOrEqual(t.depth - 6 + 1e-6);
+    expect(b.min[2]).toBeCloseTo(0, 6); // the core stands on the shell floor
+    const tray = toManifold(k, t.mesh)!, outline = tray.slice(0.25);
+    const openAt = (z: number) => outline.subtract(tray.slice(z + 0.0137)).offset(-0.02, 'Square'); // shrunk a hair to drop slivers along the outline
+    for (const z of [3, 10, 20, t.depth - 7]) {
+      // No core within 6 mm sideways of any pocket, finger hole or grip at this height...
+      const grown = openAt(z).offset(5.9, 'Round', 2, 24), hit = grown.intersect(core.slice(z));
+      expect(hit.area()).toBeLessThan(0.5);
+      // ...nor under anything that is open up to 6 mm above it.
+      const under = openAt(Math.min(z + 5.9, t.depth - 0.1)).intersect(core.slice(z));
+      expect(under.area()).toBeLessThan(0.5);
+    }
+    // And the core is really there away from them: a corner of the tray, half-way up.
+    const corner = k.CrossSection.square([6, 6], true).translate(-70, 0).intersect(core.slice(t.depth / 2));
+    expect(corner.area()).toBeCloseTo(36, 0);
+    // The core is printed as part of the shell, and the liner drops into what is left.
+    const outer = { length: 166, width: 106, cornerRadius: 4 };
+    const plain = buildShell(k, outer, t.depth, DEFAULT_SHELL, 'shell', t.lifts), filled = buildShell(k, outer, t.depth, DEFAULT_SHELL, 'shell', t.lifts, split.core);
+    expect(filled.volume - plain.volume).toBeCloseTo(split.coreVolume, 0);
+    const shell = toManifold(k, filled.mesh)!, clash = shell.intersect(liner);
+    expect(clash.volume()).toBeLessThan(1);
+    // A liner thicker than the tray leaves it all soft.
+    expect(splitLiner(k, t.mesh, t.depth, 60).core).toBeNull();
+    for (const m of [core, liner, tray, shell, clash]) m.delete();
+  }, 60000);
 
   it('lift-out holes slide along their sides, independently, to make room', () => {
     // A 60×50 part fills the tray's width, so it cannot sit beside a hole in the middle of either long side.

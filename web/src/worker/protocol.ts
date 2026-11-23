@@ -33,7 +33,7 @@ export type WorkerRequest =
   | { id: number; type: 'tray'; options: TrayOptions; shell?: ShellRequest | null; /** Cut this saved arrangement instead of searching for one. */ layout?: LayoutData };
 
 /** A rigid shell to build around every tray: `outer` is the footprint of tray + shell. */
-export interface ShellRequest { outer: Footprint; options: ShellOptions }
+export interface ShellRequest { outer: Footprint; options: ShellOptions; /** Soft liner thickness (mm): the rest of the tray is printed rigid with the shell. Omitted = whole tray soft. */ liner?: number }
 
 /** A part as posed on the bed: mesh in mm resting on z=0, plus its top-down outline. */
 export interface ParsedPart {

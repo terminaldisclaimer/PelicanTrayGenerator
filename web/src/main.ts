@@ -2,7 +2,7 @@ import './style.css';
 import { Viewer, renderThumbnail } from './viewer';
 import { initSheet } from './ui/sheet';
 import { GeometryClient } from './worker/client';
-import type { Change, ParsedPart, FileKind, Suggestion, TrayInfo } from './worker/protocol';
+import type { Change, ParsedPart, FileKind, ShellRequest, Suggestion, TrayInfo } from './worker/protocol';
 import { DEFAULT_LIFT, DEFAULT_TRAY, fingerCentre, SIDES, type LayoutData, type Side, type TrayOptions } from './geom/tray';
 import { DEFAULT_SHELL, shellExtraHeight, shellPitch, shellProblem, trayInsideShell, type Footprint, type ShellOptions } from './geom/shell';
 import { writeSTL } from './mesh/stl';
@@ -417,12 +417,12 @@ const toMM = (v: number) => (units === 'mm' ? v : v * MM_PER_IN);
 const fromMM = (v: number, digits = units === 'mm' ? 2 : 3) => String(+(units === 'mm' ? v : v / MM_PER_IN).toFixed(digits));
 
 /** Case inside size and fit settings (mm). The tray is the case size minus the gap on every side. */
-interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; edge: number; clearance: number; minFeature: number; split: number; fingerDia: number; fingerExtra: number; fingerSwept: boolean; stacking: boolean; stackGap: number; lift: boolean; liftDia: number; liftSides: 'long' | 'short'; shell: boolean; shellWall: number; shellRim: number; shellPlug: number; shellGap: number }
-let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, edge: 2, clearance: DEFAULT_TRAY.pocket.clearance, minFeature: 0, split: DEFAULT_TRAY.pocket.split, fingerDia: DEFAULT_TRAY.fingerDiameter, fingerExtra: 0, fingerSwept: true, stacking: true, stackGap: 0, lift: true, liftDia: DEFAULT_LIFT.diameter, liftSides: 'long', shell: true, shellWall: DEFAULT_SHELL.wall, shellRim: DEFAULT_SHELL.rim, shellPlug: DEFAULT_SHELL.plug, shellGap: DEFAULT_SHELL.gap };
+interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; edge: number; clearance: number; minFeature: number; split: number; fingerDia: number; fingerExtra: number; fingerSwept: boolean; stacking: boolean; stackGap: number; lift: boolean; liftDia: number; liftSides: 'long' | 'short'; shell: boolean; shellWall: number; shellRim: number; shellPlug: number; shellGap: number; liner: boolean; linerThick: number }
+let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, edge: 2, clearance: DEFAULT_TRAY.pocket.clearance, minFeature: 0, split: DEFAULT_TRAY.pocket.split, fingerDia: DEFAULT_TRAY.fingerDiameter, fingerExtra: 0, fingerSwept: true, stacking: true, stackGap: 0, lift: true, liftDia: DEFAULT_LIFT.diameter, liftSides: 'long', shell: true, shellWall: DEFAULT_SHELL.wall, shellRim: DEFAULT_SHELL.rim, shellPlug: DEFAULT_SHELL.plug, shellGap: DEFAULT_SHELL.gap, liner: false, linerThick: 6 };
 try { traySettings = { ...traySettings, ...JSON.parse(localStorage.getItem('tray') || '{}') }; } catch { /* ignore */ }
 let tray: TrayInfo | null = null;
 /** Shell settings and outside footprint (tray + shell) used for the tray on screen; null = no shell. */
-let trayShell: { outer: Footprint; options: ShellOptions } | null = null;
+let trayShell: ShellRequest | null = null;
 let showPartsInTray = true;
 
 function fillTrayInputs() {
@@ -457,6 +457,9 @@ document.querySelectorAll<HTMLButtonElement>('[data-stack]').forEach((b) => b.se
   num('#shell-rim').value = fromMM(traySettings.shellRim);
   num('#shell-plug').value = fromMM(traySettings.shellPlug);
   num('#shell-gap').value = fromMM(traySettings.shellGap);
+  num('#liner-thick').value = fromMM(traySettings.linerThick);
+  document.querySelectorAll<HTMLButtonElement>('[data-liner]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.liner === '1') === traySettings.liner)));
+  $('#liner-row').hidden = !traySettings.liner;
   document.querySelectorAll<HTMLButtonElement>('[data-shell]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.shell === '1') === traySettings.shell)));
   $('#shell-rows').hidden = !traySettings.shell;
   document.querySelectorAll('.u').forEach((e) => (e.textContent = units));
@@ -491,14 +494,17 @@ function readTrayInputs(): TraySettings | string {
   // With the shell off its boxes are hidden, so keep whatever was set before.
   const sv = (id: string, old: number) => (shell ? toMM(val(id)) : old);
   const shellWall = sv('#shell-wall', traySettings.shellWall), shellRim = sv('#shell-rim', traySettings.shellRim), shellPlug = sv('#shell-plug', traySettings.shellPlug), shellGap = sv('#shell-gap', traySettings.shellGap);
+  const linerThick = shell && traySettings.liner ? toMM(val('#liner-thick')) : traySettings.linerThick;
   if (shell) {
     const o = shellOptions({ shellWall, shellRim, shellPlug, shellGap });
     if (![shellWall, shellRim, shellPlug, shellGap].every(Number.isFinite)) return 'Enter the shell wall, rim, bottom step and gap, or switch the shell off.';
     const problem = shellProblem({ length: length - 2 * gap, width: width - 2 * gap, cornerRadius: DEFAULT_TRAY.cornerRadius }, o);
     if (problem) return problem;
+    if (traySettings.liner && !(linerThick >= 1 && linerThick <= 20)) return 'TPU liner thickness must be between 1 and 20 mm.';
+    if (traySettings.liner && shellGap > 0) return 'The TPU liner is printed onto the shell, so set the gap between tray and shell to 0 (or switch the liner off).';
     if (height !== null && height - shellExtraHeight(o) <= DEFAULT_TRAY.floor) return `The case height leaves no room for a tray inside the shell (the shell alone takes ${fmtLen(shellExtraHeight(o), units)} ${units}).`;
   }
-  return { length, width, height, gap, depth, edge, clearance, minFeature, split, fingerDia, fingerExtra, fingerSwept: traySettings.fingerSwept, stacking: traySettings.stacking, stackGap, lift: traySettings.lift, liftDia, liftSides: traySettings.liftSides, shell, shellWall, shellRim, shellPlug, shellGap };
+  return { length, width, height, gap, depth, edge, clearance, minFeature, split, fingerDia, fingerExtra, fingerSwept: traySettings.fingerSwept, stacking: traySettings.stacking, stackGap, lift: traySettings.lift, liftDia, liftSides: traySettings.liftSides, shell, shellWall, shellRim, shellPlug, shellGap, liner: traySettings.liner, linerThick };
 }
 
 const shellOptions = (s: Pick<TraySettings, 'shellWall' | 'shellRim' | 'shellPlug' | 'shellGap'>): ShellOptions => ({ ...DEFAULT_SHELL, wall: s.shellWall, rim: s.shellRim, plug: s.shellPlug, gap: s.shellGap });
@@ -597,7 +603,7 @@ function stackNote(result: TrayInfo): string {
 type Effort = 'normal' | 'thorough' | 'hard';
 /** The arrangement on screen in a saveable form: parts are referred to by their position in the parts list. */
 interface SavedLayout { options: TrayOptions; shell: ReturnType<typeof shellRequestOf>; outer: Footprint; height: number | null; layout: LayoutData }
-const shellRequestOf = (s: TraySettings, outer: Footprint) => (s.shell ? { outer, options: shellOptions(s) } : null);
+const shellRequestOf = (s: TraySettings, outer: Footprint): ShellRequest | null => (s.shell ? { outer, options: shellOptions(s), ...(s.liner ? { liner: s.linerThick } : {}) } : null);
 let savedLayout: SavedLayout | null = null;
 /** Search effort of the last layout, reused when a part edit regenerates it. */
 let lastEffort: Effort = 'normal';
@@ -611,7 +617,7 @@ function trayRequest(effort: Effort) {
   scheduleSave();
   // The case sets the outside size. With a shell, the tray is what is left inside it.
   const outer: Footprint = { length: s.length - 2 * s.gap, width: s.width - 2 * s.gap, cornerRadius: DEFAULT_TRAY.cornerRadius };
-  const shell = s.shell ? { outer, options: shellOptions(s) } : null;
+  const shell = shellRequestOf(s, outer);
   const inside = shell ? trayInsideShell(outer, shell.options) : outer;
   const options: TrayOptions = {
     ...DEFAULT_TRAY, ...inside, depth: s.depth,
@@ -644,7 +650,9 @@ function showResult(result: TrayInfo, shell: SavedLayout['shell'], outer: Footpr
     `${n === 1 ? '1 tray' : `${n} trays`} of ${dims(outer.length, outer.width)}${so ? ` with the shell (tray inside ${dims(result.length, result.width)})` : ''}, ${count} pocket${count === 1 ? '' : 's'}. ` +
     result.trays.map((t, i) => `Tray ${i + 1}: ${t.placements.length} part${t.placements.length === 1 ? '' : 's'}, ${fmtLen(t.depth, units)} ${units} deep${result.shells ? `, ${fmtLen(result.shells[i].height, units)} ${units} tall in its shell` : ''}.`).join(' ') +
     stackNote(result) +
-    ` About ${(volume / 1000).toFixed(0)} cm³ of material before infill` + (so ? `, plus ${(shellVolume / 1000).toFixed(0)} cm³ for the shell.` : '.') +
+    (shell?.liner
+      ? ` About ${(volume / 1000).toFixed(0)} cm³ of TPU liner (${fmtLen(shell.liner, units)} ${units} thick) before infill, plus ${(shellVolume / 1000).toFixed(0)} cm³ for the shell and its rigid core.`
+      : ` About ${(volume / 1000).toFixed(0)} cm³ of material before infill` + (so ? `, plus ${(shellVolume / 1000).toFixed(0)} cm³ for the shell.` : '.')) +
     (height !== null && stack > height + 1e-6 ? ` Note: stacked, the trays are ${fmtLen(stack, units)} ${units} tall — more than the case height of ${fmtLen(height, units)} ${units}.` : n > 1 ? ` Stacked height ${fmtLen(stack, units)} ${units}.` : '') +
     note;
   $('#tray-view-row').hidden = false;
@@ -816,6 +824,15 @@ document.querySelectorAll<HTMLButtonElement>('[data-stack]').forEach((b) =>
   b.addEventListener('click', () => {
     traySettings.stacking = b.dataset.stack === '1';
     document.querySelectorAll<HTMLButtonElement>('[data-stack]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+    if (tray) generateTray();
+  }),
+);
+
+document.querySelectorAll<HTMLButtonElement>('[data-liner]').forEach((b) =>
+  b.addEventListener('click', () => {
+    traySettings.liner = b.dataset.liner === '1';
+    document.querySelectorAll<HTMLButtonElement>('[data-liner]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+    $('#liner-row').hidden = !traySettings.liner;
     if (tray) generateTray();
   }),
 );

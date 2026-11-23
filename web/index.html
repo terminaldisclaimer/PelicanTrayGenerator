@@ -92,6 +92,14 @@
             <label class="row"><span>Shell rim above the tray top (<span class="u">mm</span>)</span><input class="num" id="shell-rim" inputmode="decimal" autocomplete="off" /></label>
             <label class="row"><span>Shell bottom step, drops into the rim below (<span class="u">mm</span>)</span><input class="num" id="shell-plug" inputmode="decimal" autocomplete="off" /></label>
             <label class="row"><span>Gap between tray and shell, per side (<span class="u">mm</span>)</span><input class="num" id="shell-gap" inputmode="decimal" autocomplete="off" /></label>
+            <div class="row">
+              <span>TPU as a liner only (shell fills the rest)</span>
+              <div class="seg" role="radiogroup" aria-label="TPU as a liner only">
+                <button role="radio" data-liner="1" aria-checked="false">On</button>
+                <button role="radio" data-liner="0" aria-checked="true">Off</button>
+              </div>
+            </div>
+            <label class="row" id="liner-row"><span>TPU liner thickness (<span class="u">mm</span>)</span><input class="num" id="liner-thick" inputmode="decimal" autocomplete="off" /></label>
           </div>
           <div class="row">
             <span>Finger holes to lift the tray out</span>

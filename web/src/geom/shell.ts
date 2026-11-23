@@ -1,5 +1,6 @@
 import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import type { TriMesh } from '../mesh/types';
+import { toManifold } from './analyze';
 import { BED, liftBore, TrayError, type LiftHole } from './tray';
 
 /**
@@ -76,9 +77,10 @@ export interface Shell {
 
 /**
  * Build the shell for a tray `trayDepth` deep. `outer` is the footprint of tray + shell.
+ * `core` is rigid filling that stands on the shell floor inside the cup (see splitLiner); it is printed as part of the shell.
  * `holes` are the tray's lift-out grips (tray coordinates): their side holes carry on out through the wall.
  */
-export function buildShell(k: ManifoldToplevel, outer: Footprint, trayDepth: number, s: ShellOptions, name = 'shell', holes: LiftHole[] = []): Shell {
+export function buildShell(k: ManifoldToplevel, outer: Footprint, trayDepth: number, s: ShellOptions, name = 'shell', holes: LiftHole[] = [], core: TriMesh | null = null): Shell {
   const problem = shellProblem(outer, s);
   if (problem) throw new TrayError(problem);
   const trash: { delete(): void }[] = [];
@@ -99,6 +101,7 @@ export function buildShell(k: ManifoldToplevel, outer: Footprint, trayDepth: num
       const step = s.fit > 0 ? keep(cup.offset(-s.fit, 'Round', 2, 32)) : cup;
       solid = keep(solid.add(keep(keep(step.extrude(s.plug)).translate(0, 0, -s.floor - s.plug))));
     }
+    if (core) { const c = toManifold(k, core); if (c) solid = keep(solid.add(keep(c))); }
     for (const h of holes) solid = keep(solid.subtract(liftBore(k, h, h.z ?? trayDepth / 2, keep)));
     if (solid.isEmpty()) throw new Error('Shell geometry came out empty');
     const mesh = solid.getMesh();
@@ -106,6 +109,75 @@ export function buildShell(k: ManifoldToplevel, outer: Footprint, trayDepth: num
     const positions = new Float32Array(t.length * 3);
     for (let i = 0; i < t.length; i++) for (let c = 0; c < 3; c++) positions[i * 3 + c] = v[t[i] * np + c];
     return { mesh: { name, positions }, height: s.plug + s.floor + top, below: s.floor + s.plug, volume: solid.volume() };
+  } finally {
+    for (const t of trash) t.delete();
+  }
+}
+
+/**
+ * Split a tray into a soft liner and a rigid core, to print less of the soft
+ * material: the liner is everything within `thickness` of a pocket, finger
+ * hole or the top face; the core is what is left, deep inside, and is printed
+ * with the shell. Where the tray has less than `thickness` of material (thin
+ * floors, walls between close pockets) it all stays liner.
+ *
+ * Worked in horizontal slabs: at each height the open space of the tray (at
+ * that height and up to `thickness` above and below it) is grown sideways by
+ * `thickness`, and the core is what that does not reach. Never thinner than
+ * asked; up to about 1.4× in corners.
+ */
+export function splitLiner(k: ManifoldToplevel, trayMesh: TriMesh, depth: number, thickness: number, step = 1): { liner: TriMesh; volume: number; core: TriMesh | null; coreVolume: number } {
+  const trash: { delete(): void }[] = [];
+  const keep = <T extends { delete(): void }>(x: T): T => { trash.push(x); return x; };
+  const mesh = (m: Manifold, name: string): TriMesh => {
+    const g = m.getMesh(), v = g.vertProperties, t = g.triVerts, np = g.numProp;
+    const positions = new Float32Array(t.length * 3);
+    for (let i = 0; i < t.length; i++) for (let c = 0; c < 3; c++) positions[i * 3 + c] = v[t[i] * np + c];
+    return { name, positions };
+  };
+  try {
+    const tray = toManifold(k, trayMesh);
+    if (!tray) throw new Error('The tray is not a closed solid, so it cannot be split into liner and core.');
+    keep(tray);
+    const whole = { liner: trayMesh, volume: tray.volume(), core: null, coreVolume: 0 };
+    if (!(thickness > 0) || thickness >= depth - step / 2) return whole;
+    const outline = keep(tray.slice(0.25)); // the floor is always whole
+    const voids = new Map<number, ReturnType<typeof tray.slice>>();
+    /** Open space of the tray at height z, grown sideways by the liner thickness. */
+    const grownVoid = (z: number) => {
+      const key = Math.round(z * 100);
+      let g = voids.get(key);
+      if (!g) {
+        const open = z >= depth - 1e-6 ? outline : keep(outline.subtract(keep(tray.slice(Math.max(0.01, z) + 0.0137)))); // off the round heights where pocket steps lie, which slice badly
+        // Shrink first: the subtraction leaves hairline slivers along the outline, which offset into nonsense.
+        // Then a little over, so polygon rounding never leaves the liner thin.
+        g = keep(keep(keep(open.offset(-0.02, 'Square')).offset(thickness + 0.15, 'Round', 2, 16)).simplify(0.03));
+        voids.set(key, g);
+      }
+      return g;
+    };
+    const slabs: Manifold[] = [];
+    let run: { shape: typeof outline; z0: number; z1: number } | null = null;
+    const flush = () => { if (run) slabs.push(keep(keep(run.shape.extrude(run.z1 - run.z0)).translate(0, 0, run.z0))); run = null; };
+    for (let z0 = 0; z0 < depth - thickness - 1e-6; z0 += step) {
+      const z1 = Math.min(z0 + step, depth - thickness);
+      const heights = [z0 - thickness, z0 - thickness / 2, z0, (z0 + z1) / 2, z1, z1 + thickness / 2, z1 + thickness].filter((z) => z > 0);
+      const soft = keep(k.CrossSection.union(heights.map(grownVoid)));
+      // Drop slivers under 2 mm wide: not worth a material change.
+      const free = keep(outline.subtract(soft));
+      const rigid = keep(keep(keep(keep(free.offset(-1, 'Round', 2, 8)).offset(1, 'Round', 2, 8)).simplify(0.02)).intersect(free)); // never back into the liner
+      if (rigid.area() < 4) { flush(); continue; }
+      // Same outline as the slab below (straight pocket walls): make one taller slab, not a stack of copies.
+      if (run && keep(run.shape.subtract(rigid)).area() < 0.5 && keep(rigid.subtract(run.shape)).area() < 2) { run.z1 = z1; continue; }
+      flush();
+      run = { shape: rigid, z0, z1 };
+    }
+    flush();
+    if (!slabs.length) return whole;
+    const core = keep(slabs.length === 1 ? slabs[0] : k.Manifold.union(slabs));
+    const liner = keep(tray.subtract(core));
+    if (liner.isEmpty()) throw new Error('Liner geometry came out empty');
+    return { liner: mesh(liner, trayMesh.name), volume: liner.volume(), core: mesh(core, 'core'), coreVolume: core.volume() };
   } finally {
     for (const t of trash) t.delete();
   }

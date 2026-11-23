@@ -301,20 +301,24 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 - Tested at 390 px in Chromium mobile emulation and Playwright WebKit (as a
   stand-in for iOS Safari). You check on a real iPhone at each milestone.
 
-## 7. Multi-material (H3C tool changer) — TPU protection liner
-- v1: single-material tray (PETG or PLA).
-- **v1.1: TPU protection liner (approved).** Each pocket is surrounded by a
-  TPU body thick enough to fully protect the part. Liner thickness `t` is a
-  setting (default 10 mm, range 2–40 mm), applied to the walls *and* under
-  the part (floor pad). Liner = `offset(cavity, t)` minus cavity, clipped to
-  the tray; the PETG/PLA body = tray minus liners. Neighbouring liners merge
-  into one TPU region. A "full TPU interior" mode makes everything inside a
-  PETG/PLA outer shell (min 3 mm) TPU.
-- The packer treats the liner as part of each footprint (spacing between
-  parts ≥ 2·t when not merged; ≥ t when merged), and tray depth grows by the
-  floor pad thickness.
-- Exported as two objects in one 3MF (shell = PETG/PLA, liner = TPU 95A),
-  printed as one multi-material job on the H3C.
+## 7. Multi-material (H3C tool changer) — TPU liner
+Built as "TPU as a liner only (shell fills the rest)" on the Trays tab (off by
+default; needs the shell, with no gap between tray and shell).
+- The tray is split in two. The **liner** (soft, e.g. Bambu TPU 75A) is
+  everything within the liner thickness (default 6 mm, 1–20) of a pocket,
+  finger hole, lift-out grip or the top face. The **core** is what is left
+  deep inside the tray; it is joined to the shell and printed rigid.
+- The thickness is a minimum: never thinner than set where the tray has that
+  much material, up to about 1.4× in corners. Where the tray has less than
+  that (the floor under the deepest pocket, walls between close pockets, the
+  tray edge) it all stays liner; the layout is not spread out to make room.
+- The top face is always liner, so no shell shows from above.
+- Worked in 1 mm slabs from the finished tray, so it follows whatever the
+  layout cut. Core slivers under 2 mm wide are left as liner.
+- The 3MF holds the two bodies as before: "tray" (the liner) and "shell"
+  (shell + core). The status line gives the volume of each.
+- **Not built:** per-part thickness (e.g. thicker under glass), filament
+  assignment written into the 3MF.
 
 ## 8. Hosting
 - Cloudflare Workers with static assets only: `wrangler.jsonc` with
