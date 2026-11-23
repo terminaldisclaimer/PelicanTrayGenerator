@@ -1,4 +1,4 @@
-import { unzipSync, strFromU8 } from 'fflate';
+import { unzipSync, strFromU8, strToU8, zipSync } from 'fflate';
 import type { TriMesh } from './types';
 
 const UNIT_TO_MM: Record<string, number> = {
@@ -128,4 +128,40 @@ function mul(p: number[], c: number[]): number[] {
   for (let row = 0; row < 3; row++)
     r[9 + row] = p[row] * c[9] + p[3 + row] * c[10] + p[6 + row] * c[11] + p[9 + row];
   return r;
+}
+
+/**
+ * Write a 3MF with one printable object made of several bodies (e.g. a tray and
+ * its shell), each its own mesh so a slicer can give them different filaments.
+ * Bodies are written where they are: nothing is moved or merged.
+ */
+export function write3MF(bodies: TriMesh[], name = 'object'): Uint8Array {
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const num = (v: number) => { const s = v.toFixed(4); return s.includes('.') ? s.replace(/\.?0+$/, '') || '0' : s; };
+  const parts: string[] = [
+    '<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n',
+    ` <metadata name="Title">${esc(name)}</metadata>\n <metadata name="Application">Cutouts</metadata>\n <resources>\n`,
+  ];
+  bodies.forEach((b, bi) => {
+    // Share vertices between triangles: 3MF meshes are indexed, and slicers need them joined to see a closed solid.
+    const index = new Map<string, number>(), verts: string[] = [], tris: string[] = [];
+    const p = b.positions;
+    for (let t = 0; t + 8 < p.length; t += 9) {
+      const v = [0, 3, 6].map((o) => {
+        const x = num(p[t + o]), y = num(p[t + o + 1]), z = num(p[t + o + 2]), key = `${x} ${y} ${z}`;
+        let i = index.get(key);
+        if (i === undefined) { i = verts.length; index.set(key, i); verts.push(`<vertex x="${x}" y="${y}" z="${z}"/>`); }
+        return i;
+      });
+      if (v[0] !== v[1] && v[1] !== v[2] && v[0] !== v[2]) tris.push(`<triangle v1="${v[0]}" v2="${v[1]}" v3="${v[2]}"/>`);
+    }
+    parts.push(`  <object id="${bi + 1}" type="model" name="${esc(b.name)}">\n   <mesh>\n    <vertices>\n${verts.join('\n')}\n    </vertices>\n    <triangles>\n${tris.join('\n')}\n    </triangles>\n   </mesh>\n  </object>\n`);
+  });
+  const whole = bodies.length + 1;
+  parts.push(`  <object id="${whole}" type="model" name="${esc(name)}">\n   <components>\n${bodies.map((_, bi) => `    <component objectid="${bi + 1}"/>`).join('\n')}\n   </components>\n  </object>\n </resources>\n <build>\n  <item objectid="${whole}"/>\n </build>\n</model>\n`);
+  return zipSync({
+    '[Content_Types].xml': strToU8('<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>'),
+    '_rels/.rels': strToU8('<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'),
+    '3D/3dmodel.model': strToU8(parts.join('')),
+  }, { level: 6 });
 }

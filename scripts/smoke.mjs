@@ -103,7 +103,11 @@ try {
   const trayStatus = await page.textContent('#tray-status');
   await page.screenshot({ path: 'test-results/mobile-tray.png' });
   await page.tap('.tab[data-tab="export"]');
-  const [download] = await Promise.all([page.waitForEvent('download'), page.tap('#export-list button')]);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.tap('#export-list button:has-text("STL")')]);
+  const [three] = await Promise.all([page.waitForEvent('download'), page.tap('#export-list button:has-text("3MF")')]);
+  await three.saveAs('test-results/smoke-tray.3mf');
+  const threeOk = readFileSync('test-results/smoke-tray.3mf').subarray(0, 2).toString() === 'PK' && three.suggestedFilename().endsWith('.3mf');
+  if (!threeOk) throw new Error('3MF download failed');
   await download.saveAs('test-results/smoke-tray.stl');
   const stl = readFileSync('test-results/smoke-tray.stl');
   const stlOk = stl.length > 84 && stl.length === 84 + stl.readUInt32LE(80) * 50;

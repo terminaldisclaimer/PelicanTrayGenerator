@@ -6,6 +6,7 @@ import type { Change, ParsedPart, FileKind, Suggestion, TrayInfo } from './worke
 import { DEFAULT_LIFT, DEFAULT_TRAY, fingerCentre, SIDES, type LayoutData, type Side, type TrayOptions } from './geom/tray';
 import { DEFAULT_SHELL, shellExtraHeight, shellPitch, shellProblem, trayInsideShell, type Footprint, type ShellOptions } from './geom/shell';
 import { writeSTL } from './mesh/stl';
+import { write3MF } from './mesh/threemf';
 import { cloudDelete, cloudList, cloudLoad, cloudName, cloudSave, deleteProject, listProjects, loadProject, saveProject, type Project } from './storage';
 import { LARGE_MESH_TRIANGLES } from './mesh/bounds';
 import { fmtDims, fmtLen, MM_PER_IN, type Units } from './units';
@@ -511,14 +512,14 @@ function renderExport() {
   }
   const info = tray, outer = trayShell?.outer;
   const one = info.trays.length === 1;
-  const button = (label: string, file: string, positions: () => Float32Array) => {
+  const save = (label: string, file: string, type: string, data: () => BlobPart, primary = true) => {
     const b = document.createElement('button');
-    b.className = 'btn primary wide';
+    b.className = primary ? 'btn primary wide' : 'btn wide';
     b.textContent = label;
     b.onclick = () => {
-      const url = URL.createObjectURL(new Blob([writeSTL({ name: file.split('-')[0], positions: positions() })], { type: 'model/stl' }));
+      const url = URL.createObjectURL(new Blob([data()], { type }));
       const a = document.createElement('a');
-      a.href = url; a.download = `${file}.stl`;
+      a.href = url; a.download = file;
       document.body.append(a);
       a.click();
       a.remove();
@@ -526,11 +527,25 @@ function renderExport() {
     };
     return b;
   };
+  const button = (label: string, file: string, positions: () => Float32Array) =>
+    save(label, `${file}.stl`, 'model/stl', () => writeSTL({ name: file.split('-')[0], positions: positions() }), false);
+  /** Moved up so the lowest point of the set stands on the bed. */
+  const raised = (p: Float32Array, dz: number) => { if (!dz) return p; const q = p.slice(); for (let j = 2; j < q.length; j += 3) q[j] += dz; return q; };
   const size = (l: number, w: number, h: number) => `${Math.round(l)}x${Math.round(w)}x${Math.round(h)}`;
   list.replaceChildren(
     ...info.trays.flatMap((t, i) => {
       const n = one ? '' : `-${i + 1}`;
-      const out = [button(one ? (info.shells ? 'Download tray STL' : 'Download STL') : `Download tray ${i + 1} STL`, `tray${n}-${size(info.length, info.width, t.depth)}`, () => t.mesh.positions)];
+      const shell3 = info.shells?.[i];
+      // One 3MF with the tray and its shell as separate bodies of one object, assembled as they go together.
+      const out: HTMLButtonElement[] = [save(
+        `Download ${one ? '' : `tray ${i + 1} `}3MF${shell3 ? ' (tray + shell, separate bodies)' : ''}`,
+        `tray${n}-${size(outer?.length ?? info.length, outer?.width ?? info.width, shell3?.height ?? t.depth)}.3mf`, 'model/3mf',
+        () => write3MF([
+          { name: 'tray', positions: raised(t.mesh.positions, shell3?.below ?? 0) },
+          ...(shell3 ? [{ name: 'shell', positions: raised(shell3.mesh.positions, shell3.below) }] : []),
+        ], `tray${n}`) as Uint8Array<ArrayBuffer>,
+      )];
+      out.push(button(one ? (info.shells ? 'Download tray STL' : 'Download STL') : `Download tray ${i + 1} STL`, `tray${n}-${size(info.length, info.width, t.depth)}`, () => t.mesh.positions));
       const shell = info.shells?.[i];
       if (shell && outer)
         out.push(button(one ? 'Download shell STL' : `Download shell ${i + 1} STL`, `shell${n}-${size(outer.length, outer.width, shell.height)}`, () => {

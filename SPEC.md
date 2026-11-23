@@ -260,11 +260,13 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 
 ## 4. Export (Bambu H3C)
 - **STL**: one binary STL per tray, in mm.
-- **3MF**: one per tray (or all trays, one per plate). Built-in plate size is
-  330 × 320 mm, and the filament (PETG/PLA) is assigned per object. Uses the
-  core 3MF spec plus the Bambu Studio `Metadata/model_settings.config` /
-  `project_settings` extensions that Bambu Studio reads for plate and
-  filament assignment.
+- **3MF** (built): one per tray. The tray and its shell are two separate
+  bodies (meshes) inside one object, nested as they go together and standing
+  on the bed, so the slicer can give each body its own filament (TPU tray,
+  PLA/PETG shell). Core 3MF only (components), vertices shared.
+- **Not yet built:** an all-trays project file, plate size and filament
+  assignment written into the file (Bambu Studio `model_settings.config` /
+  `project_settings` extensions).
 - Suggested print settings are shown at export: 0.2 mm layers, 3 walls,
   15 % gyroid, pockets facing up.
 
