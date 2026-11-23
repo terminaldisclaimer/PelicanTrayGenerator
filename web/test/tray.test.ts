@@ -498,11 +498,11 @@ describe('tray', () => {
     mid.delete(); probe.delete(); left.delete(); tray.delete();
   });
 
-  it('lift-out grips: a compact scoop meeting a hole out through the side of the tray and the shell wall', () => {
+  it('lift-out grips: a half-round scoop sloping into a hole out through the side of the tray and the shell wall', () => {
     const o = { ...FAST, length: 160, width: 100, lift: DEFAULT_LIFT };
     const holes = liftHoles(o);
-    // One against each long side, in the middle by default: Ø20 finger hole, Ø24 scoop, 4 mm of tray outside the scoop.
-    expect(holes.map((h) => [h.x, h.y, h.r, h.rb])).toEqual([[0, -34, 12, 10], [0, 34, 12, 10]]);
+    // One against each long side, in the middle by default: Ø20 finger hole, 12 mm half-round scoop right at the tray edge.
+    expect(holes.map((h) => [h.x, h.y, h.r, h.rb])).toEqual([[0, -50, 12, 10], [0, 50, 12, 10]]);
     const parts = [trayPart(boxMesh(60, 30, 34, 'a'), 1), trayPart(boxMesh(50, 30, 12, 'b'), 2)];
     const t = buildTrays(k, parts, o).trays[0];
     const tray = toManifold(k, t.mesh)!;
@@ -510,19 +510,24 @@ describe('tray', () => {
     const area = (z: number, cs: ReturnType<typeof k.CrossSection.circle>) => { const cut = tray.slice(z), kept = cs.intersect(cut); const a = kept.area(); cut.delete(); kept.delete(); return a; };
     for (const h of t.lifts) {
       expect(h.z).toBeCloseTo(t.depth - 14, 6); // 4 mm bridge above a Ø20 hole
-      // The scoop is open from the surface down to the bottom of the side hole, and the floor under it is whole.
-      const core = k.CrossSection.circle(h.rb - 3, 32).translate(h.x, h.y);
-      for (const z of [t.depth - 0.5, t.depth - 10, h.z! - h.rb + 5]) expect(area(z, core)).toBeLessThan(0.5);
-      expect(area(h.z! - h.rb - 1, core) / (Math.PI * 49)).toBeGreaterThan(0.98);
+      const inward = (d: number, r: number) => k.CrossSection.circle(r, 16).translate(h.x, h.y - h.ny * d);
+      // Open just inside the straight side from the surface down to the hole, with the floor under it whole.
+      const near = inward(2, 1);
+      for (const z of [t.depth - 0.5, t.depth - 8, h.z!, h.z! - 2]) expect(area(z, near)).toBeLessThan(0.1);
+      expect(area(h.z! - h.rb - 1, near) / Math.PI).toBeGreaterThan(0.97);
+      // It slopes: 9 mm in from the straight side it is open at the surface but solid at the hole's height.
+      const slope = inward(9, 1);
+      expect(area(t.depth - 0.5, slope)).toBeLessThan(0.1);
+      expect(area(h.z!, slope) / Math.PI).toBeGreaterThan(0.97);
+      // Compact: nothing is cut more than 12 mm in from the straight side.
+      const beyond = inward(14, 1.5);
+      expect(area(t.depth - 0.2, beyond) / (Math.PI * 2.25)).toBeGreaterThan(0.97);
       // The side hole runs out through the edge of the tray at its own height...
       const edge = k.CrossSection.square([8, 3], true).translate(h.x, h.ny * 48.5);
       expect(area(h.z!, edge)).toBeLessThan(0.5);
-      // ...under a bridge of tray that is left whole, to hook a finger under.
-      expect(area(t.depth - 1.5, edge) / 24).toBeGreaterThan(0.99);
-      // It takes no more room along the side than the scoop itself.
-      const beside = k.CrossSection.circle(2, 16).translate(h.x + h.r + 3, h.y);
-      expect(area(t.depth - 0.5, beside)).toBeGreaterThan(12);
-      core.delete(); edge.delete(); beside.delete();
+      // ...and the scoop reaches the edge too, so nothing stands between it and the shell wall.
+      expect(area(t.depth - 0.3, edge)).toBeLessThan(0.5);
+      near.delete(); slope.delete(); beyond.delete(); edge.delete();
     }
     tray.delete();
     // The shell has the same holes through its walls, and its floor is untouched.
@@ -540,7 +545,7 @@ describe('tray', () => {
     const t = r.trays[0];
     expect(t.lifts).toHaveLength(2);
     expect(t.lifts.map((h) => Math.sign(h.y)).sort()).toEqual([-1, 1]); // still one on each long side
-    expect(t.lifts.every((h) => Math.abs(h.y) === 24)).toBe(true); // against their own side
+    expect(t.lifts.every((h) => Math.abs(h.y) === 40)).toBe(true); // against their own side
     expect(t.lifts.every((h) => Math.abs(h.x) > 5)).toBe(true); // moved along it
     // Without lift holes the same part fits trivially; with them fixed in the middle it could not.
     expect(buildTrays(k, [trayPart(boxMesh(60, 50, 10, 'wide'), 1)], { ...o, lift: null }).trays[0].lifts).toEqual([]);

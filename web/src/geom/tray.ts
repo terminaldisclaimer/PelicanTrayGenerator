@@ -70,9 +70,10 @@ const LIFT_FLARE = 2;
 const LIFT_BRIDGE = 4;
 
 /**
- * One lift-out grip in tray coordinates (origin at the tray centre): a round
- * scoop of radius `r` in the top face at (x, y), and a hole of radius `rb`
- * running from the bottom of it out through the nearest side (direction nx, ny).
+ * One lift-out grip in tray coordinates (origin at the tray centre): a
+ * half-round scoop of radius `r` in the top face, its straight side at (x, y)
+ * on the tray's edge, facing that side (direction nx, ny), sloping down into a full
+ * round hole of radius `rb` that runs out through that side.
  */
 export interface LiftHole { x: number; y: number; r: number; rb: number; nx: number; ny: number; /** Height of the side hole's centre above the tray bottom; set when the tray is cut. */ z?: number }
 
@@ -83,13 +84,13 @@ export function liftHoles(o: Pick<TrayOptions, 'length' | 'width' | 'edge' | 'li
   const rb = l.diameter / 2, r = rb + LIFT_FLARE;
   // "Long sides" are the two edges that run along the tray's longer dimension.
   const alongX = (o.length >= o.width) === (l.sides === 'long');
-  if (alongX) return [-1, 1].map((sgn) => ({ x: 0, y: sgn * (o.width / 2 - o.edge - r), r, rb, nx: 0, ny: sgn }));
-  return [-1, 1].map((sgn) => ({ x: sgn * (o.length / 2 - o.edge - r), y: 0, r, rb, nx: sgn, ny: 0 }));
+  if (alongX) return [-1, 1].map((sgn) => ({ x: 0, y: sgn * (o.width / 2), r, rb, nx: 0, ny: sgn }));
+  return [-1, 1].map((sgn) => ({ x: sgn * (o.length / 2), y: 0, r, rb, nx: sgn, ny: 0 }));
 }
 
 /** The round hole of a lift grip: from the scoop's centre straight out through the side. */
 export function liftBore(k: ManifoldToplevel, h: LiftHole, z: number, keep: <T extends { delete(): void }>(x: T) => T): Manifold {
-  const rod = keep(keep(k.Manifold.cylinder(h.r + 100, h.rb, h.rb, 48)).rotate([0, 90, 0])); // along +X
+  const rod = keep(keep(k.Manifold.cylinder(100, h.rb, h.rb, 48)).rotate([0, 90, 0])); // along +X
   return keep(keep(rod.rotate([0, 0, (Math.atan2(h.ny, h.nx) * 180) / Math.PI])).translate(h.x, h.y, z));
 }
 
@@ -342,14 +343,14 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
     const defaultLifts = liftHoles(o);
     const liftGrow = o.wall / 2 + RASTER_SLACK + POLYGON_SLACK;
     /**
-     * Area a lift grip keeps clear, relative to its centre: the scoop grown by its
-     * clearance, running straight out to the tray edge (the side hole is there).
+     * Area a lift grip keeps clear, relative to its centre: the half-round scoop
+     * grown by its clearance.
      */
     const liftLoop = (h: LiftHole): Pt[] => {
-      const R = h.r + liftGrow, E = h.r + o.edge - inset, loop: Pt[] = [];
+      // The grip's centre is on the tray edge, `inset` outside the packing region: keep the part inside it.
+      const R = h.r + liftGrow, a0 = Math.asin(Math.min(1, inset / R)), loop: Pt[] = [];
       const put = (u: number, v: number) => loop.push(h.ny !== 0 ? [u, h.ny * v] : [h.nx * v, u]);
-      for (let i = 0; i <= 24; i++) { const t = Math.PI + (i / 24) * Math.PI; put(R * Math.cos(t), R * Math.sin(t)); }
-      put(R, E); put(-R, E);
+      for (let i = 0; i <= 24; i++) { const t = Math.PI + a0 + (i / 24) * (Math.PI - 2 * a0); put(R * Math.cos(t), Math.min(-inset, R * Math.sin(t))); }
       let area = 0;
       for (let i = 0; i < loop.length; i++) { const [x1, y1] = loop[i], [x2, y2] = loop[(i + 1) % loop.length]; area += x1 * y2 - x2 * y1; }
       return area < 0 ? loop.reverse() : loop;
@@ -530,13 +531,16 @@ function cutPlan(k: ManifoldToplevel, o: TrayOptions, plan: Plan, onProgress?: (
           : keep(keep(keep(k.CrossSection.circle(fingerR, 32)).extrude(h.d + 1)).translate(h.x, h.y, depth - h.d))));
         cuts.push(pieces.length === 1 ? pieces[0] : keep(k.Manifold.hull(pieces)));
       }
-      // Lift-out grips: a scoop in the top face that narrows down into a round
-      // hole running out through the side, leaving a bridge to hook a finger under.
+      // Lift-out grips: a half-round scoop in the top face sloping down into a round
+      // hole that runs out through the side, leaving a bridge to hook a finger under.
       const lifts = (plan.lifts[t] ?? []).map((h) => ({ ...h, z: Math.max(o.floor + h.rb, depth - LIFT_BRIDGE - h.rb) }));
       for (const h of lifts) {
-        const mouth = keep(keep(keep(k.Manifold.sphere(1, 48)).scale([h.r, h.r, 2])).translate(h.x, h.y, depth + 0.5));
-        const pit = keep(keep(k.Manifold.sphere(h.rb, 48)).translate(h.x, h.y, h.z));
-        cuts.push(keep(k.Manifold.hull([mouth, pit])));
+        // Built with "outward" along +X, then turned to face its side.
+        const half = keep(keep(k.CrossSection.circle(h.r, 64)).subtract(keep(keep(k.CrossSection.square([h.r + 1, 2 * h.r + 2])).translate(0, -h.r - 1))));
+        const mouth = keep(keep(half.extrude(1)).translate(0, 0, depth - 0.5));
+        const ring = keep(keep(keep(k.Manifold.cylinder(0.2, h.rb, h.rb, 64)).rotate([0, 90, 0])).translate(-0.2, 0, h.z));
+        const scoop = keep(k.Manifold.hull([mouth, ring]));
+        cuts.push(keep(keep(scoop.rotate([0, 0, (Math.atan2(h.ny, h.nx) * 180) / Math.PI])).translate(h.x, h.y, 0)));
         cuts.push(liftBore(k, h, h.z, keep));
       }
       onProgress?.(0.92, `Building tray ${t + 1}`);
