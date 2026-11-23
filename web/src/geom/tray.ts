@@ -246,7 +246,14 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
       return all;
     };
     /** The pocket opening: the part of the footprint that needs a wall around it. */
-    const openingOf = (pose: TrayPose): CS => keep(keep(k.CrossSection.ofPolygons(pose.silhouette, 'Positive')).offset(o.pocket.clearance, 'Round', 2, 16));
+    const closeR = Math.max(0, (o.pocket.minFeature ?? 0) / 2);
+    const openingOf = (pose: TrayPose): CS => {
+      const outline = keep(k.CrossSection.ofPolygons(pose.silhouette, 'Positive'));
+      const plain = keep(outline.offset(o.pocket.clearance, 'Round', 2, 16));
+      if (closeR <= 0) return plain;
+      // Same bridging of narrow details as the pocket itself.
+      return keep(keep(keep(outline.offset(o.pocket.clearance + closeR, 'Round', 2, 16)).offset(-closeR, 'Round', 2, 16)).add(plain));
+    };
     const grown = (shape: CS) => keep(keep(shape.offset(o.wall / 2 + RASTER_SLACK + POLYGON_SLACK, 'Round', 2, 12)).simplify(0.1)).toPolygons() as Pt[][];
 
     // Footprints already carry half a wall, so the usable region is the tray

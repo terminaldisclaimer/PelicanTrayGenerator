@@ -84,6 +84,11 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   the bottom. Where the part has an undercut (wider below than above), the
   undercut is filled in automatically. Consecutive identical sections are
   merged into one slab; the stack is built as one manifold.
+- **Ignoring small details.** "Ignore part details smaller than" (default
+  0 mm = follow everything) bridges grooves, notches and gaps in the part's
+  outline that are narrower than the setting, at every height, so the pocket
+  wall runs straight across them. It is applied to every part, and only ever
+  makes a pocket roomier.
 - Floor clearance: the cavity is lowered by `c_z` (default 0.2 mm) so the
   part rests on its lowest point without binding.
 - `top_margin` (default 0 mm): optional extra depth so the part sits below

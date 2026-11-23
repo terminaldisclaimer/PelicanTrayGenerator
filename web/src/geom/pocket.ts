@@ -14,6 +14,13 @@ export interface PocketOptions {
   sliceStep: number;
   /** Extra depth so the part sits below the tray surface (mm). */
   topMargin: number;
+  /**
+   * Ignore part details narrower than this (mm): grooves, notches and gaps in
+   * the part's outline that are narrower are bridged, so the pocket wall runs
+   * straight across them instead of following them. 0 = follow everything.
+   * The pocket only ever gets roomier, never tighter.
+   */
+  minFeature?: number;
 }
 
 export const DEFAULT_POCKET: PocketOptions = { clearance: 0.5, floorClearance: 0.2, split: 0.5, sliceStep: 0.2, topMargin: 0 };
@@ -54,7 +61,16 @@ export function buildCavity(k: ManifoldToplevel, mesh: TriMesh, silhouette: Silh
   const trash: { delete(): void }[] = [];
   const keep = <T extends { delete(): void }>(x: T): T => { trash.push(x); return x; };
   try {
-    const grow = (cs: CrossSection) => keep(keep(cs.offset(o.clearance, 'Round', 2, CIRCULAR_SEGMENTS)).simplify(0.01));
+    // Growing by an extra r and shrinking back by r "closes" the outline: any
+    // groove narrower than 2r is filled in, everything else is unchanged.
+    const r = Math.max(0, (o.minFeature ?? 0) / 2);
+    const grow = (cs: CrossSection) => {
+      const plain = keep(cs.offset(o.clearance, 'Round', 2, CIRCULAR_SEGMENTS));
+      if (r <= 0) return keep(plain.simplify(0.01));
+      const closed = keep(keep(cs.offset(o.clearance + r, 'Round', 2, CIRCULAR_SEGMENTS)).offset(-r, 'Round', 2, CIRCULAR_SEGMENTS));
+      // Union with the plain pocket so rounding in the two offsets can never make it tighter anywhere.
+      return keep(keep(closed.add(plain)).simplify(0.01));
+    };
     const top = height + o.topMargin;
     const outline = keep(k.CrossSection.ofPolygons(silhouette, 'Positive'));
     const part = toManifold(k, mesh);

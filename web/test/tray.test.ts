@@ -99,6 +99,29 @@ describe('pocket', () => {
     b.c.solid.delete();
   });
 
+  it('ignores details narrower than the setting, and nothing else', () => {
+    // A 60×30×20 block with a 1.5 mm wide, 4 mm deep groove across one long side, and a 10 mm wide notch in the other.
+    const block = k.Manifold.cube([60, 30, 20]);
+    const groove = k.Manifold.cube([1.5, 4, 20]).translate([20, 0, 0]), notch = k.Manifold.cube([10, 4, 20]).translate([35, 26, 0]);
+    const part = soup(block.subtract(groove).subtract(notch));
+    block.delete(); groove.delete(); notch.delete();
+    const follow = cavityOf(part), smooth = cavityOf(part, { ...DEFAULT_POCKET, minFeature: 3 });
+    // The pocket wall now runs straight across the narrow groove: its 1.5 × 4 mm (less the clearance) is opened up...
+    const a0 = sliceArea(follow.c.solid, 15), a1 = sliceArea(smooth.c.solid, 15);
+    expect(a1 - a0).toBeGreaterThan(0.5);
+    expect(a1 - a0).toBeLessThan(1.5 * 4 + 1);
+    // ...the 10 mm notch is still followed, and the part still fits.
+    expect(a1).toBeLessThan(61 * 31 - 9 * 3.4);
+    expect(leftover(smooth.p.mesh, smooth.c.solid)).toBeLessThan(1e-3);
+    // Under the form-fit line too.
+    expect(sliceArea(smooth.c.solid, 5) - sliceArea(follow.c.solid, 5)).toBeGreaterThan(0.5);
+    follow.c.solid.delete(); smooth.c.solid.delete();
+    // A plain box has no small details: the setting changes nothing.
+    const b0 = cavityOf(boxMesh(40, 20, 10)), b1 = cavityOf(boxMesh(40, 20, 10), { ...DEFAULT_POCKET, minFeature: 3 });
+    expect(b1.c.solid.volume() / b0.c.solid.volume()).toBeCloseTo(1, 3);
+    b0.c.solid.delete(); b1.c.solid.delete();
+  });
+
   it('clearance and top margin are honoured', () => {
     const { c } = cavityOf(boxMesh(40, 20, 10), { ...DEFAULT_POCKET, clearance: 1, topMargin: 3 });
     const b = c.solid.boundingBox();
