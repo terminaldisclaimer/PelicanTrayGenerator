@@ -276,7 +276,9 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
   project"), so it can be added more than once.
 
 ### 3.9 Coiled cables
-"Add a coiled cable" (Parts tab) makes a part from numbers instead of a file.
+"Add parts" opens a short menu: "Upload part files" or "Add a coiled cable".
+The second opens the cable form on the Parts tab (also reachable by scrolling
+there), which makes a part from numbers instead of a file.
 It follows the owner's Fusion 360 "SnakedWire" script.
 - **Coil:** a round cable wound as stacked turns around a rounded rectangle
   (each turn directly on the one below, 0.2 mm apart). You give cable

@@ -132,6 +132,25 @@ async function addFiles(files: Iterable<File>, fromLibrary = false) {
 }
 
 const input = $<HTMLInputElement>('#file-input');
+
+// "Add parts" offers the two ways to add something: upload files, or make a coiled cable.
+const addMenu = $('#add-menu'), addOpen = $('#add-open');
+const showAddMenu = (on: boolean) => {
+  addMenu.hidden = !on;
+  addOpen.setAttribute('aria-expanded', String(on));
+  if (on && sheet.snap === 'peek') sheet.open('half'); // room for the menu on a phone
+};
+addOpen.addEventListener('click', (e) => { e.stopPropagation(); showAddMenu(addMenu.hidden !== false); });
+document.addEventListener('click', (e) => { if (!addMenu.hidden && !addMenu.contains(e.target as Node)) showAddMenu(false); });
+addMenu.querySelector('label')!.addEventListener('click', () => setTimeout(() => showAddMenu(false), 0));
+$('#add-cable').addEventListener('click', () => {
+  showAddMenu(false);
+  document.querySelector<HTMLButtonElement>('.tab[data-tab="parts"]')?.click();
+  const form = $('#cable') as HTMLDetailsElement;
+  form.open = true;
+  sheet.open('full'); // the form is long: give it the whole sheet
+  setTimeout(() => form.scrollIntoView({ block: 'start', behavior: 'smooth' }), 250);
+});
 input.addEventListener('change', () => {
   if (input.files?.length) addFiles(input.files);
   input.value = '';

@@ -32,10 +32,14 @@
         </div>
         <div class="head-actions">
           <button id="save-now" class="btn">Save</button>
-          <label class="btn primary" for="file-input">
-            Add parts
+          <div class="add-wrap">
+            <button id="add-open" class="btn primary" aria-haspopup="menu" aria-expanded="false">Add parts</button>
+            <div id="add-menu" class="menu" role="menu" hidden>
+              <label class="btn" role="menuitem" for="file-input">Upload part files (STL / 3MF)</label>
+              <button id="add-cable" class="btn" role="menuitem">Add a coiled cable</button>
+            </div>
             <input id="file-input" type="file" accept=".stl,.3mf,model/stl,model/3mf,application/vnd.ms-pki.stl,application/octet-stream" multiple hidden />
-          </label>
+          </div>
         </div>
       </div>
       <nav class="tabs" role="tablist">
