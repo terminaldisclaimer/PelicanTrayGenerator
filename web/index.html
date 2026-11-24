@@ -67,52 +67,26 @@
                 <button role="radio" data-cmir="1" aria-checked="false">Other way</button>
               </div>
             </div>
-            <h3>End on the top turn</h3>
-            <label class="row"><span>How it leaves the coil</span>
-              <select id="cable-top-style" class="btn">
-                <option value="inside">Into the middle</option>
-                <option value="end">Straight out, in line with the coil</option>
-                <option value="side">Straight out sideways</option>
-                <option value="j">J beside the coil</option>
-                <option value="none">None (stops on the coil)</option>
-              </select>
-            </label>
-            <div id="cable-top-rows">
-              <label class="row"><span>At which end of the coil</span>
-                <select id="cable-top-end" class="btn">
-                  <option value="auto">Either (closest fit)</option>
-                  <option value="left">Left</option>
-                  <option value="right">Right</option>
-                </select>
-              </label>
-              <label class="row"><span id="cable-top-len-label">Lead length</span><input class="num" id="cable-top-len" inputmode="decimal" autocomplete="off" /></label>
-              <label class="row" id="cable-top-jw-row"><span>J width across its U-turn (<span class="u">mm</span>)</span><input class="num" id="cable-top-jw" inputmode="decimal" autocomplete="off" /></label>
-              <label class="row"><span>Connector</span><select id="cable-top-conn" class="btn"></select></label>
-              <div class="row"><span id="cable-top-info" class="muted small"></span><span><button class="btn" id="cable-top-turn">Turn</button> <button class="btn" id="cable-top-roll">Roll</button></span></div>
+            <h3>The two ends</h3>
+            <p class="muted small">Seen from above. Drag the round handle on the coil to move where an end leaves it. Drag the square handle at the tip to swing it to any angle and change its length.</p>
+            <svg id="cable-edit" role="img" aria-label="Cable seen from above, with handles to move its two ends"></svg>
+            <div class="seg" role="radiogroup" aria-label="Which end to edit" id="cable-which">
+              <button role="radio" data-cend="top" aria-checked="true">End on the top turn</button>
+              <button role="radio" data-cend="bottom" aria-checked="false">End on the bottom turn</button>
             </div>
-            <h3>End on the bottom turn</h3>
-            <label class="row"><span>How it leaves the coil</span>
-              <select id="cable-bottom-style" class="btn">
-                <option value="inside">Into the middle</option>
-                <option value="end">Straight out, in line with the coil</option>
-                <option value="side">Straight out sideways</option>
-                <option value="j">J beside the coil</option>
-                <option value="none">None (stops on the coil)</option>
-              </select>
-            </label>
-            <div id="cable-bottom-rows">
-              <label class="row"><span>At which end of the coil</span>
-                <select id="cable-bottom-end" class="btn">
-                  <option value="auto">Either (closest fit)</option>
-                  <option value="left">Left</option>
-                  <option value="right">Right</option>
-                </select>
-              </label>
-              <label class="row"><span id="cable-bottom-len-label">Lead length</span><input class="num" id="cable-bottom-len" inputmode="decimal" autocomplete="off" /></label>
-              <label class="row" id="cable-bottom-jw-row"><span>J width across its U-turn (<span class="u">mm</span>)</span><input class="num" id="cable-bottom-jw" inputmode="decimal" autocomplete="off" /></label>
-              <label class="row"><span>Connector</span><select id="cable-bottom-conn" class="btn"></select></label>
-              <div class="row"><span id="cable-bottom-info" class="muted small"></span><span><button class="btn" id="cable-bottom-turn">Turn</button> <button class="btn" id="cable-bottom-roll">Roll</button></span></div>
+            <div class="chips" id="cable-presets">
+              <button class="btn" data-cpre="inline">In line</button>
+              <button class="btn" data-cpre="side">Sideways</button>
+              <button class="btn" data-cpre="j">J</button>
+              <button class="btn" data-cpre="middle">Into the middle</button>
+              <button class="btn" data-cpre="none">None</button>
+              <button class="btn" id="cable-flip">Other end of coil</button>
             </div>
+            <label class="row"><span>Bend (degrees; + toward the middle, − away, 0 in line)</span><input class="num" id="cable-angle" inputmode="text" autocomplete="off" /></label>
+            <label class="row"><span>Length after the bend (<span class="u">mm</span>)</span><input class="num" id="cable-leadlen" inputmode="decimal" autocomplete="off" /></label>
+            <label class="row"><span>Bend radius (<span class="u">mm</span>)</span><input class="num" id="cable-radius" inputmode="decimal" autocomplete="off" /></label>
+            <label class="row"><span>Connector</span><select id="cable-conn" class="btn"></select></label>
+            <div class="row"><span id="cable-info" class="muted small"></span><span><button class="btn" id="cable-turn">Turn</button> <button class="btn" id="cable-roll">Roll</button></span></div>
             <button id="cable-build" class="btn primary wide">Add cable</button>
             <p id="cable-status" class="muted small"></p>
           </details>

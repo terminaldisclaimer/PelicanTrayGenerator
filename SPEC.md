@@ -287,21 +287,23 @@ It follows the owner's Fusion 360 "SnakedWire" script.
   number of half turns over-constrain it, so the coil length flexes a few
   millimetres (grow or shrink, whichever is smaller) to make the cable
   length exact; the status line reports the result.
-- **Two ends, each set up on its own:** the end on the top turn and the end
-  on the bottom turn each choose how they leave the coil:
-  - *Into the middle*: bends inward at a short end and runs along the long
-    axis into the hollow (90 degrees to that end of the coil).
-  - *Straight out, in line with the coil*: carries straight on past the
-    corner, along the long side it was running on.
-  - *Straight out sideways*: the same from a short end, so it sticks out
-    past a long side.
-  - *J beside the coil*: past the corner, a U-turn level with the end of the
-    coil, then back along the outside of the long side (length and width).
-  - *None*: the cable stops on the coil.
-  Each also chooses the end of the coil it is at (left, right, or "either",
-  which takes whichever changes the coil length least) and its length.
-  Which long side an outside lead lands on follows from the winding
-  direction; "Wound: other way" mirrors the cable to swap sides.
+- **Two ends, each set up on its own**, one leaving the top turn and one the
+  bottom turn. An end is described by where it leaves the coil (anywhere on
+  the loop), a bend through any angle (+ toward the middle of the coil, −
+  away from it, 0 = straight on, in line with the coil) on a chosen radius,
+  and a straight length after the bend.
+- **Editing them by hand:** the form shows the cable from above. Each end
+  has two handles: a round one on the coil, dragged along the coil to move
+  where the end leaves it (it snaps to where a straight meets a corner), and
+  a square one at the tip, dragged to swing the end to any angle and set its
+  length together (it prefers multiples of 15 degrees). The picture is
+  worked out again on every movement; the 3D cable follows when the handle
+  is let go. The bend, length and radius can also be typed.
+- **Ready-made ends** (buttons): In line, Sideways (straight out past a long
+  side from a short end), J (your script's), Into the middle (your
+  script's centre lead), None. "Other end of coil" moves the end half a
+  turn round. Which long side an outside end lands on follows from the
+  winding direction; "Wound: other way" mirrors the cable.
 - **Connectors:** each end can carry a model from the library. It is put on
   the cable's end, centred on it, pointing along it. "Turn" points a
   different side of the model along the cable (6 ways; default is its
@@ -309,9 +311,8 @@ It follows the owner's Fusion 360 "SnakedWire" script.
   a connector climbs or drops (two bends) so the connector stays within the
   height of the stack: top level with the top of the stack for the top-turn
   end and for any end in the middle, bottom level with the bottom of the
-  stack for an outside end on the bottom turn. A connector in the middle
-  must fit the hollow, clear of the far end.
-- Once a cable is on screen, every change to the form redraws it.
+  stack for an outside end on the bottom turn. A connector must lie wholly
+  in the hollow or wholly outside the coil, not across the cable.
 - It is refused, with the reason, if the cable would run into itself, the
   radii cannot be wound, or the centre connector does not fit.
 - The result is one ordinary part (cable and connectors joined), lying flat
@@ -320,9 +321,9 @@ It follows the owner's Fusion 360 "SnakedWire" script.
 - Changing the form and pressing "Update cable" replaces that part. After a
   reload the cable is a plain part: the form keeps its last values, and
   pressing the button adds a new cable.
-- **Not built:** a check that connectors do not run into each other or into
-  the cable (they are simply joined; look at the picture); leads at other
-  angles; flat or oval cables; more than one editable cable at a time.
+- **Not built:** a check that the two connectors do not run into each other
+  or into the other end's lead; turning a connector by dragging (Turn and
+  Roll are buttons); flat or oval cables; more than one editable cable at a time.
 
 ## 4. Export (Bambu H3C)
 - **STL**: one binary STL per tray, in mm.

@@ -7,7 +7,7 @@ import { DEFAULT_LIFT, DEFAULT_TRAY, fingerCentre, SIDES, type LayoutData, type 
 import { DEFAULT_SHELL, shellExtraHeight, shellPitch, shellProblem, trayInsideShell, type Footprint, type ShellOptions } from './geom/shell';
 import { parseSTL, writeSTL } from './mesh/stl';
 import { parse3MF, write3MF } from './mesh/threemf';
-import { CableError, CONNECTOR_ROLLS, CONNECTOR_TURNS, DEFAULT_CABLE, defaultConnectorAxis, orientConnector, placeConnector, solveCable, tubeMesh, type CableSpec, type LeadStyle } from './geom/cable';
+import { CableError, CONNECTOR_ROLLS, CONNECTOR_TURNS, DEFAULT_CABLE, defaultConnectorAxis, orientConnector, placeConnector, leadTip, nearestAt, presetLead, solveCable, tubeMesh, type CableSpec, type LeadPreset, type LeadSpec, type OrientedConnector, type SolvedCable } from './geom/cable';
 import type { TriMesh } from './mesh/types';
 import { cloudDelete, cloudList, cloudLoad, cloudName, cloudSave, deleteProject, listProjects, loadProject, saveProject, type Project } from './storage';
 import { LARGE_MESH_TRIANGLES } from './mesh/bounds';
@@ -1214,21 +1214,37 @@ $('#library-delete-folder').addEventListener('click', async () => {
 });
 // ---------- coiled cable (a generated part: stacked coil, a lead at each end, connector models on the ends) ----------
 type Which = 'top' | 'bottom';
-interface LeadSettings { style: LeadStyle; end: 'left' | 'right' | 'auto'; len: number; jW: number; conn: string; /** Which way the model points along the cable (0..5), or null = its longest side. */ axis: number | null; roll: number }
+interface LeadSettings { at: number; stem: number; angle: number; radius: number; length: number; conn: string; /** Which way the model points along the cable (0..5), or null = its longest side. */ axis: number | null; roll: number }
 interface CableSettings { d: number; len: number; l: number; w: number; r: number; mirror: boolean; top: LeadSettings; bottom: LeadSettings }
+const noConn = { conn: '', axis: null, roll: 0 };
 let cable: CableSettings = {
   d: DEFAULT_CABLE.wireD, len: DEFAULT_CABLE.totalLen, l: DEFAULT_CABLE.outerL, w: DEFAULT_CABLE.outerW, r: DEFAULT_CABLE.cornerR, mirror: false,
-  top: { style: 'j', end: 'left', len: 50, jW: 20, conn: '', axis: null, roll: 0 },
-  bottom: { style: 'inside', end: 'auto', len: 5, jW: 20, conn: '', axis: null, roll: 0 },
+  top: { ...DEFAULT_CABLE.top, ...noConn }, bottom: { ...DEFAULT_CABLE.bottom, ...noConn },
 };
 try {
-  const saved = JSON.parse(localStorage.getItem('cable2') || '{}');
+  const saved = JSON.parse(localStorage.getItem('cable3') || '{}');
   cable = { ...cable, ...saved, top: { ...cable.top, ...saved.top }, bottom: { ...cable.bottom, ...saved.bottom } };
 } catch { /* ignore */ }
 /** The cable part made from this form, so changing the form updates it instead of adding another. */
 let cablePartId: number | null = null;
 const connectorMeshes = new Map<string, TriMesh>();
 const ENDS: Which[] = ['top', 'bottom'];
+/** The end the controls under the drawing belong to. */
+let cableEnd: Which = 'top';
+/** Each end's connector as it is turned now (loaded from the library in the background). */
+const turned: Record<Which, { o: OrientedConnector; name: string } | null> = { top: null, bottom: null };
+/** The last coil that could be worked out: what the drawing shows and what dragging measures against. */
+let cableShown: SolvedCable | null = null;
+/** True while a handle in the drawing is being dragged. */
+let cableHeld = false;
+
+const cableSpec = (c: CableSettings): CableSpec => {
+  const lead = (n: Which): LeadSpec => {
+    const t = c[n].conn ? turned[n] : null;
+    return { at: c[n].at, stem: c[n].stem, angle: c[n].angle, radius: c[n].radius, length: c[n].length, connector: t ? { height: t.o.height, width: t.o.width, length: t.o.length } : null };
+  };
+  return { wireD: c.d, totalLen: c.len, outerL: c.l, outerW: c.w, cornerR: c.r, gap: DEFAULT_CABLE.gap, fit: 'nearest', climbR: Math.max(8, 1.3 * c.d), mirror: c.mirror, top: lead('top'), bottom: lead('bottom') };
+};
 
 function fillCable() {
   num('#cable-d').value = fromMM(cable.d);
@@ -1237,42 +1253,28 @@ function fillCable() {
   num('#cable-w').value = fromMM(cable.w);
   num('#cable-r').value = fromMM(cable.r);
   document.querySelectorAll<HTMLButtonElement>('[data-cmir]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.cmir === '1') === cable.mirror)));
-  for (const n of ENDS) {
-    const e = cable[n];
-    ($(`#cable-${n}-style`) as HTMLSelectElement).value = e.style;
-    ($(`#cable-${n}-end`) as HTMLSelectElement).value = e.end;
-    num(`#cable-${n}-len`).value = fromMM(e.len);
-    num(`#cable-${n}-jw`).value = fromMM(e.jW);
-  }
-  showCableRows();
-  fillConnectors();
+  fillCableEnd();
   document.querySelectorAll('#cable .u').forEach((e) => (e.textContent = units));
 }
 
-function showCableRows() {
-  for (const n of ENDS) {
-    const e = cable[n];
-    $(`#cable-${n}-rows`).hidden = e.style === 'none';
-    $(`#cable-${n}-jw-row`).hidden = e.style !== 'j';
-    $(`#cable-${n}-len-label`).textContent =
-      (e.style === 'j' ? 'J length, from its U-turn to its tip' : e.style === 'inside' ? 'Straight run at the end' : 'Length past the coil') + ` (${units})`;
-  }
+/** The controls under the drawing, for whichever end is selected. */
+function fillCableEnd() {
+  const e = cable[cableEnd];
+  document.querySelectorAll<HTMLButtonElement>('[data-cend]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.cend === cableEnd)));
+  num('#cable-angle').value = String(+e.angle.toFixed(1));
+  num('#cable-leadlen').value = fromMM(e.length);
+  num('#cable-radius').value = fromMM(e.radius);
+  const el = $('#cable-conn') as HTMLSelectElement;
+  const opt = (value: string, label: string) => { const o = document.createElement('option'); o.value = value; o.textContent = label; o.selected = value === e.conn; return o; };
+  const items = [...(libraryItems ?? [])].sort((a, b) => (a.folder ?? '').localeCompare(b.folder ?? '') || a.name.localeCompare(b.name));
+  el.replaceChildren(opt('', 'None (bare end)'), ...items.map((it) => opt(it.name, `${it.folder ? `${it.folder} / ` : ''}${it.name.replace(/\.(stl|3mf)$/i, '')}`)));
+  // Keep a saved choice visible even before the library has loaded.
+  if (e.conn && !items.some((it) => it.name === e.conn)) el.append(opt(e.conn, e.conn.replace(/\.(stl|3mf)$/i, '')));
+  for (const b of ['#cable-turn', '#cable-roll']) ($(b) as HTMLButtonElement).disabled = !e.conn;
+  const t = e.conn ? turned[cableEnd] : null;
+  $('#cable-info').textContent = t ? `${fmtLen(t.o.length, units)} long × ${fmtLen(t.o.width, units)} wide × ${fmtLen(t.o.height, units)} tall ${units}` : '';
 }
-
-/** Connector pickers: none, or any part in the library. */
-function fillConnectors() {
-  for (const n of ENDS) {
-    const c = cable[n];
-    const el = $(`#cable-${n}-conn`) as HTMLSelectElement;
-    const opt = (value: string, label: string) => { const o = document.createElement('option'); o.value = value; o.textContent = label; o.selected = value === c.conn; return o; };
-    const items = [...(libraryItems ?? [])].sort((a, b) => (a.folder ?? '').localeCompare(b.folder ?? '') || a.name.localeCompare(b.name));
-    el.replaceChildren(opt('', 'None (bare end)'), ...items.map((it) => opt(it.name, `${it.folder ? `${it.folder} / ` : ''}${it.name.replace(/\.(stl|3mf)$/i, '')}`)));
-    // Keep a saved choice visible even before the library has loaded.
-    if (c.conn && !items.some((it) => it.name === c.conn)) el.append(opt(c.conn, c.conn.replace(/\.(stl|3mf)$/i, '')));
-    for (const b of [`#cable-${n}-turn`, `#cable-${n}-roll`]) ($(b) as HTMLButtonElement).disabled = !c.conn;
-    if (!c.conn) $(`#cable-${n}-info`).textContent = '';
-  }
-}
+const fillConnectors = fillCableEnd;
 
 async function connectorMesh(name: string): Promise<TriMesh> {
   const have = connectorMeshes.get(name);
@@ -1290,8 +1292,18 @@ async function connectorMesh(name: string): Promise<TriMesh> {
   return mesh;
 }
 
-/** Read the form into settings (mm), or return what is wrong with it. */
-function readCable(): CableSettings | string {
+/** Load and turn each end's connector model, so its size is known to the coil sums and the drawing. */
+async function turnConnectors() {
+  for (const n of ENDS) {
+    const e = cable[n];
+    if (!e.conn) { turned[n] = null; continue; }
+    const mesh = await connectorMesh(e.conn);
+    turned[n] = { o: orientConnector(mesh, e.axis ?? defaultConnectorAxis(mesh), e.roll), name: mesh.name };
+  }
+}
+
+/** Read the number boxes into the settings (mm). Returns what is wrong, or null. */
+function readCable(): string | null {
   const v = (id: string) => toMM(parseFloat(num(id).value.replace(',', '.')));
   const d = v('#cable-d'), len = v('#cable-len'), l = v('#cable-l'), w = v('#cable-w'), r = v('#cable-r');
   if (![d, len, l, w, r].every(Number.isFinite)) return 'Fill in the cable and coil sizes.';
@@ -1299,20 +1311,113 @@ function readCable(): CableSettings | string {
   if (!(len >= 10 && len <= 30000)) return 'Cable length must be between 10 mm and 30 m.';
   if (!(w >= 3 * d)) return `The coil must be at least ${fmtLen(3 * d, units)} ${units} wide (three cable diameters), so it has a hollow middle.`;
   if (!(l >= w)) return 'Coil length must be at least the coil width.';
-  const out = { ...cable, d, len, l, w, r };
-  for (const n of ENDS) {
-    const e = { ...cable[n] };
-    e.style = ($(`#cable-${n}-style`) as HTMLSelectElement).value as LeadStyle;
-    e.end = ($(`#cable-${n}-end`) as HTMLSelectElement).value as LeadSettings['end'];
-    if (e.style !== 'none') {
-      e.len = v(`#cable-${n}-len`);
-      if (!(e.len >= 0)) return `Enter a length for the end on the ${n} turn (0 or more).`;
-      if (e.style === 'j') { e.jW = v(`#cable-${n}-jw`); if (!(e.jW > 0)) return `Enter the J width for the end on the ${n} turn.`; }
-    }
-    out[n] = e;
-  }
-  return out;
+  const angle = parseFloat(num('#cable-angle').value.replace(',', '.').replace('−', '-')), length = v('#cable-leadlen'), radius = v('#cable-radius');
+  if (!(Math.abs(angle) <= 180)) return 'The bend must be between −180 and 180 degrees.';
+  if (!(length >= 0)) return 'The length after the bend must be 0 or more.';
+  if (!(radius > 0)) return 'Enter a bend radius.';
+  cable = { ...cable, d, len, l, w, r, [cableEnd]: { ...cable[cableEnd], angle, length, radius } };
+  return null;
 }
+
+const END_COLOUR: Record<Which, string> = { top: 'top', bottom: 'bottom' };
+/** Work the coil out again and redraw it from above. Fast enough to run on every drag movement. */
+function previewCable(): SolvedCable | null {
+  const status = $('#cable-status');
+  try {
+    cableShown = solveCable(cableSpec(cable));
+    const f = cableShown.footprint;
+    status.textContent = `${cableShown.turns.toFixed(2)} turns. Coil ${fmtDims([f.length, f.width, f.height], units)} (you asked for ${fmtLen(cable.l, units)} long). Hollow middle ${fmtLen(cableShown.hollow.length, units)} × ${fmtLen(cableShown.hollow.width, units)} ${units}.`;
+    drawCable(cableShown);
+    return cableShown;
+  } catch (e) {
+    status.textContent = e instanceof Error ? e.message : String(e);
+    return null;
+  }
+}
+
+function drawCable(c: SolvedCable) {
+  const svg = $('#cable-edit') as unknown as SVGSVGElement;
+  // Corners of each connector, seen from above.
+  const box = (n: Which): [number, number][] | null => {
+    const t = cable[n].conn ? turned[n] : null;
+    if (!t) return null;
+    const { at, dir } = c.ends[n], [dx, dy] = dir, hw = t.o.width / 2;
+    return [[at[0] - dy * hw, at[1] + dx * hw], [at[0] + dx * t.o.length - dy * hw, at[1] + dy * t.o.length + dx * hw], [at[0] + dx * t.o.length + dy * hw, at[1] + dy * t.o.length - dx * hw], [at[0] + dy * hw, at[1] - dx * hw]];
+  };
+  const boxes = { top: box('top'), bottom: box('bottom') };
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  const grow = (x: number, y: number) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
+  for (const p of c.path) grow(p[0], p[1]);
+  for (const n of ENDS) for (const p of boxes[n] ?? []) grow(p[0], p[1]);
+  const pad = Math.max(14, cable.d * 2.5);
+  // The far side is drawn at the top, so the picture is flipped top to bottom.
+  // While a handle is held the picture keeps its scale, so the handle stays under the finger.
+  if (!cableHeld || !svg.getAttribute('viewBox')) svg.setAttribute('viewBox', `${x0 - pad} ${-(y1 + pad)} ${x1 - x0 + 2 * pad} ${y1 - y0 + 2 * pad}`);
+  const view = svg.viewBox.baseVal;
+  const el = (tag: string, attrs: Record<string, string | number>, cls = '') => { const e = document.createElementNS(SVG, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v)); if (cls) e.setAttribute('class', cls); return e; };
+  const kids: Element[] = [el('polyline', { points: c.path.map((p) => `${p[0].toFixed(2)},${(-p[1]).toFixed(2)}`).join(' '), 'stroke-width': cable.d }, 'wire')];
+  // Handles are sized by the picture, so a thumb can take hold of them whatever the coil's size.
+  const unit = Math.max(view.width / Math.max(1, svg.clientWidth || 340), view.height / Math.max(1, svg.clientHeight || 260)), hr = 8 * unit, hit = 22 * unit;
+  for (const n of ENDS) {
+    const b = boxes[n], cls = END_COLOUR[n], sel = n === cableEnd ? ' sel' : '';
+    if (b) kids.push(el('polygon', { points: b.map((p) => `${p[0].toFixed(2)},${(-p[1]).toFixed(2)}`).join(' '), 'stroke-width': unit * 1.5 }, `conn-${cls}`));
+    const j = c.leads[n].junction, t = c.ends[n].at;
+    kids.push(el('circle', { cx: j[0], cy: -j[1], r: hr, 'stroke-width': unit * 2 }, `h-${cls}${sel}`));
+    kids.push(el('rect', { x: t[0] - hr, y: -t[1] - hr, width: 2 * hr, height: 2 * hr, 'stroke-width': unit * 2 }, `h-${cls}${sel}`));
+    // Bigger invisible targets on top; the tip's goes last so it wins where the two overlap.
+    const grab = (x: number, y: number, part: 'junction' | 'tip') => { const g = el('circle', { cx: x, cy: -y, r: hit }, 'hit'); g.setAttribute('data-end', n); g.setAttribute('data-part', part); return g; };
+    kids.push(grab(j[0], j[1], 'junction'), grab(t[0], t[1], 'tip'));
+  }
+  svg.replaceChildren(...kids);
+}
+
+/** Move the end being dragged to follow the pointer (x, y in mm, seen from above). */
+function dragCable(n: Which, part: 'junction' | 'tip', x: number, y: number) {
+  const shown = cableShown;
+  if (!shown) return;
+  const e = cable[n];
+  if (part === 'junction') e.at = nearestAt({ ...cableSpec(cable) }, shown.footprint.length, x, y);
+  else {
+    // Find the bend and length that put the tip nearest the pointer: try every degree, and for each take the best length.
+    const { junction, heading, turn } = shown.leads[n];
+    let best = { err: Infinity, angle: e.angle, length: e.length };
+    for (let a = -180; a <= 180; a++) {
+      const base = leadTip(junction, heading, turn, e.stem, a, e.radius, 0);
+      const length = Math.max(0, (x - base.at[0]) * Math.cos(base.heading) + (y - base.at[1]) * Math.sin(base.heading));
+      const err = Math.hypot(base.at[0] + Math.cos(base.heading) * length - x, base.at[1] + Math.sin(base.heading) * length - y);
+      // Prefer the tidy angles when they are nearly as good.
+      const tidy = a % 15 === 0 ? 2.5 : 0;
+      if (err - tidy < best.err) best = { err: err - tidy, angle: a, length };
+    }
+    e.angle = best.angle;
+    e.length = Math.round(best.length);
+  }
+  cableEnd = n;
+  fillCableEnd();
+  previewCable();
+}
+
+{
+  const svg = $('#cable-edit') as unknown as SVGSVGElement;
+  let held: { n: Which; part: 'junction' | 'tip' } | null = null;
+  const where = (ev: PointerEvent) => { const m = svg.getScreenCTM(); if (!m) return null; const p = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(m.inverse()); return [p.x, -p.y] as const; };
+  svg.addEventListener('pointerdown', (ev) => {
+    const t = ev.target as Element;
+    const n = t.getAttribute('data-end') as Which | null, part = t.getAttribute('data-part') as 'junction' | 'tip' | null;
+    if (!n || !part) return;
+    ev.preventDefault();
+    held = { n, part };
+    cableHeld = true;
+    svg.setPointerCapture(ev.pointerId);
+    if (cableEnd !== n) { cableEnd = n; fillCableEnd(); if (cableShown) drawCable(cableShown); }
+  });
+  svg.addEventListener('pointermove', (ev) => { if (!held) return; const p = where(ev); if (p) dragCable(held.n, held.part, p[0], p[1]); });
+  const drop = () => { if (!held) return; held = null; cableHeld = false; if (cableShown) drawCable(cableShown); saveCable(); cableChanged(); };
+  svg.addEventListener('pointerup', drop);
+  svg.addEventListener('pointercancel', drop);
+}
+
+const saveCable = () => { try { localStorage.setItem('cable3', JSON.stringify(cable)); } catch { /* private mode */ } };
 
 /** One build at a time: a change made while one is running is picked up by a rerun, never a second cable. */
 let cableBusy = false, cableAgain = false;
@@ -1325,34 +1430,19 @@ async function buildCable() {
 }
 async function buildCableOnce() {
   const status = $('#cable-status');
-  const c = readCable();
-  if (typeof c === 'string') { status.textContent = c; return; }
-  cable = c;
-  try { localStorage.setItem('cable2', JSON.stringify(c)); } catch { /* private mode */ }
+  const wrong = readCable();
+  if (wrong) { status.textContent = wrong; return; }
+  saveCable();
   try {
     showProgress(0.05, 'Working out the coil');
-    const oriented = async (n: Which) => {
-      const e = c[n];
-      if (!e.conn || e.style === 'none') return null;
-      const mesh = await connectorMesh(e.conn);
-      const o = orientConnector(mesh, e.axis ?? defaultConnectorAxis(mesh), e.roll);
-      $(`#cable-${n}-info`).textContent = `${fmtLen(o.length, units)} long × ${fmtLen(o.width, units)} wide × ${fmtLen(o.height, units)} tall ${units}`;
-      return { o, name: mesh.name };
-    };
-    const k = { top: await oriented('top'), bottom: await oriented('bottom') };
-    // Bend radii follow the cable: gentle enough to wind, tight enough to fit this coil.
-    const straight = Math.max(0, c.w - c.d - 2 * c.r);
-    const turnInR = Math.max(c.d / 2 + 0.5, Math.min(Math.max(8, 1.3 * c.d), Math.max(straight / 2, (c.r + straight / 2) / 2) - 0.01));
-    const leadSpec = (n: Which) => ({ style: c[n].style, end: c[n].end, length: c[n].len, jWidth: c[n].jW, connector: k[n] ? { height: k[n]!.o.height, width: k[n]!.o.width, length: k[n]!.o.length } : null });
-    const spec: CableSpec = {
-      wireD: c.d, totalLen: c.len, outerL: c.l, outerW: c.w, cornerR: c.r, gap: DEFAULT_CABLE.gap, fit: 'nearest',
-      turnInR, climbR: Math.max(8, 1.3 * c.d), mirror: c.mirror, top: leadSpec('top'), bottom: leadSpec('bottom'),
-    };
-    const solved = solveCable(spec);
+    await turnConnectors();
+    fillCableEnd();
+    const c = cable, solved = previewCable();
+    if (!solved) { hideProgress(); return; }
     const bodies: TriMesh[] = [tubeMesh(solved.path, c.d)];
-    for (const n of ENDS) if (k[n]) bodies.push(placeConnector(k[n]!.o, solved.ends[n], k[n]!.name));
-    const names = ENDS.map((n) => k[n]?.name).filter(Boolean);
-    const name = `Cable ${fmtLen(c.d, units)} × ${fmtLen(c.len, units)} ${units}${names.length ? ` (${names.join(' + ')})` : ''}`;
+    const used = ENDS.filter((n) => c[n].conn && turned[n]);
+    for (const n of used) bodies.push(placeConnector(turned[n]!.o, solved.ends[n], turned[n]!.name));
+    const name = `Cable ${fmtLen(c.d, units)} × ${fmtLen(c.len, units)} ${units}${used.length ? ` (${used.map((n) => turned[n]!.name).join(' + ')})` : ''}`;
     const replace = cablePartId !== null && parts.some((p) => p.partId === cablePartId) ? cablePartId : undefined;
     const hadTray = !!tray;
     const part = await geo.cable(name, bodies, replace, (fr, label) => showProgress(fr, label));
@@ -1361,10 +1451,7 @@ async function buildCableOnce() {
     hideProgress();
     refresh(replace === undefined);
     if (hadTray) generateTray();
-    const f = solved.footprint;
-    status.textContent =
-      `${solved.turns.toFixed(2)} turns. Coil ${fmtDims([f.length, f.width, f.height], units)} (you asked for ${fmtLen(c.l, units)} long); ` +
-      `whole part ${fmtDims(part.size, units)}. Hollow middle ${fmtLen(solved.hollow.length, units)} × ${fmtLen(solved.hollow.width, units)} ${units}.`;
+    status.textContent += ` Whole part ${fmtDims(part.size, units)}.`;
     $('#cable-build').textContent = 'Update cable';
   } catch (e) {
     hideProgress();
@@ -1372,35 +1459,56 @@ async function buildCableOnce() {
   }
 }
 
-/** Once a cable is on screen, any change to the form redraws it straight away. */
-const cableChanged = () => { if (cablePartId !== null && parts.some((p) => p.partId === cablePartId)) buildCable(); };
+/** After a change: redraw the picture, and the 3D cable too once there is one. */
+async function cableChanged() {
+  if (cablePartId !== null && parts.some((p) => p.partId === cablePartId)) { await buildCable(); return; }
+  const wrong = readCable();
+  if (wrong) { $('#cable-status').textContent = wrong; return; }
+  saveCable();
+  try { await turnConnectors(); } catch (e) { $('#cable-status').textContent = e instanceof Error ? e.message : String(e); return; }
+  fillCableEnd();
+  previewCable();
+}
 $('#cable-build').addEventListener('click', buildCable);
+($('#cable') as HTMLDetailsElement).addEventListener('toggle', () => { if (($('#cable') as HTMLDetailsElement).open) cableChanged(); });
 document.querySelectorAll<HTMLButtonElement>('[data-cmir]').forEach((b) => b.addEventListener('click', () => {
   cable.mirror = b.dataset.cmir === '1';
   document.querySelectorAll<HTMLButtonElement>('[data-cmir]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
   cableChanged();
 }));
-for (const n of ENDS) {
-  ($(`#cable-${n}-style`) as HTMLSelectElement).addEventListener('change', (e) => { cable[n].style = (e.target as HTMLSelectElement).value as LeadStyle; showCableRows(); cableChanged(); });
-  ($(`#cable-${n}-end`) as HTMLSelectElement).addEventListener('change', cableChanged);
-  ($(`#cable-${n}-conn`) as HTMLSelectElement).addEventListener('change', (e) => {
-    cable[n] = { ...cable[n], conn: (e.target as HTMLSelectElement).value, axis: null, roll: 0 };
-    fillConnectors();
-    cableChanged();
-  });
-  // Turn: point a different side of the model along the cable. Roll: a quarter turn about the cable.
-  $(`#cable-${n}-turn`).addEventListener('click', async () => {
-    const ch = cable[n];
-    if (!ch.conn) return;
-    try { ch.axis = ((ch.axis ?? defaultConnectorAxis(await connectorMesh(ch.conn))) + 1) % CONNECTOR_TURNS; } catch (e) { toast(e instanceof Error ? e.message : String(e)); return; }
-    await buildCable();
-  });
-  $(`#cable-${n}-roll`).addEventListener('click', async () => {
-    if (!cable[n].conn) return;
-    cable[n].roll = (cable[n].roll + 1) % CONNECTOR_ROLLS;
-    await buildCable();
-  });
-}
+document.querySelectorAll<HTMLButtonElement>('[data-cend]').forEach((b) => b.addEventListener('click', () => {
+  if (readCable()) { /* keep what was typed for the other end if it was valid; otherwise drop it */ }
+  cableEnd = b.dataset.cend as Which;
+  fillCableEnd();
+  if (cableShown) drawCable(cableShown);
+}));
+document.querySelectorAll<HTMLButtonElement>('[data-cpre]').forEach((b) => b.addEventListener('click', () => {
+  readCable();
+  // Stay at the end of the coil this lead is at now.
+  const end = (cableShown?.leads[cableEnd].junction[0] ?? -1) < 0 ? 'left' : 'right';
+  const e = cable[cableEnd];
+  cable[cableEnd] = { ...e, ...presetLead(b.dataset.cpre as LeadPreset, cableEnd === 'top', end, { wireD: cable.d, outerL: cable.l, outerW: cable.w, cornerR: cable.r, gap: DEFAULT_CABLE.gap }, b.dataset.cpre === 'middle' ? Math.min(e.length, 10) : e.length || 30) };
+  fillCableEnd();
+  cableChanged();
+}));
+$('#cable-flip').addEventListener('click', () => { readCable(); cable[cableEnd].at = (cable[cableEnd].at + 4) % 8; cableChanged(); });
+($('#cable-conn') as HTMLSelectElement).addEventListener('change', (e) => {
+  readCable();
+  cable[cableEnd] = { ...cable[cableEnd], conn: (e.target as HTMLSelectElement).value, axis: null, roll: 0 };
+  cableChanged();
+});
+// Turn: point a different side of the model along the cable. Roll: a quarter turn about the cable.
+$('#cable-turn').addEventListener('click', async () => {
+  const ch = cable[cableEnd];
+  if (!ch.conn) return;
+  try { ch.axis = ((ch.axis ?? defaultConnectorAxis(await connectorMesh(ch.conn))) + 1) % CONNECTOR_TURNS; } catch (e) { toast(e instanceof Error ? e.message : String(e)); return; }
+  cableChanged();
+});
+$('#cable-roll').addEventListener('click', () => {
+  if (!cable[cableEnd].conn) return;
+  cable[cableEnd].roll = (cable[cableEnd].roll + 1) % CONNECTOR_ROLLS;
+  cableChanged();
+});
 document.querySelectorAll<HTMLInputElement>('#cable input.num').forEach((i) => i.addEventListener('change', cableChanged));
 fillCable();
 

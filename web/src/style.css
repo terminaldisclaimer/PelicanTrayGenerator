@@ -118,3 +118,13 @@ select.btn { appearance: auto; max-width: 100%; }
 .menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; display: flex; flex-direction: column; gap: 6px; padding: 8px; min-width: 250px; background: var(--panel); border: 1px solid var(--panel-2); border-radius: 14px; box-shadow: 0 10px 30px rgba(0, 0, 0, .5); }
 .menu[hidden] { display: none; }
 .menu .btn { text-align: left; justify-content: flex-start; white-space: nowrap; }
+
+#cable-edit { width: 100%; height: 260px; background: var(--bg, #1b1f24); border-radius: 12px; touch-action: none; margin: 6px 0 10px; display: block; }
+#cable-edit .wire { fill: none; stroke: #8a93a0; stroke-linecap: round; stroke-linejoin: round; }
+#cable-edit .h-top { fill: #f5a623; } #cable-edit .h-bottom { fill: #5ac8fa; }
+#cable-edit .conn-top { fill: rgba(245, 166, 35, .35); stroke: #f5a623; } #cable-edit .conn-bottom { fill: rgba(90, 200, 250, .35); stroke: #5ac8fa; }
+#cable-edit .hit { fill: transparent; cursor: grab; }
+#cable-edit .sel { stroke: #fff; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+#cable-which { margin-top: 4px; }
+#cable-which [data-cend="bottom"][aria-checked="true"] { background: #5ac8fa; }
