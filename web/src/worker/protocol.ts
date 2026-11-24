@@ -8,6 +8,8 @@ export type PoseAction = 'next' | 'x90' | 'y90' | 'z90' | 'flip';
 
 export type WorkerRequest =
   | { id: number; type: 'parse'; fileName: string; kind: FileKind; data: ArrayBuffer }
+  /** Add a part made of several bodies joined into one (a coiled cable and its connectors), lying as built. `replace` swaps it for an earlier one. */
+  | { id: number; type: 'cable'; name: string; bodies: TriMesh[]; replace?: number }
   | { id: number; type: 'pose'; partId: number; action: PoseAction }
   /** All automatic poses of one part, for the picker. */
   | { id: number; type: 'poses'; partId: number }

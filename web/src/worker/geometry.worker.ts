@@ -5,8 +5,9 @@ import { parse3MF } from '../mesh/threemf';
 import { looksLikeInches, meshBounds, scaleMesh, LARGE_MESH_TRIANGLES, MAX_MESH_TRIANGLES } from '../mesh/bounds';
 import type { TriMesh } from '../mesh/types';
 import { initKernel } from '../geom/kernel';
-import { poseCandidates, posePart, type PoseCandidate } from '../geom/analyze';
-import { FLIP, mul, ROT_X90, ROT_Y90, ROT_Z90, type Mat3 } from '../geom/vec';
+import type { Manifold } from 'manifold-3d';
+import { poseCandidates, posePart, toManifold, type PoseCandidate } from '../geom/analyze';
+import { FLIP, IDENTITY, mul, ROT_X90, ROT_Y90, ROT_Z90, type Mat3 } from '../geom/vec';
 import { autoFingers, buildFromLayout, buildTrays, distinctPoses, planTrays, TrayError, type Side, type TrayOptions, type TrayPart } from '../geom/tray';
 import { buildShell, shellProblem, splitLiner } from '../geom/shell';
 import type { ParsedPart, PoseAction, Suggestion, WorkerRequest, WorkerResponse } from './protocol';
@@ -226,6 +227,31 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       s.poseIndex = req.index >= 0 ? Math.min(req.index, s.candidates.length - 1) : 0;
       s.rotation = s.candidates[s.poseIndex].rotation;
       reply(req.id, [await describe(req.partId)]);
+    } else if (req.type === 'cable') {
+      const k = await initKernel(wasmUrl);
+      post({ id: req.id, type: 'progress', fraction: 0.3, label: 'Joining the cable and its connectors' });
+      // One solid where the bodies are closed; otherwise the triangles side by side (pockets still follow them).
+      const solids = req.bodies.map((b) => toManifold(k, b));
+      let positions: Float32Array;
+      if (solids.every((m) => m)) {
+        const joined = solids.length === 1 ? solids[0]! : k.Manifold.union(solids as Manifold[]);
+        const g = joined.getMesh(), v = g.vertProperties, t = g.triVerts, np = g.numProp;
+        positions = new Float32Array(t.length * 3);
+        for (let i = 0; i < t.length; i++) for (let c = 0; c < 3; c++) positions[i * 3 + c] = v[t[i] * np + c];
+        if (solids.length > 1) joined.delete();
+      } else {
+        positions = new Float32Array(req.bodies.reduce((n, b) => n + b.positions.length, 0));
+        let at = 0;
+        for (const b of req.bodies) { positions.set(b.positions, at); at += b.positions.length; }
+      }
+      for (const m of solids) m?.delete();
+      const old = req.replace !== undefined ? parts.get(req.replace) : undefined;
+      const id = await add({ name: req.name, positions });
+      const s = parts.get(id)!;
+      // A coil only makes sense lying flat, the way it was built.
+      s.rotation = IDENTITY; s.poseIndex = -1; s.locked = true; s.inchesChecked = true;
+      if (old) { s.fingers = old.fingers; s.stackable = old.stackable; s.stackGap = old.stackGap; parts.delete(req.replace!); }
+      reply(req.id, [await describe(id)]);
     } else if (req.type === 'scale') {
       const s = parts.get(req.partId);
       if (!s) throw new Error('Unknown part');

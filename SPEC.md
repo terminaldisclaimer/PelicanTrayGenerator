@@ -275,6 +275,42 @@ The old Python package stays in the repo for now. The web app goes in `web/`.
 - Adding a part from the library leaves it listed (marked "in this
   project"), so it can be added more than once.
 
+### 3.9 Coiled cables
+"Add a coiled cable" (Parts tab) makes a part from numbers instead of a file.
+It follows the owner's Fusion 360 "SnakedWire" script.
+- **Coil:** a round cable wound as stacked turns around a rounded rectangle
+  (each turn directly on the one below, 0.2 mm apart). You give cable
+  diameter, cable length end to end, coil length and width (over the outside
+  of the cable) and corner radius. The length, the two leads and the whole
+  number of half turns over-constrain it, so the coil length flexes a few
+  millimetres (grow or shrink, whichever is smaller) to make the cable
+  length exact; the status line reports the result.
+- **Outside end** (optional): the cable carries on past a corner, makes a U
+  turn level with the end of the coil and runs back along the outside of a
+  long side. Settings: lead length, width across the U, which end and side,
+  and whether it leaves from the top or bottom turn.
+- **Centre end:** from the other end of the stack the cable bends inward and
+  runs along the long axis into the hollow middle, with a straight run at
+  the end.
+- **Connectors:** each end can carry a model from the library. It is put on
+  the cable's end, centred on it, pointing along it. "Turn" points a
+  different side of the model along the cable (6 ways; default is its
+  longest side), "Roll" turns it a quarter turn about the cable. With a
+  connector on the centre end, the lead climbs (two bends) so the top of the
+  connector is level with the top of the stack; the connector must fit in
+  the hollow middle, clear of the far end.
+- It is refused, with the reason, if the cable would run into itself, the
+  radii cannot be wound, or the centre connector does not fit.
+- The result is one ordinary part (cable and connectors joined), lying flat
+  with its pose locked, so pockets, finger holes, layout and saving work as
+  for any part. The pocket is a channel around an island of tray.
+- Changing the form and pressing "Update cable" replaces that part. After a
+  reload the cable is a plain part: the form keeps its last values, and
+  pressing the button adds a new cable.
+- **Not built:** a connector on a lead pointing some other way (straight out
+  of the end, both ends outside, both inside); flat or oval cables; more
+  than one editable cable at a time.
+
 ## 4. Export (Bambu H3C)
 - **STL**: one binary STL per tray, in mm.
 - **3MF** (built): one per tray. The tray and its shell are two separate

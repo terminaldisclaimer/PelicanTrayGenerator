@@ -1,4 +1,5 @@
 import type { LayoutData, Side, TrayOptions } from '../geom/tray';
+import type { TriMesh } from '../mesh/types';
 import type { FileKind, ParsedPart, PoseAction, SavedPart, ShellRequest, Suggestion, TrayInfo, WorkerRequest, WorkerResponse } from './protocol';
 
 type Progress = (fraction: number, label: string, suggestion?: Suggestion) => void;
@@ -57,6 +58,9 @@ export class GeometryClient {
 
   parse(fileName: string, kind: FileKind, data: ArrayBuffer, progress?: Progress) {
     return this.call({ type: 'parse', fileName, kind, data }, [data], progress);
+  }
+  cable(name: string, bodies: TriMesh[], replace?: number, progress?: Progress) {
+    return this.call({ type: 'cable', name, bodies, replace }, [], progress).then((r) => r[0]);
   }
   pose(partId: number, action: PoseAction) {
     return this.call({ type: 'pose', partId, action }).then((r) => r[0]);

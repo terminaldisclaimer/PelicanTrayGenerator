@@ -108,3 +108,8 @@ label.row { cursor: text; }
 #library-folder { flex: 1; min-width: 0; }
 select.btn { appearance: auto; max-width: 100%; }
 #library-list select.btn { max-width: 96px; }
+
+#cable { margin-top: 14px; border-top: 1px solid var(--panel-2); padding-top: 6px; }
+#cable summary { cursor: pointer; padding: 10px 0; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
+#cable h3 { font-size: 14px; margin: 14px 0 2px; color: var(--muted); font-weight: 600; }
+#cable select.btn { max-width: 60%; }
