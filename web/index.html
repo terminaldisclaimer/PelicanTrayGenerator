@@ -50,45 +50,65 @@
           <ul id="parts" class="parts"></ul>
           <details id="cable">
             <summary>Add a coiled cable</summary>
-            <p class="muted small">A cable wound in stacked turns around a rounded rectangle, with a lead at each end. Give the coil size you want; its length flexes a few millimetres so the cable length comes out exactly.</p>
+            <p class="muted small">A cable wound in stacked turns around a rounded rectangle. Each end leaves the coil its own way and can carry a connector. Give the coil size you want; its length flexes a few millimetres so the cable length comes out exactly.</p>
             <label class="row"><span>Cable diameter (<span class="u">mm</span>)</span><input class="num" id="cable-d" inputmode="decimal" autocomplete="off" /></label>
             <label class="row"><span>Cable length, end to end (<span class="u">mm</span>)</span><input class="num" id="cable-len" inputmode="decimal" autocomplete="off" /></label>
             <label class="row"><span>Coil length (<span class="u">mm</span>)</span><input class="num" id="cable-l" inputmode="decimal" autocomplete="off" /></label>
             <label class="row"><span>Coil width (<span class="u">mm</span>)</span><input class="num" id="cable-w" inputmode="decimal" autocomplete="off" /></label>
             <label class="row"><span>Corner radius (<span class="u">mm</span>)</span><input class="num" id="cable-r" inputmode="decimal" autocomplete="off" /></label>
-            <h3>Outside end</h3>
             <div class="row">
-              <span>Lead beside the coil</span>
-              <div class="seg" role="radiogroup" aria-label="Lead beside the coil">
-                <button role="radio" data-cj="1" aria-checked="true">On</button>
-                <button role="radio" data-cj="0" aria-checked="false">Off</button>
+              <span>Wound</span>
+              <div class="seg" role="radiogroup" aria-label="Winding direction">
+                <button role="radio" data-cmir="0" aria-checked="true">One way</button>
+                <button role="radio" data-cmir="1" aria-checked="false">Other way</button>
               </div>
             </div>
-            <div id="cable-j-rows">
-              <label class="row"><span>Lead length (<span class="u">mm</span>)</span><input class="num" id="cable-jlen" inputmode="decimal" autocomplete="off" /></label>
-              <label class="row"><span>Lead width across its U-turn (<span class="u">mm</span>)</span><input class="num" id="cable-jw" inputmode="decimal" autocomplete="off" /></label>
-              <label class="row"><span>Where it sits</span>
-                <select id="cable-jpos" class="btn">
-                  <option value="left-top">Left end, far side</option>
-                  <option value="right-top">Right end, far side</option>
-                  <option value="left-bottom">Left end, near side</option>
-                  <option value="right-bottom">Right end, near side</option>
+            <h3>End on the top turn</h3>
+            <label class="row"><span>How it leaves the coil</span>
+              <select id="cable-top-style" class="btn">
+                <option value="inside">Into the middle</option>
+                <option value="end">Straight out, in line with the coil</option>
+                <option value="side">Straight out sideways</option>
+                <option value="j">J beside the coil</option>
+                <option value="none">None (stops on the coil)</option>
+              </select>
+            </label>
+            <div id="cable-top-rows">
+              <label class="row"><span>At which end of the coil</span>
+                <select id="cable-top-end" class="btn">
+                  <option value="auto">Either (closest fit)</option>
+                  <option value="left">Left</option>
+                  <option value="right">Right</option>
                 </select>
               </label>
-              <div class="row">
-                <span>Leaves from</span>
-                <div class="seg" role="radiogroup" aria-label="Outside lead leaves from">
-                  <button role="radio" data-cjl="top" aria-checked="true">Top turn</button>
-                  <button role="radio" data-cjl="bottom" aria-checked="false">Bottom turn</button>
-                </div>
-              </div>
-              <label class="row"><span>Connector</span><select id="cable-c1" class="btn"></select></label>
-              <div class="row"><span id="cable-c1-info" class="muted small"></span><span><button class="btn" id="cable-c1-turn">Turn</button> <button class="btn" id="cable-c1-roll">Roll</button></span></div>
+              <label class="row"><span id="cable-top-len-label">Lead length</span><input class="num" id="cable-top-len" inputmode="decimal" autocomplete="off" /></label>
+              <label class="row" id="cable-top-jw-row"><span>J width across its U-turn (<span class="u">mm</span>)</span><input class="num" id="cable-top-jw" inputmode="decimal" autocomplete="off" /></label>
+              <label class="row"><span>Connector</span><select id="cable-top-conn" class="btn"></select></label>
+              <div class="row"><span id="cable-top-info" class="muted small"></span><span><button class="btn" id="cable-top-turn">Turn</button> <button class="btn" id="cable-top-roll">Roll</button></span></div>
             </div>
-            <h3>Centre end</h3>
-            <label class="row"><span>Straight run at the end (<span class="u">mm</span>)</span><input class="num" id="cable-clead" inputmode="decimal" autocomplete="off" /></label>
-            <label class="row"><span>Connector</span><select id="cable-c2" class="btn"></select></label>
-            <div class="row"><span id="cable-c2-info" class="muted small"></span><span><button class="btn" id="cable-c2-turn">Turn</button> <button class="btn" id="cable-c2-roll">Roll</button></span></div>
+            <h3>End on the bottom turn</h3>
+            <label class="row"><span>How it leaves the coil</span>
+              <select id="cable-bottom-style" class="btn">
+                <option value="inside">Into the middle</option>
+                <option value="end">Straight out, in line with the coil</option>
+                <option value="side">Straight out sideways</option>
+                <option value="j">J beside the coil</option>
+                <option value="none">None (stops on the coil)</option>
+              </select>
+            </label>
+            <div id="cable-bottom-rows">
+              <label class="row"><span>At which end of the coil</span>
+                <select id="cable-bottom-end" class="btn">
+                  <option value="auto">Either (closest fit)</option>
+                  <option value="left">Left</option>
+                  <option value="right">Right</option>
+                </select>
+              </label>
+              <label class="row"><span id="cable-bottom-len-label">Lead length</span><input class="num" id="cable-bottom-len" inputmode="decimal" autocomplete="off" /></label>
+              <label class="row" id="cable-bottom-jw-row"><span>J width across its U-turn (<span class="u">mm</span>)</span><input class="num" id="cable-bottom-jw" inputmode="decimal" autocomplete="off" /></label>
+              <label class="row"><span>Connector</span><select id="cable-bottom-conn" class="btn"></select></label>
+              <div class="row"><span id="cable-bottom-info" class="muted small"></span><span><button class="btn" id="cable-bottom-turn">Turn</button> <button class="btn" id="cable-bottom-roll">Roll</button></span></div>
+            </div>
             <button id="cable-build" class="btn primary wide">Add cable</button>
             <p id="cable-status" class="muted small"></p>
           </details>

@@ -2,27 +2,46 @@ import type { TriMesh } from '../mesh/types';
 
 /**
  * A round cable wound as a stacked rounded-rectangle coil (each turn directly
- * on top of the one before), with a lead at each end:
+ * on top of the one before), with a lead at each end of the stack. Each lead
+ * is set up on its own:
  *
- *  - J lead: along one long side the cable carries straight on past the corner,
- *    curls outward in a U whose bottom is level with the end of the coil, and
- *    finishes in a straight leg running back along the outside of that side.
- *  - Centre lead: at the other end of the stack the cable peels off at a short
- *    end, bends inward and runs along the long axis into the hollow middle. If
- *    a connector is fitted there, the lead climbs (two bends) so the top of the
- *    connector is level with the top of the stack.
+ *  - 'inside': the cable peels off at a short end, bends inward and runs along
+ *    the long axis into the hollow middle (at 90 degrees to that end).
+ *  - 'end': the cable carries straight on past the corner, in line with the
+ *    long side it was running along, and sticks out past the end of the coil.
+ *  - 'side': the same from a short end, so it sticks out past a long side.
+ *  - 'j': the cable carries on past the corner, curls outward in a U whose
+ *    bottom is level with the end of the coil, and runs back along the
+ *    outside of that long side.
+ *  - 'none': the cable simply stops on the coil.
  *
- * The total length, both leads and the whole number of half turns before the
- * peel-off over-constrain the coil, so the footprint length flexes by a few
- * millimetres to make the length come out exactly.
+ * A lead with a connector climbs or drops (two bends) so the connector sits
+ * within the height of the stack: flush with the top for the top lead and for
+ * any inside lead, flush with the bottom for an outside lead on the bottom turn.
  *
- * This is a port of the owner's Fusion 360 "SnakedWire" script; names follow it.
- * All lengths are mm. Pure maths: no kernel needed.
+ * The total length, both leads and where each one leaves the coil
+ * over-constrain it, so the footprint length flexes by a few millimetres to
+ * make the length come out exactly.
+ *
+ * The coil, the J and the inside lead follow the owner's Fusion 360
+ * "SnakedWire" script. All lengths are mm. Pure maths: no kernel needed.
  */
+export type LeadStyle = 'inside' | 'end' | 'side' | 'j' | 'none';
+export interface LeadSpec {
+  style: LeadStyle;
+  /** Which end of the coil the lead is at; 'auto' = whichever needs the smaller change to the coil length. */
+  end: 'left' | 'right' | 'auto';
+  /** Level straight run at the free end (for a J: overall length from the bottom of the U to the tip). */
+  length: number;
+  /** J only: width across the U, outside of cable to outside of cable. */
+  jWidth: number;
+  /** Connector on this end: its height, width, and how far it reaches past the cable's end. null = bare. */
+  connector: { height: number; width: number; length: number } | null;
+}
 export interface CableSpec {
   /** Cable diameter. */
   wireD: number;
-  /** Cable length end to end (both leads and the climb included; connectors are extra). */
+  /** Cable length end to end (both leads and any climb included; connectors are extra). */
   totalLen: number;
   /** Target footprint length over the outside of the cable (flexes to fit the length). */
   outerL: number;
@@ -34,172 +53,159 @@ export interface CableSpec {
   gap: number;
   /** How the footprint length may flex. */
   fit: 'nearest' | 'grow' | 'shrink';
-  /** The lead on the outside of the coil, or null for none. */
-  j: {
-    /** Width across the U, outside of cable to outside of cable. */
-    width: number;
-    /** From the bottom of the U to the tip of the free end. */
-    length: number;
-    /** Which end of the coil the bottom of the U lines up with. */
-    end: 'left' | 'right';
-    /** Which long side it sticks out past. */
-    side: 'top' | 'bottom';
-    /** Which turn it leaves from; the centre lead leaves from the other end of the stack. */
-    layer: 'top' | 'bottom';
-  } | null;
-  /** Bend radius where the cable leaves its turn for the middle. */
+  /** Bend radius where an inside lead leaves its turn for the middle. */
   turnInR: number;
-  /** Flat run along the long axis after the turn-in bend, before any climb. */
-  centerRun: number;
-  /** Radius of the two bends in the climb. */
+  /** Radius of the two bends in a climb. */
   climbR: number;
-  /** Level run after the climb, ending at the cable's end. */
-  centerLead: number;
-  /**
-   * Connector on the centre lead (sets how high the lead climbs): its height,
-   * how far its top sits above the stack, and how far it reaches past the
-   * cable's end. null = the lead stays flat.
-   */
-  din: { diameter: number; above: number; length: number; width?: number } | null;
+  /** Wind the other way round (mirrors the whole cable, swapping the near and far sides). */
+  mirror: boolean;
+  /** The lead leaving the top turn, and the one leaving the bottom turn. */
+  top: LeadSpec;
+  bottom: LeadSpec;
 }
 
 export const DEFAULT_CABLE: CableSpec = {
-  wireD: 6, totalLen: 1151, outerL: 115, outerW: 40, cornerR: 12, gap: 0.2, fit: 'nearest',
-  j: { width: 20, length: 50, end: 'left', side: 'top', layer: 'top' },
-  turnInR: 8, centerRun: 0, climbR: 8, centerLead: 5, din: null,
+  wireD: 6, totalLen: 1151, outerL: 115, outerW: 40, cornerR: 12, gap: 0.2, fit: 'nearest', turnInR: 8, climbR: 8, mirror: false,
+  top: { style: 'j', end: 'left', length: 50, jWidth: 20, connector: null },
+  bottom: { style: 'inside', end: 'auto', length: 5, jWidth: 20, connector: null },
 };
 
 export class CableError extends Error {}
 
 type P3 = [number, number, number];
-type Seg = { kind: 'line'; a: [number, number]; b: [number, number]; len: number } | { kind: 'arc'; c: [number, number]; start: number; len: number };
 const FINE = 1.0;
-const DIN_CLEARANCE = 0.5;
+const CLEARANCE = 0.5;
+const NAME: Record<'top' | 'bottom', string> = { top: 'top-turn', bottom: 'bottom-turn' };
 
-interface JSpec { rj: number; stem: number; tail: number; length: number }
-interface Layout {
-  outerL: number; lc: number; wc: number; at: (u: number) => P3; segs: Seg[]; perim: number;
-  rise: number; stretch: number; uS: number; uPeel: number; side0: number;
-  phi0: number; turn: number; center: [number, number]; xIn: number; bendLen: number;
-}
-interface Center { uEnd: number; zEnd: number; dz: number; sgn: number; theta: number; straight: number; rb: number; run: number; lead: number; x1: number; xE: number; xW: number; tail: number }
+interface Layout { outerL: number; lc: number; wc: number; a: number; b: number; r: number; arc: number; perim: number; rise: number; stretch: number; xy: (u: number) => [number, number] }
 
-function jSpec(s: CableSpec): JSpec | null {
-  const j = s.j;
-  if (!j) return null;
-  if (j.width < 2 * s.wireD + s.gap - 1e-9) throw new CableError(`The outside lead must be at least ${(2 * s.wireD + s.gap).toFixed(1)} mm wide so its two legs do not touch.`);
-  const rj = (j.width - s.wireD) / 2;
-  const stem = Math.max(s.cornerR - rj, 0);
-  let tail = j.length - s.wireD / 2 - rj;
-  if (tail < -1e-9) throw new CableError(`The outside lead must be at least ${(j.width / 2).toFixed(1)} mm long (half its width).`);
-  tail = Math.max(tail, 0);
-  return { rj, stem, tail, length: tail + Math.PI * rj + stem };
-}
-
-function layout(s: CableSpec, outerL: number, j: JSpec | null): Layout {
-  const r = s.cornerR, R = s.turnInR;
+function layout(s: CableSpec, outerL: number): Layout {
+  const r = s.cornerR;
   const lc = outerL - s.wireD, wc = s.outerW - s.wireD;
   if (!(s.wireD / 2 < r && r <= Math.min(lc, wc) / 2 + 1e-9))
     throw new CableError(`Corner radius must be more than ${(s.wireD / 2).toFixed(1)} and at most ${(Math.min(lc, wc) / 2).toFixed(1)} mm.`);
   const a = lc - 2 * r, b = wc - 2 * r, arc = (Math.PI * r) / 2;
-  // Footprint loop, counter-clockwise, starting at the left end of the bottom long side.
-  const segs: Seg[] = [
-    { kind: 'line', a: [-a / 2, -wc / 2], b: [a / 2, -wc / 2], len: a },
-    { kind: 'arc', c: [a / 2, -b / 2], start: -90, len: arc },
-    { kind: 'line', a: [lc / 2, -b / 2], b: [lc / 2, b / 2], len: b },
-    { kind: 'arc', c: [a / 2, b / 2], start: 0, len: arc },
-    { kind: 'line', a: [a / 2, wc / 2], b: [-a / 2, wc / 2], len: a },
-    { kind: 'arc', c: [-a / 2, b / 2], start: 90, len: arc },
-    { kind: 'line', a: [-lc / 2, b / 2], b: [-lc / 2, -b / 2], len: b },
-    { kind: 'arc', c: [-a / 2, -b / 2], start: 180, len: arc },
+  const perim = 2 * a + 2 * b + 4 * arc;
+  const rise = (s.wireD + s.gap) / perim;
+  // Footprint loop, counter-clockwise from the left end of the near long side:
+  // near straight, right-near corner, right straight, right-far corner, far straight, and so on.
+  const pieces: [number, (t: number) => [number, number]][] = [
+    [a, (t) => [-a / 2 + t, -wc / 2]],
+    [arc, (t) => [a / 2 + r * Math.sin(t / r), -b / 2 - r * Math.cos(t / r)]],
+    [b, (t) => [lc / 2, -b / 2 + t]],
+    [arc, (t) => [a / 2 + r * Math.cos(t / r), b / 2 + r * Math.sin(t / r)]],
+    [a, (t) => [a / 2 - t, wc / 2]],
+    [arc, (t) => [-a / 2 - r * Math.sin(t / r), b / 2 + r * Math.cos(t / r)]],
+    [b, (t) => [-lc / 2, b / 2 - t]],
+    [arc, (t) => [-a / 2 - r * Math.cos(t / r), -b / 2 - r * Math.sin(t / r)]],
   ];
-  const perim = segs.reduce((t, g) => t + g.len, 0);
-  const pitch = s.wireD + s.gap;
-  const rise = pitch / perim;
-  const stretch = Math.sqrt(1 + rise * rise);
-
-  // Peel-off toward the middle at the right-hand end: an arc of radius R that leaves
-  // the outline tangentially and finishes heading -X on the long axis.
-  if (R <= s.wireD / 2) throw new CableError(`The turn-in bend radius must be more than ${(s.wireD / 2).toFixed(1)} mm.`);
-  let phi0: number, uR: number, center: [number, number];
-  if (R <= b / 2 + 1e-9) { // leaves from the short straight
-    phi0 = 0; uR = a + arc + (b / 2 - R); center = [lc / 2 - R, -R];
-  } else if (R < r && R <= (r + b / 2) / 2 + 1e-9) { // leaves from the corner arc
-    phi0 = Math.asin(Math.max(-1, Math.min(1, (b / 2 - R) / (r - R))));
-    uR = a + r * (phi0 + Math.PI / 2);
-    center = [a / 2 + (r - R) * Math.cos(phi0), -b / 2 + (r - R) * Math.sin(phi0)];
-  } else throw new CableError(`The turn-in bend radius must be at most ${Math.max(b / 2, (r + b / 2) / 2).toFixed(1)} mm with this corner radius and coil width.`);
-  const turn = Math.PI / 2 - phi0;
-
-  // The coil starts where the J joins it, on the bottom long side near the left end.
-  let uS = 0;
-  if (j) {
-    const xT = -lc / 2 + j.rj;
-    if (xT > a / 2 - 1e-9) throw new CableError(`The outside lead is too wide for this coil (at most ${(2 * (lc - r) + s.wireD).toFixed(1)} mm).`);
-    uS = Math.max(-a / 2, xT) + a / 2;
-  }
-  const half = perim / 2;
-  const rel = uR - uS;
-  const m = Math.ceil((1e-6 - rel) / half);
-  const uPeel = rel + m * half;
-  const side0 = ((m % 2) + 2) % 2;
-
-  const xy = (g: Seg, t: number): [number, number] => {
-    if (g.kind === 'line') return [g.a[0] + (g.b[0] - g.a[0]) * t, g.a[1] + (g.b[1] - g.a[1]) * t];
-    const ang = ((g.start + 90 * t) * Math.PI) / 180;
-    return [g.c[0] + r * Math.cos(ang), g.c[1] + r * Math.sin(ang)];
-  };
-  const at = (u: number): P3 => {
-    let rem = (((u + uS) % perim) + perim) % perim;
-    for (const g of segs) {
-      if (g.len <= 1e-12) continue;
-      if (rem <= g.len) { const [x, y] = xy(g, rem / g.len); return [x, y, rise * u]; }
-      rem -= g.len;
+  const xy = (u: number): [number, number] => {
+    let rem = ((u % perim) + perim) % perim;
+    for (const [len, f] of pieces) {
+      if (len <= 1e-12) continue;
+      if (rem <= len) return f(rem);
+      rem -= len;
     }
-    const [x, y] = xy(segs[segs.length - 1], 1);
-    return [x, y, rise * u];
+    return pieces[0][1](0);
   };
-  return { outerL, lc, wc, at, segs, perim, rise, stretch, uS, uPeel, side0, phi0, turn, center, xIn: center[0], bendLen: R * turn };
+  return { outerL, lc, wc, a, b, r, arc, perim, rise, stretch: Math.sqrt(1 + rise * rise), xy };
 }
 
-function centerGeom(s: CableSpec, g: Layout, n: number): Center {
-  const uEnd = g.uPeel + (n * g.perim) / 2;
-  const zEnd = g.rise * uEnd;
-  const run = s.centerRun, lead = s.centerLead, rb = s.climbR;
-  let dz = 0;
-  if (s.din) {
-    // Final frame: the stack spans z = -wireD/2 .. zEnd + wireD/2. The connector's axis
-    // (= the cable's end) sits so its top is level with the top of the stack.
-    const zAxis = zEnd + s.wireD / 2 + s.din.above - s.din.diameter / 2;
-    dz = (s.j?.layer ?? 'top') === 'top' ? -zAxis : zAxis - zEnd;
-  }
-  const h = Math.abs(dz), sgn = dz >= 0 ? 1 : -1;
-  let theta = 0, straight = 0;
-  if (h >= 1e-9) {
-    if (h >= 2 * rb) { theta = Math.PI / 2; straight = h - 2 * rb; }
-    else theta = Math.acos(1 - h / (2 * rb)); // too short a climb for 90 degrees: a shallower S-bend
-  }
-  const climbDx = 2 * rb * Math.sin(theta) + straight * Math.cos(theta);
-  const x1 = g.xIn - run, xE = x1 - climbDx, xW = xE - lead;
-  return { uEnd, zEnd, dz, sgn, theta, straight, rb, run, lead, x1, xE, xW, tail: g.bendLen + run + 2 * rb * theta + straight + lead };
-}
+/** Where on the loop the tangent points change (for sampling the coil exactly at them). */
+const breaks = (g: Layout) => [0, g.a, g.a + g.arc, g.a + g.arc + g.b, g.a + 2 * g.arc + g.b, 2 * g.a + 2 * g.arc + g.b, 2 * g.a + 3 * g.arc + g.b, 2 * g.a + 3 * g.arc + 2 * g.b];
 
-function centerProblems(s: CableSpec, g: Layout, c: Center): string[] {
-  const far = -g.lc / 2;
-  const probs: string[] = [];
-  if (c.xW < far + s.wireD + s.gap - 1e-9) probs.push(`the centre lead reaches ${(far + s.wireD + s.gap - c.xW).toFixed(1)} mm too far toward the far end of the coil`);
-  if (s.din) {
-    const tip = c.xW - s.din.length, limit = far + s.wireD / 2 + DIN_CLEARANCE;
-    if (tip < limit - 1e-9) probs.push(`the centre connector would run ${(limit - tip).toFixed(1)} mm into the far end of the coil`);
+interface Lead { u: number; pts: P3[]; dir: P3; length: number }
+
+/**
+ * A lead leaving the coil in the direction of winding (counter-clockwise seen
+ * from above), drawn from where it leaves the coil to its free end. `dz` is how
+ * far it has to climb (+) or drop (−) before its level end.
+ */
+function leadOut(s: CableSpec, g: Layout, lead: LeadSpec, end: 'left' | 'right', z: number, dz: number, who: string): Lead {
+  const { a, b, r, lc, wc, arc } = g;
+  let x = 0, y = 0, h = 0, u = 0; // turtle: position, heading (radians), and loop position of the junction
+  const pts: P3[] = [];
+  let len = 0;
+  const straight = (d: number) => {
+    if (d < 1e-6) return;
+    const k = Math.max(1, Math.ceil(d / FINE)), x0 = x, y0 = y;
+    for (let i = 1; i <= k; i++) pts.push([x0 + (Math.cos(h) * d * i) / k, y0 + (Math.sin(h) * d * i) / k, z]);
+    x = x0 + Math.cos(h) * d; y = y0 + Math.sin(h) * d; len += d;
+  };
+  /** Turn by `ang` (left +, right −) on radius `rad`. */
+  const bend = (ang: number, rad: number) => {
+    if (Math.abs(ang) < 1e-9) return;
+    const sg = Math.sign(ang), cx = x - sg * rad * Math.sin(h), cy = y + sg * rad * Math.cos(h);
+    const k = Math.max(4, Math.ceil((rad * Math.abs(ang)) / FINE)), h0 = h;
+    for (let i = 1; i <= k; i++) { const hh = h0 + (ang * i) / k; pts.push([cx + sg * rad * Math.sin(hh), cy - sg * rad * Math.cos(hh), z]); }
+    h = h0 + ang; x = cx + sg * rad * Math.sin(h); y = cy - sg * rad * Math.cos(h); len += rad * Math.abs(ang);
+  };
+  /** Two bends in the vertical plane, with a straight between when the climb is tall enough. Returns the level distance used. */
+  const climbRun = (): number => {
+    const hgt = Math.abs(dz);
+    if (hgt < 1e-6) return 0;
+    const rb = s.climbR;
+    return hgt >= 2 * rb ? 2 * rb : 2 * rb * Math.sin(Math.acos(1 - hgt / (2 * rb)));
+  };
+  const climb = () => {
+    const hgt = Math.abs(dz), sg = Math.sign(dz), rb = s.climbR;
+    if (hgt < 1e-6) return;
+    const th = hgt >= 2 * rb ? Math.PI / 2 : Math.acos(1 - hgt / (2 * rb)), mid = hgt >= 2 * rb ? hgt - 2 * rb : 0;
+    const k = Math.max(4, Math.ceil((rb * th) / FINE)), x0 = x, y0 = y, cs = Math.cos(h), sn = Math.sin(h);
+    const put = (d: number, up: number) => pts.push([x0 + cs * d, y0 + sn * d, z + sg * up]);
+    for (let i = 1; i <= k; i++) { const p = (th * i) / k; put(rb * Math.sin(p), rb * (1 - Math.cos(p))); }
+    const d1 = rb * Math.sin(th), u1 = rb * (1 - Math.cos(th)), dTot = 2 * d1 + mid * Math.cos(th);
+    if (mid > 1e-6) { const km = Math.max(1, Math.ceil(mid / FINE)); for (let i = 1; i <= km; i++) put(d1 + (mid * Math.cos(th) * i) / km, u1 + (mid * Math.sin(th) * i) / km); }
+    for (let i = k - 1; i >= 0; i--) { const p = (th * i) / k; put(dTot - rb * Math.sin(p), hgt - rb * (1 - Math.cos(p))); }
+    x = x0 + cs * dTot; y = y0 + sn * dTot; z += dz; len += 2 * rb * th + mid;
+  };
+
+  // Everything is drawn for the right-hand end, then turned half way round for the left.
+  if (lead.style === 'end' || lead.style === 'none') { u = a; x = a / 2; y = -wc / 2; h = 0; }
+  else if (lead.style === 'side') { u = a + arc + b; x = lc / 2; y = b / 2; h = Math.PI / 2; }
+  else if (lead.style === 'j') {
+    if (lead.jWidth < 2 * s.wireD + s.gap - 1e-9) throw new CableError(`The ${who} J must be at least ${(2 * s.wireD + s.gap).toFixed(1)} mm wide so its two legs do not touch.`);
+    const rj = (lead.jWidth - s.wireD) / 2, xt = lc / 2 - rj;
+    if (xt < -a / 2 + 1e-9) throw new CableError(`The ${who} J is too wide for this coil (at most ${(2 * (lc - r) + s.wireD).toFixed(1)} mm).`);
+    if (lead.length < lead.jWidth / 2 - 1e-9) throw new CableError(`The ${who} J must be at least ${(lead.jWidth / 2).toFixed(1)} mm long (half its width).`);
+    const xj = Math.min(a / 2, xt);
+    u = xj + a / 2; x = xj; y = -wc / 2; h = 0;
+    straight(xt - xj);
+    bend(-Math.PI, rj); // outward, so its bottom is level with the end of the coil
+  } else { // inside: an arc that leaves the outline tangentially and finishes on the long axis, heading inward
+    const R = s.turnInR;
+    if (R <= s.wireD / 2) throw new CableError(`The turn-in bend radius must be more than ${(s.wireD / 2).toFixed(1)} mm.`);
+    if (R <= b / 2 + 1e-9) { u = a + arc + (b / 2 - R); x = lc / 2; y = -R; h = Math.PI / 2; bend(Math.PI / 2, R); }
+    else if (R < r && R <= (r + b / 2) / 2 + 1e-9) {
+      const phi0 = Math.asin(Math.max(-1, Math.min(1, (b / 2 - R) / (r - R))));
+      u = a + r * (phi0 + Math.PI / 2); x = a / 2 + r * Math.cos(phi0); y = -b / 2 + r * Math.sin(phi0); h = phi0 + Math.PI / 2;
+      bend(Math.PI / 2 - phi0, R);
+    } else throw new CableError(`The turn-in bend radius must be at most ${Math.max(b / 2, (r + b / 2) / 2).toFixed(1)} mm with this corner radius and coil width.`);
   }
-  return probs;
+  if (lead.style === 'j') {
+    climb();
+    // A J's length is its whole reach from the bottom of the U, so its level run is what is left of that.
+    straight(Math.max(0, lead.length - s.wireD / 2 - (lead.jWidth - s.wireD) / 2 - climbRun()));
+  } else if (lead.style === 'inside') {
+    climb();
+    straight(Math.max(0, lead.length));
+  } else if (lead.style !== 'none') {
+    // Straight out: it must be past the corner of the turns under or over it before it changes height.
+    const clear = Math.abs(dz) < 1e-6 ? 0 : r + s.wireD / 2 + 1;
+    straight(clear);
+    climb();
+    straight(Math.max(0, lead.length - clear - climbRun()));
+  }
+  const dir: P3 = [Math.cos(h), Math.sin(h), 0];
+  if (end === 'left') return { u: u + g.perim / 2, pts: pts.map((p) => [-p[0], -p[1], p[2]]), dir: [-dir[0], -dir[1], 0], length: len };
+  return { u, pts, dir, length: len };
 }
 
 export interface SolvedCable {
-  /** Centreline from the free end of the outside lead to the end of the centre lead. */
+  /** Centreline from the free end of the bottom-turn lead to the free end of the top-turn lead. */
   path: P3[];
   /** The two cable ends: where a connector attaches and the direction it points (unit, level). */
-  ends: { outside: { at: P3; dir: P3 } | null; center: { at: P3; dir: P3 } };
+  ends: { top: { at: P3; dir: P3 }; bottom: { at: P3; dir: P3 } };
   turns: number;
   /** Footprint of the coil itself over the outside of the cable. */
   footprint: { length: number; width: number; height: number };
@@ -207,125 +213,148 @@ export interface SolvedCable {
   hollow: { length: number; width: number };
 }
 
+interface Built { g: Layout; n: number; lenA: Lead; lenB: Lead; uA: number; travel: number; zEnd: number; total: number }
+
 /** Work out the coil for these settings, or throw a CableError saying what does not fit. */
 export function solveCable(s: CableSpec): SolvedCable {
   for (const [name, v] of [['Cable diameter', s.wireD], ['Cable length', s.totalLen], ['Coil length', s.outerL], ['Coil width', s.outerW]] as const)
     if (!(v > 0) || !Number.isFinite(v)) throw new CableError(`${name} must be more than 0.`);
   if (!(s.gap > 0)) throw new CableError('The gap between turns must be more than 0.');
-  if (s.centerRun < 0 || s.centerLead < 0) throw new CableError('Lead lengths must be 0 or more.');
   if (s.climbR <= s.wireD / 2) throw new CableError(`The climb bend radius must be more than ${(s.wireD / 2).toFixed(1)} mm.`);
-  const j = jSpec(s);
-  const avail = s.totalLen - (j ? j.length : 0);
-  if (s.din) {
-    const room = s.outerW - 2 * s.wireD - 2 * DIN_CLEARANCE;
-    const w = s.din.width ?? s.din.diameter;
-    if (w > room + 1e-9) throw new CableError(`The centre connector (${w.toFixed(1)} mm wide) is wider than the hollow middle of the coil (${room.toFixed(1)} mm across). Make the coil wider or turn the connector.`);
+  for (const which of ['top', 'bottom'] as const) {
+    const l = s[which];
+    if (!(l.length >= 0)) throw new CableError(`The ${NAME[which]} lead length must be 0 or more.`);
+    if (l.style === 'inside' && l.connector) {
+      const room = s.outerW - 2 * s.wireD - 2 * CLEARANCE;
+      if (l.connector.width > room + 1e-9) throw new CableError(`The ${NAME[which]} connector (${l.connector.width.toFixed(1)} mm wide) is wider than the hollow middle of the coil (${room.toFixed(1)} mm across). Make the coil wider, turn the connector, or put it outside.`);
+    }
   }
-  const length = (g: Layout, n: number) => g.stretch * centerGeom(s, g, n).uEnd + centerGeom(s, g, n).tail;
 
-  const g0 = layout(s, s.outerL, j);
-  let nFloor = -1;
-  while (length(g0, nFloor + 1) <= avail) {
-    nFloor++;
-    if (nFloor > 10000) throw new CableError('The cable is far too long for this coil size.');
-  }
+  /** The whole cable for one footprint length, number of extra turns and choice of ends. */
+  const build = (outerL: number, n: number, endTop: 'left' | 'right', endBottom: 'left' | 'right'): Built | null => {
+    const g = layout(s, outerL);
+    // First pass with flat leads gives where each joins the coil, and so how tall the stack is.
+    const flip = (e: 'left' | 'right') => (e === 'left' ? 'right' : 'left');
+    // The bottom lead is drawn as its mirror image (a lead leaving the other way), then mirrored back.
+    const junctionA = (u: number) => (((g.a - u) % g.perim) + g.perim) % g.perim;
+    const b0 = leadOut(s, g, s.top, endTop, 0, 0, NAME.top), a0 = leadOut(s, g, s.bottom, flip(endBottom), 0, 0, NAME.bottom);
+    const uA = junctionA(a0.u);
+    let base = (((b0.u - uA) % g.perim) + g.perim) % g.perim;
+    if (base < 1e-6) base = g.perim; // both leads at the same spot: at least one whole turn between them
+    const travel = base + n * g.perim;
+    if (travel <= 0) return null;
+    const zEnd = g.rise * travel;
+    const target = (l: LeadSpec, top: boolean) => {
+      if (!l.connector || l.style === 'none') return top ? zEnd : 0;
+      const flushTop = zEnd + s.wireD / 2 - l.connector.height / 2, flushBottom = -s.wireD / 2 + l.connector.height / 2;
+      return top || l.style === 'inside' ? flushTop : flushBottom;
+    };
+    const lenB = leadOut(s, g, s.top, endTop, zEnd, target(s.top, true) - zEnd, NAME.top);
+    const lenA = leadOut(s, g, s.bottom, flip(endBottom), 0, target(s.bottom, false), NAME.bottom);
+    return { g, n, lenA, lenB, uA, travel, zEnd, total: lenA.length + lenB.length + g.stretch * travel };
+  };
+
+  /** What stops the inside leads and their connectors from fitting in the hollow. */
+  const problems = (bt: Built): string[] => {
+    const probs: string[] = [], half = bt.g.lc / 2;
+    for (const [which, lead] of [['top', bt.lenB], ['bottom', bt.lenA]] as const) {
+      const l = s[which];
+      if (l.style !== 'inside') continue;
+      const tip = lead.pts.length ? lead.pts[lead.pts.length - 1] : null;
+      if (!tip) continue;
+      const reach = Math.abs(tip[0]) - (half - s.wireD - s.gap);
+      // It heads from one short end toward the other, so only running past the far end matters.
+      const far = tip[0] * lead.dir[0] > 0;
+      if (far && reach > 1e-9) probs.push(`the ${NAME[which]} lead reaches ${reach.toFixed(1)} mm too far toward the far end of the coil`);
+      if (l.connector) {
+        const end = tip[0] + lead.dir[0] * l.connector.length, over = Math.abs(end) - (half - s.wireD / 2 - CLEARANCE);
+        if (end * lead.dir[0] > 0 && over > 1e-9) probs.push(`the ${NAME[which]} connector would run ${over.toFixed(1)} mm into the far end of the coil`);
+      }
+    }
+    return probs;
+  };
+
   const lMin = 2 * s.cornerR + s.wireD + 1e-6;
-  const fit = (n: number, grow: boolean): { g: Layout; n: number } | null => {
-    if (n < 0) return null;
-    let lo: number, hi: number;
-    try {
-      if (grow) {
-        lo = s.outerL; hi = s.outerL + 10;
-        while (length(layout(s, hi, j), n) < avail) { hi += 10; if (hi > s.outerL + 1000) return null; }
-      } else {
-        lo = lMin; hi = s.outerL;
-        if (length(layout(s, lo, j), n) > avail) return null;
-      }
-      for (let i = 0; i < 100; i++) {
-        const mid = 0.5 * (lo + hi);
-        if (length(layout(s, mid, j), n) < avail) lo = mid; else hi = mid;
-      }
-      return { g: layout(s, hi, j), n };
-    } catch (e) {
-      if (e instanceof CableError) return null;
-      throw e;
+  const feasible: Built[] = [], rejected: { bt: Built; probs: string[] }[] = [];
+  let firstError: CableError | null = null;
+  const ends = (l: LeadSpec): ('left' | 'right')[] => (l.end === 'auto' ? ['left', 'right'] : [l.end]);
+  for (const eT of ends(s.top)) for (const eB of ends(s.bottom)) {
+    const at = (L: number, n: number) => build(L, n, eT, eB);
+    let b0: Built | null;
+    try { b0 = at(s.outerL, 0); } catch (e) { if (e instanceof CableError) { firstError ??= e; continue; } throw e; }
+    if (!b0) continue;
+    // Most whole turns that still fit in the cable at the asked-for coil length.
+    let nFloor = -1;
+    while (true) {
+      const t = at(s.outerL, nFloor + 1);
+      if (!t || t.total > s.totalLen) break;
+      nFloor++;
+      if (nFloor > 10000) throw new CableError('The cable is far too long for this coil size.');
     }
-  };
-  const tries: [number, boolean][] = [];
-  if (s.fit !== 'grow') tries.push([nFloor + 1, false]);
-  if (s.fit !== 'shrink') tries.push([nFloor, true], [nFloor - 1, true], [nFloor - 2, true]);
-  const feasible: { g: Layout; n: number }[] = [], rejected: { g: Layout; probs: string[] }[] = [];
-  for (const [n, grow] of tries) {
-    const f = fit(n, grow);
-    if (!f) continue;
-    const probs = centerProblems(s, f.g, centerGeom(s, f.g, n));
-    if (probs.length) rejected.push({ g: f.g, probs }); else feasible.push(f);
+    const fit = (n: number, grow: boolean): Built | null => {
+      if (n < 0) return null;
+      try {
+        let lo: number, hi: number;
+        if (grow) {
+          lo = s.outerL; hi = s.outerL + 10;
+          while ((at(hi, n)?.total ?? Infinity) < s.totalLen) { hi += 10; if (hi > s.outerL + 1000) return null; }
+        } else {
+          lo = lMin; hi = s.outerL;
+          if ((at(lo, n)?.total ?? Infinity) > s.totalLen) return null;
+        }
+        for (let i = 0; i < 60; i++) { const mid = 0.5 * (lo + hi); if ((at(mid, n)?.total ?? Infinity) < s.totalLen) lo = mid; else hi = mid; }
+        return at(hi, n);
+      } catch (e) { if (e instanceof CableError) { firstError ??= e; return null; } throw e; }
+    };
+    const tries: [number, boolean][] = [];
+    if (s.fit !== 'grow') tries.push([nFloor + 1, false]);
+    if (s.fit !== 'shrink') tries.push([nFloor, true], [nFloor - 1, true], [nFloor - 2, true]);
+    for (const [n, grow] of tries) {
+      const bt = fit(n, grow);
+      if (!bt || Math.abs(bt.total - s.totalLen) > 0.01) continue;
+      const probs = problems(bt);
+      if (probs.length) rejected.push({ bt, probs }); else feasible.push(bt);
+    }
   }
-  const nearest = <T extends { g: Layout }>(list: T[]) => list.reduce((best, x) => (Math.abs(x.g.outerL - s.outerL) < Math.abs(best.g.outerL - s.outerL) ? x : best));
+  const off = (bt: Built) => Math.abs(bt.g.outerL - s.outerL);
   if (!feasible.length) {
-    if (rejected.length) throw new CableError(`No coil fits these settings: ${nearest(rejected).probs.join('; ')}. Shorten the centre lead, use a shorter connector, or make the coil longer.`);
-    throw new CableError('No coil fits these settings; the cable may be too short for the two leads.');
+    if (rejected.length) throw new CableError(`No coil fits these settings: ${rejected.reduce((m, x) => (off(x.bt) < off(m.bt) ? x : m)).probs.join('; ')}. Shorten that lead, use a shorter connector, or make the coil longer.`);
+    throw firstError ?? new CableError('No coil fits these settings; the cable may be too short for the two leads.');
   }
-  const { g, n } = nearest(feasible);
-  const c = centerGeom(s, g, n);
-  const side = (g.side0 + n) % 2;
+  // Closest to the asked-for coil length first; one where the cable would cross itself is passed over.
+  feasible.sort((x, y) => off(x) - off(y));
+  let crossing: CableError | null = null;
+  for (const bt of feasible) {
+    try { return finish(s, bt); } catch (e) { if (e instanceof CableError) { crossing ??= e; continue; } throw e; }
+  }
+  throw crossing!;
+}
 
-  // ---- centreline, in the construction frame (J on the bottom long side at the left end, z = 0) ----
+/** The centreline and ends for one worked-out coil; throws if the cable would run into itself. */
+function finish(s: CableSpec, bt: Built): SolvedCable {
+  const { g } = bt;
+
+  // ---- centreline: bottom lead (free end first), the coil, top lead ----
   const pts: P3[] = [];
-  const line = (p: P3, q: P3, spacing: number): P3[] => {
-    const d = Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
-    if (d < 1e-6) return [];
-    const k = Math.max(1, Math.ceil(d / spacing));
-    return Array.from({ length: k }, (_, i) => [0, 1, 2].map((a) => p[a] + ((q[a] - p[a]) * (i + 1)) / k) as P3);
-  };
-  if (j) {
-    const ySide = -g.wc / 2, xT = -g.lc / 2 + j.rj, cy = ySide - j.rj, yo = ySide - 2 * j.rj;
-    if (j.tail > 1e-6) {
-      const k = Math.max(1, Math.ceil(j.tail / FINE));
-      for (let i = 0; i < k; i++) pts.push([xT + j.tail - (j.tail * i) / k, yo, 0]);
-    }
-    const k = Math.max(8, Math.ceil((Math.PI * j.rj) / FINE));
-    for (let i = 0; i <= k; i++) { const t = -Math.PI / 2 - (Math.PI * i) / k; pts.push([xT + j.rj * Math.cos(t), cy + j.rj * Math.sin(t), 0]); }
-    if (j.stem > 1e-6) {
-      const k2 = Math.max(2, Math.ceil(j.stem / (FINE / 2)));
-      for (let i = 1; i <= k2; i++) pts.push([xT + (j.stem * i) / k2, ySide, 0]);
-    }
-    pts.pop(); // the coil supplies the joining point
-  }
-  { // the coil, including every line/arc tangent point of the footprint
-    const step = 2, start = g.uS, end = g.uS + c.uEnd, us: number[] = [];
-    let uo = 0;
-    while (uo < end) {
-      for (const sg of g.segs) {
-        if (sg.len <= 1e-9) continue;
-        const k = Math.max(1, Math.ceil(sg.len / step));
-        for (let i = 0; i < k; i++) { const v = uo + (sg.len * i) / k; if (start + 0.25 * step < v && v < end - 0.25 * step) us.push(v - start); }
-        uo += sg.len;
+  for (let i = bt.lenA.pts.length - 1; i >= 0; i--) { const p = bt.lenA.pts[i]; pts.push([-p[0], p[1], p[2]]); }
+  {
+    const step = 2, us: number[] = [0], marks = breaks(g);
+    const first = Math.floor(bt.uA / g.perim) - 1;
+    for (let lap = first; lap * g.perim < bt.uA + bt.travel; lap++)
+      for (let m = 0; m < marks.length; m++) {
+        const from = lap * g.perim + marks[m], to = lap * g.perim + (m + 1 < marks.length ? marks[m + 1] : g.perim), len = to - from;
+        if (len <= 1e-9) continue;
+        const k = Math.max(1, Math.ceil(len / step));
+        for (let i = 0; i < k; i++) { const v = from + (len * i) / k - bt.uA; if (v > 0.25 * step && v < bt.travel - 0.25 * step) us.push(v); }
       }
-    }
-    for (const u of [0, ...us, c.uEnd]) pts.push(g.at(u));
+    us.push(bt.travel);
+    for (const v of us) { const [x, y] = g.xy(bt.uA + v); pts.push([x, y, g.rise * v]); }
   }
-  { // the centre lead: turn-in bend, flat run, climb, level run
-    const R = s.turnInR, z0 = c.zEnd, [cx, cy] = g.center, tail: P3[] = [];
-    let k = Math.max(4, Math.ceil((R * g.turn) / FINE));
-    for (let i = 1; i <= k; i++) { const phi = g.phi0 + (g.turn * i) / k; tail.push([cx + R * Math.cos(phi), cy + R * Math.sin(phi), z0]); }
-    tail.push(...line([g.xIn, 0, z0], [c.x1, 0, z0], FINE));
-    const { rb, theta: th, sgn: sg } = c, zE = z0 + c.dz;
-    if (th > 1e-9) {
-      k = Math.max(4, Math.ceil((rb * th) / FINE));
-      for (let i = 1; i <= k; i++) { const p = (th * i) / k; tail.push([c.x1 - rb * Math.sin(p), 0, z0 + sg * rb * (1 - Math.cos(p))]); }
-      tail.push(...line(tail[tail.length - 1], [c.xE + rb * Math.sin(th), 0, zE - sg * rb * (1 - Math.cos(th))], FINE));
-      for (let i = k - 1; i >= 0; i--) { const p = (th * i) / k; tail.push([c.xE + rb * Math.sin(p), 0, zE - sg * rb * (1 - Math.cos(p))]); }
-    }
-    tail.push(...line([c.xE, 0, zE], [c.xE - c.lead, 0, zE], FINE));
-    for (const p of tail) pts.push(side === 1 ? [-p[0], -p[1], p[2]] : p);
-  }
-
-  // ---- mirror / flip to where the settings put the J ----
-  const sx = s.j?.end === 'right' ? -1 : 1, sy = (s.j?.side ?? 'top') === 'top' ? -1 : 1, flip = (s.j?.layer ?? 'top') === 'top';
-  const place = (p: P3): P3 => [sx * p[0], sy * p[1], flip ? c.zEnd - p[2] : p[2]];
+  pts.push(...bt.lenB.pts);
+  const sy = s.mirror ? -1 : 1;
   const path: P3[] = [];
-  for (const p of pts.map(place)) {
+  for (const p0 of pts) {
+    const p: P3 = [p0[0], sy * p0[1], p0[2]];
     const q = path[path.length - 1];
     if (!q || Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) > 1e-4) path.push(p);
   }
@@ -344,17 +373,19 @@ export function solveCable(s: CableSpec): SolvedCable {
         for (const k of grid.get(`${kx + dx},${ky + dy},${kz + dzz}`) ?? []) {
           if (k <= i || along[k] - along[i] < 40) continue;
           const d2 = (path[i][0] - path[k][0]) ** 2 + (path[i][1] - path[k][1]) ** 2 + (path[i][2] - path[k][2]) ** 2;
-          if (d2 < need) throw new CableError(`The cable would run into itself (${Math.sqrt(d2).toFixed(1)} mm between centres, needs ${s.wireD.toFixed(1)}). Try a different outside lead size, a shorter centre lead, or a wider coil.`);
+          if (d2 < need) throw new CableError(`The cable would run into itself (${Math.sqrt(d2).toFixed(1)} mm between centres, needs ${s.wireD.toFixed(1)}). Move one of the leads to the other end, shorten it, or use a wider coil.`);
         }
     }
   }
 
-  const centerDir: P3 = [sx * (side === 1 ? 1 : -1), 0, 0];
   return {
     path,
-    ends: { outside: j ? { at: path[0], dir: [sx, 0, 0] } : null, center: { at: path[path.length - 1], dir: centerDir } },
-    turns: c.uEnd / g.perim,
-    footprint: { length: g.outerL, width: s.outerW, height: c.zEnd + s.wireD },
+    ends: {
+      bottom: { at: path[0], dir: [-bt.lenA.dir[0], sy * bt.lenA.dir[1], 0] },
+      top: { at: path[path.length - 1], dir: [bt.lenB.dir[0], sy * bt.lenB.dir[1], 0] },
+    },
+    turns: bt.travel / g.perim,
+    footprint: { length: g.outerL, width: s.outerW, height: bt.zEnd + s.wireD },
     hollow: { length: g.outerL - 2 * s.wireD, width: s.outerW - 2 * s.wireD },
   };
 }

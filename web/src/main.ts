@@ -7,7 +7,7 @@ import { DEFAULT_LIFT, DEFAULT_TRAY, fingerCentre, SIDES, type LayoutData, type 
 import { DEFAULT_SHELL, shellExtraHeight, shellPitch, shellProblem, trayInsideShell, type Footprint, type ShellOptions } from './geom/shell';
 import { parseSTL, writeSTL } from './mesh/stl';
 import { parse3MF, write3MF } from './mesh/threemf';
-import { CableError, CONNECTOR_ROLLS, CONNECTOR_TURNS, DEFAULT_CABLE, defaultConnectorAxis, orientConnector, placeConnector, solveCable, tubeMesh, type CableSpec } from './geom/cable';
+import { CableError, CONNECTOR_ROLLS, CONNECTOR_TURNS, DEFAULT_CABLE, defaultConnectorAxis, orientConnector, placeConnector, solveCable, tubeMesh, type CableSpec, type LeadStyle } from './geom/cable';
 import type { TriMesh } from './mesh/types';
 import { cloudDelete, cloudList, cloudLoad, cloudName, cloudSave, deleteProject, listProjects, loadProject, saveProject, type Project } from './storage';
 import { LARGE_MESH_TRIANGLES } from './mesh/bounds';
@@ -1194,17 +1194,22 @@ $('#library-delete-folder').addEventListener('click', async () => {
   } catch (e) { toast(`Could not delete the folder: ${e instanceof Error ? e.message : e}.`); }
 });
 // ---------- coiled cable (a generated part: stacked coil, a lead at each end, connector models on the ends) ----------
-interface ConnectorChoice { name: string; /** Which way the model points along the cable (0..5), or null = its longest side. */ axis: number | null; roll: number }
-interface CableSettings { d: number; len: number; l: number; w: number; r: number; j: boolean; jLen: number; jW: number; jEnd: 'left' | 'right'; jSide: 'top' | 'bottom'; jLayer: 'top' | 'bottom'; lead: number; c1: ConnectorChoice; c2: ConnectorChoice }
+type Which = 'top' | 'bottom';
+interface LeadSettings { style: LeadStyle; end: 'left' | 'right' | 'auto'; len: number; jW: number; conn: string; /** Which way the model points along the cable (0..5), or null = its longest side. */ axis: number | null; roll: number }
+interface CableSettings { d: number; len: number; l: number; w: number; r: number; mirror: boolean; top: LeadSettings; bottom: LeadSettings }
 let cable: CableSettings = {
-  d: DEFAULT_CABLE.wireD, len: DEFAULT_CABLE.totalLen, l: DEFAULT_CABLE.outerL, w: DEFAULT_CABLE.outerW, r: DEFAULT_CABLE.cornerR,
-  j: true, jLen: 50, jW: 20, jEnd: 'left', jSide: 'top', jLayer: 'top', lead: DEFAULT_CABLE.centerLead,
-  c1: { name: '', axis: null, roll: 0 }, c2: { name: '', axis: null, roll: 0 },
+  d: DEFAULT_CABLE.wireD, len: DEFAULT_CABLE.totalLen, l: DEFAULT_CABLE.outerL, w: DEFAULT_CABLE.outerW, r: DEFAULT_CABLE.cornerR, mirror: false,
+  top: { style: 'j', end: 'left', len: 50, jW: 20, conn: '', axis: null, roll: 0 },
+  bottom: { style: 'inside', end: 'auto', len: 5, jW: 20, conn: '', axis: null, roll: 0 },
 };
-try { cable = { ...cable, ...JSON.parse(localStorage.getItem('cable') || '{}') }; } catch { /* ignore */ }
+try {
+  const saved = JSON.parse(localStorage.getItem('cable2') || '{}');
+  cable = { ...cable, ...saved, top: { ...cable.top, ...saved.top }, bottom: { ...cable.bottom, ...saved.bottom } };
+} catch { /* ignore */ }
 /** The cable part made from this form, so changing the form updates it instead of adding another. */
 let cablePartId: number | null = null;
 const connectorMeshes = new Map<string, TriMesh>();
+const ENDS: Which[] = ['top', 'bottom'];
 
 function fillCable() {
   num('#cable-d').value = fromMM(cable.d);
@@ -1212,29 +1217,41 @@ function fillCable() {
   num('#cable-l').value = fromMM(cable.l);
   num('#cable-w').value = fromMM(cable.w);
   num('#cable-r').value = fromMM(cable.r);
-  num('#cable-jlen').value = fromMM(cable.jLen);
-  num('#cable-jw').value = fromMM(cable.jW);
-  num('#cable-clead').value = fromMM(cable.lead);
-  ($('#cable-jpos') as HTMLSelectElement).value = `${cable.jEnd}-${cable.jSide}`;
-  document.querySelectorAll<HTMLButtonElement>('[data-cj]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.cj === '1') === cable.j)));
-  document.querySelectorAll<HTMLButtonElement>('[data-cjl]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.cjl === cable.jLayer)));
-  $('#cable-j-rows').hidden = !cable.j;
+  document.querySelectorAll<HTMLButtonElement>('[data-cmir]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.cmir === '1') === cable.mirror)));
+  for (const n of ENDS) {
+    const e = cable[n];
+    ($(`#cable-${n}-style`) as HTMLSelectElement).value = e.style;
+    ($(`#cable-${n}-end`) as HTMLSelectElement).value = e.end;
+    num(`#cable-${n}-len`).value = fromMM(e.len);
+    num(`#cable-${n}-jw`).value = fromMM(e.jW);
+  }
+  showCableRows();
   fillConnectors();
   document.querySelectorAll('#cable .u').forEach((e) => (e.textContent = units));
 }
 
+function showCableRows() {
+  for (const n of ENDS) {
+    const e = cable[n];
+    $(`#cable-${n}-rows`).hidden = e.style === 'none';
+    $(`#cable-${n}-jw-row`).hidden = e.style !== 'j';
+    $(`#cable-${n}-len-label`).textContent =
+      (e.style === 'j' ? 'J length, from its U-turn to its tip' : e.style === 'inside' ? 'Straight run at the end' : 'Length past the coil') + ` (${units})`;
+  }
+}
+
 /** Connector pickers: none, or any part in the library. */
 function fillConnectors() {
-  for (const [sel, c] of [['#cable-c1', cable.c1], ['#cable-c2', cable.c2]] as const) {
-    const el = $(sel) as HTMLSelectElement;
-    const opt = (value: string, label: string) => { const o = document.createElement('option'); o.value = value; o.textContent = label; o.selected = value === c.name; return o; };
+  for (const n of ENDS) {
+    const c = cable[n];
+    const el = $(`#cable-${n}-conn`) as HTMLSelectElement;
+    const opt = (value: string, label: string) => { const o = document.createElement('option'); o.value = value; o.textContent = label; o.selected = value === c.conn; return o; };
     const items = [...(libraryItems ?? [])].sort((a, b) => (a.folder ?? '').localeCompare(b.folder ?? '') || a.name.localeCompare(b.name));
     el.replaceChildren(opt('', 'None (bare end)'), ...items.map((it) => opt(it.name, `${it.folder ? `${it.folder} / ` : ''}${it.name.replace(/\.(stl|3mf)$/i, '')}`)));
     // Keep a saved choice visible even before the library has loaded.
-    if (c.name && !items.some((it) => it.name === c.name)) el.append(opt(c.name, c.name.replace(/\.(stl|3mf)$/i, '')));
-    const n = sel.slice(-2);
-    for (const b of [`#cable-${n}-turn`, `#cable-${n}-roll`]) ($(b) as HTMLButtonElement).disabled = !c.name;
-    if (!c.name) $(`#cable-${n}-info`).textContent = '';
+    if (c.conn && !items.some((it) => it.name === c.conn)) el.append(opt(c.conn, c.conn.replace(/\.(stl|3mf)$/i, '')));
+    for (const b of [`#cable-${n}-turn`, `#cable-${n}-roll`]) ($(b) as HTMLButtonElement).disabled = !c.conn;
+    if (!c.conn) $(`#cable-${n}-info`).textContent = '';
   }
 }
 
@@ -1257,50 +1274,66 @@ async function connectorMesh(name: string): Promise<TriMesh> {
 /** Read the form into settings (mm), or return what is wrong with it. */
 function readCable(): CableSettings | string {
   const v = (id: string) => toMM(parseFloat(num(id).value.replace(',', '.')));
-  const d = v('#cable-d'), len = v('#cable-len'), l = v('#cable-l'), w = v('#cable-w'), r = v('#cable-r'), lead = v('#cable-clead');
-  const jLen = cable.j ? v('#cable-jlen') : cable.jLen, jW = cable.j ? v('#cable-jw') : cable.jW;
-  if (![d, len, l, w, r, lead, jLen, jW].every(Number.isFinite)) return 'Fill in every box.';
+  const d = v('#cable-d'), len = v('#cable-len'), l = v('#cable-l'), w = v('#cable-w'), r = v('#cable-r');
+  if (![d, len, l, w, r].every(Number.isFinite)) return 'Fill in the cable and coil sizes.';
   if (!(d >= 0.5 && d <= 40)) return 'Cable diameter must be between 0.5 and 40 mm.';
   if (!(len >= 10 && len <= 30000)) return 'Cable length must be between 10 mm and 30 m.';
   if (!(w >= 3 * d)) return `The coil must be at least ${fmtLen(3 * d, units)} ${units} wide (three cable diameters), so it has a hollow middle.`;
   if (!(l >= w)) return 'Coil length must be at least the coil width.';
-  if (!(lead >= 0)) return 'The straight run at the centre end must be 0 or more.';
-  const [jEnd, jSide] = ($('#cable-jpos') as HTMLSelectElement).value.split('-') as ['left' | 'right', 'top' | 'bottom'];
-  return { ...cable, d, len, l, w, r, lead, jLen, jW, jEnd, jSide };
+  const out = { ...cable, d, len, l, w, r };
+  for (const n of ENDS) {
+    const e = { ...cable[n] };
+    e.style = ($(`#cable-${n}-style`) as HTMLSelectElement).value as LeadStyle;
+    e.end = ($(`#cable-${n}-end`) as HTMLSelectElement).value as LeadSettings['end'];
+    if (e.style !== 'none') {
+      e.len = v(`#cable-${n}-len`);
+      if (!(e.len >= 0)) return `Enter a length for the end on the ${n} turn (0 or more).`;
+      if (e.style === 'j') { e.jW = v(`#cable-${n}-jw`); if (!(e.jW > 0)) return `Enter the J width for the end on the ${n} turn.`; }
+    }
+    out[n] = e;
+  }
+  return out;
 }
 
+/** One build at a time: a change made while one is running is picked up by a rerun, never a second cable. */
+let cableBusy = false, cableAgain = false;
 async function buildCable() {
+  if (cableBusy) { cableAgain = true; return; }
+  cableBusy = true;
+  try {
+    do { cableAgain = false; await buildCableOnce(); } while (cableAgain);
+  } finally { cableBusy = false; }
+}
+async function buildCableOnce() {
   const status = $('#cable-status');
   const c = readCable();
   if (typeof c === 'string') { status.textContent = c; return; }
   cable = c;
-  try { localStorage.setItem('cable', JSON.stringify(c)); } catch { /* private mode */ }
+  try { localStorage.setItem('cable2', JSON.stringify(c)); } catch { /* private mode */ }
   try {
     showProgress(0.05, 'Working out the coil');
-    const oriented = async (ch: ConnectorChoice, info: string) => {
-      if (!ch.name) return null;
-      const mesh = await connectorMesh(ch.name);
-      const o = orientConnector(mesh, ch.axis ?? defaultConnectorAxis(mesh), ch.roll);
-      $(info).textContent = `${fmtLen(o.length, units)} long × ${fmtLen(o.width, units)} wide × ${fmtLen(o.height, units)} tall ${units}`;
+    const oriented = async (n: Which) => {
+      const e = c[n];
+      if (!e.conn || e.style === 'none') return null;
+      const mesh = await connectorMesh(e.conn);
+      const o = orientConnector(mesh, e.axis ?? defaultConnectorAxis(mesh), e.roll);
+      $(`#cable-${n}-info`).textContent = `${fmtLen(o.length, units)} long × ${fmtLen(o.width, units)} wide × ${fmtLen(o.height, units)} tall ${units}`;
       return { o, name: mesh.name };
     };
-    const [k1, k2] = [await oriented(c.c1, '#cable-c1-info'), await oriented(c.c2, '#cable-c2-info')];
+    const k = { top: await oriented('top'), bottom: await oriented('bottom') };
     // Bend radii follow the cable: gentle enough to wind, tight enough to fit this coil.
     const straight = Math.max(0, c.w - c.d - 2 * c.r);
     const turnInR = Math.max(c.d / 2 + 0.5, Math.min(Math.max(8, 1.3 * c.d), Math.max(straight / 2, (c.r + straight / 2) / 2) - 0.01));
+    const leadSpec = (n: Which) => ({ style: c[n].style, end: c[n].end, length: c[n].len, jWidth: c[n].jW, connector: k[n] ? { height: k[n]!.o.height, width: k[n]!.o.width, length: k[n]!.o.length } : null });
     const spec: CableSpec = {
       wireD: c.d, totalLen: c.len, outerL: c.l, outerW: c.w, cornerR: c.r, gap: DEFAULT_CABLE.gap, fit: 'nearest',
-      j: c.j ? { width: c.jW, length: c.jLen, end: c.jEnd, side: c.jSide, layer: c.jLayer } : null,
-      turnInR, centerRun: 0, climbR: Math.max(8, 1.3 * c.d), centerLead: c.lead,
-      din: k2 ? { diameter: k2.o.height, above: 0, length: k2.o.length, width: k2.o.width } : null,
+      turnInR, climbR: Math.max(8, 1.3 * c.d), mirror: c.mirror, top: leadSpec('top'), bottom: leadSpec('bottom'),
     };
-    // With no outside lead, the settings still say which turn the centre lead leaves from.
-    if (!spec.j) spec.j = null;
     const solved = solveCable(spec);
     const bodies: TriMesh[] = [tubeMesh(solved.path, c.d)];
-    if (k1 && solved.ends.outside) bodies.push(placeConnector(k1.o, solved.ends.outside, k1.name));
-    if (k2) bodies.push(placeConnector(k2.o, solved.ends.center, k2.name));
-    const name = `Cable ${fmtLen(c.d, units)} × ${fmtLen(c.len, units)} ${units}${k1 || k2 ? ` (${[k1?.name, k2?.name].filter(Boolean).join(' + ')})` : ''}`;
+    for (const n of ENDS) if (k[n]) bodies.push(placeConnector(k[n]!.o, solved.ends[n], k[n]!.name));
+    const names = ENDS.map((n) => k[n]?.name).filter(Boolean);
+    const name = `Cable ${fmtLen(c.d, units)} × ${fmtLen(c.len, units)} ${units}${names.length ? ` (${names.join(' + ')})` : ''}`;
     const replace = cablePartId !== null && parts.some((p) => p.partId === cablePartId) ? cablePartId : undefined;
     const hadTray = !!tray;
     const part = await geo.cable(name, bodies, replace, (fr, label) => showProgress(fr, label));
@@ -1312,8 +1345,7 @@ async function buildCable() {
     const f = solved.footprint;
     status.textContent =
       `${solved.turns.toFixed(2)} turns. Coil ${fmtDims([f.length, f.width, f.height], units)} (you asked for ${fmtLen(c.l, units)} long); ` +
-      `whole part ${fmtDims(part.size, units)}. Hollow middle ${fmtLen(solved.hollow.length, units)} × ${fmtLen(solved.hollow.width, units)} ${units}.` +
-      (k1 && !solved.ends.outside ? ' The outside connector was left off because the outside lead is switched off.' : '');
+      `whole part ${fmtDims(part.size, units)}. Hollow middle ${fmtLen(solved.hollow.length, units)} × ${fmtLen(solved.hollow.width, units)} ${units}.`;
     $('#cable-build').textContent = 'Update cable';
   } catch (e) {
     hideProgress();
@@ -1321,27 +1353,36 @@ async function buildCable() {
   }
 }
 
+/** Once a cable is on screen, any change to the form redraws it straight away. */
+const cableChanged = () => { if (cablePartId !== null && parts.some((p) => p.partId === cablePartId)) buildCable(); };
 $('#cable-build').addEventListener('click', buildCable);
-document.querySelectorAll<HTMLButtonElement>('[data-cj]').forEach((b) => b.addEventListener('click', () => { cable.j = b.dataset.cj === '1'; fillCable(); }));
-document.querySelectorAll<HTMLButtonElement>('[data-cjl]').forEach((b) => b.addEventListener('click', () => { cable.jLayer = b.dataset.cjl as 'top' | 'bottom'; fillCable(); }));
-for (const n of ['c1', 'c2'] as const) {
-  ($(`#cable-${n}`) as HTMLSelectElement).addEventListener('change', (e) => {
-    cable[n] = { name: (e.target as HTMLSelectElement).value, axis: null, roll: 0 };
+document.querySelectorAll<HTMLButtonElement>('[data-cmir]').forEach((b) => b.addEventListener('click', () => {
+  cable.mirror = b.dataset.cmir === '1';
+  document.querySelectorAll<HTMLButtonElement>('[data-cmir]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+  cableChanged();
+}));
+for (const n of ENDS) {
+  ($(`#cable-${n}-style`) as HTMLSelectElement).addEventListener('change', (e) => { cable[n].style = (e.target as HTMLSelectElement).value as LeadStyle; showCableRows(); cableChanged(); });
+  ($(`#cable-${n}-end`) as HTMLSelectElement).addEventListener('change', cableChanged);
+  ($(`#cable-${n}-conn`) as HTMLSelectElement).addEventListener('change', (e) => {
+    cable[n] = { ...cable[n], conn: (e.target as HTMLSelectElement).value, axis: null, roll: 0 };
     fillConnectors();
+    cableChanged();
   });
   // Turn: point a different side of the model along the cable. Roll: a quarter turn about the cable.
   $(`#cable-${n}-turn`).addEventListener('click', async () => {
     const ch = cable[n];
-    if (!ch.name) return;
-    try { ch.axis = ((ch.axis ?? defaultConnectorAxis(await connectorMesh(ch.name))) + 1) % CONNECTOR_TURNS; } catch (e) { toast(e instanceof Error ? e.message : String(e)); return; }
+    if (!ch.conn) return;
+    try { ch.axis = ((ch.axis ?? defaultConnectorAxis(await connectorMesh(ch.conn))) + 1) % CONNECTOR_TURNS; } catch (e) { toast(e instanceof Error ? e.message : String(e)); return; }
     await buildCable();
   });
   $(`#cable-${n}-roll`).addEventListener('click', async () => {
-    if (!cable[n].name) return;
+    if (!cable[n].conn) return;
     cable[n].roll = (cable[n].roll + 1) % CONNECTOR_ROLLS;
     await buildCable();
   });
 }
+document.querySelectorAll<HTMLInputElement>('#cable input.num').forEach((i) => i.addEventListener('change', cableChanged));
 fillCable();
 
 $('#library-refresh').addEventListener('click', loadLibrary);

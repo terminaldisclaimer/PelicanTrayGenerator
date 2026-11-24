@@ -285,20 +285,31 @@ It follows the owner's Fusion 360 "SnakedWire" script.
   number of half turns over-constrain it, so the coil length flexes a few
   millimetres (grow or shrink, whichever is smaller) to make the cable
   length exact; the status line reports the result.
-- **Outside end** (optional): the cable carries on past a corner, makes a U
-  turn level with the end of the coil and runs back along the outside of a
-  long side. Settings: lead length, width across the U, which end and side,
-  and whether it leaves from the top or bottom turn.
-- **Centre end:** from the other end of the stack the cable bends inward and
-  runs along the long axis into the hollow middle, with a straight run at
-  the end.
+- **Two ends, each set up on its own:** the end on the top turn and the end
+  on the bottom turn each choose how they leave the coil:
+  - *Into the middle*: bends inward at a short end and runs along the long
+    axis into the hollow (90 degrees to that end of the coil).
+  - *Straight out, in line with the coil*: carries straight on past the
+    corner, along the long side it was running on.
+  - *Straight out sideways*: the same from a short end, so it sticks out
+    past a long side.
+  - *J beside the coil*: past the corner, a U-turn level with the end of the
+    coil, then back along the outside of the long side (length and width).
+  - *None*: the cable stops on the coil.
+  Each also chooses the end of the coil it is at (left, right, or "either",
+  which takes whichever changes the coil length least) and its length.
+  Which long side an outside lead lands on follows from the winding
+  direction; "Wound: other way" mirrors the cable to swap sides.
 - **Connectors:** each end can carry a model from the library. It is put on
   the cable's end, centred on it, pointing along it. "Turn" points a
   different side of the model along the cable (6 ways; default is its
-  longest side), "Roll" turns it a quarter turn about the cable. With a
-  connector on the centre end, the lead climbs (two bends) so the top of the
-  connector is level with the top of the stack; the connector must fit in
-  the hollow middle, clear of the far end.
+  longest side), "Roll" turns it a quarter turn about the cable. A lead with
+  a connector climbs or drops (two bends) so the connector stays within the
+  height of the stack: top level with the top of the stack for the top-turn
+  end and for any end in the middle, bottom level with the bottom of the
+  stack for an outside end on the bottom turn. A connector in the middle
+  must fit the hollow, clear of the far end.
+- Once a cable is on screen, every change to the form redraws it.
 - It is refused, with the reason, if the cable would run into itself, the
   radii cannot be wound, or the centre connector does not fit.
 - The result is one ordinary part (cable and connectors joined), lying flat
@@ -307,9 +318,9 @@ It follows the owner's Fusion 360 "SnakedWire" script.
 - Changing the form and pressing "Update cable" replaces that part. After a
   reload the cable is a plain part: the form keeps its last values, and
   pressing the button adds a new cable.
-- **Not built:** a connector on a lead pointing some other way (straight out
-  of the end, both ends outside, both inside); flat or oval cables; more
-  than one editable cable at a time.
+- **Not built:** a check that connectors do not run into each other or into
+  the cable (they are simply joined; look at the picture); leads at other
+  angles; flat or oval cables; more than one editable cable at a time.
 
 ## 4. Export (Bambu H3C)
 - **STL**: one binary STL per tray, in mm.
