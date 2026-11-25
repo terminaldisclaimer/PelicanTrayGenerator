@@ -9,7 +9,7 @@ export type PoseAction = 'next' | 'x90' | 'y90' | 'z90' | 'flip';
 export type WorkerRequest =
   | { id: number; type: 'parse'; fileName: string; kind: FileKind; data: ArrayBuffer }
   /** Add a part made of several bodies joined into one (a coiled cable and its connectors), lying as built. `replace` swaps it for an earlier one. */
-  | { id: number; type: 'cable'; name: string; bodies: TriMesh[]; replace?: number; /** The form's settings, kept with the part so it can be edited again. */ settings?: unknown }
+  | { id: number; type: 'cable'; name: string; bodies: TriMesh[]; replace?: number; /** The form's settings, kept with the part so it can be edited again. */ settings?: unknown; /** Sits in the middle of the first tray as built, with the other parts arranged round and inside it. */ pinned?: boolean }
   /** Change one body of a part made of several: leave it out or put it back, give it a quarter turn, move it, or undo all that. */
   | { id: number; type: 'body'; partId: number; index: number; on?: boolean; turn?: 'x90' | 'y90' | 'z90'; move?: [number, number, number]; reset?: boolean }
   /** Break a part made of several bodies into one part per body. Answers with every part now loaded. */
@@ -68,6 +68,8 @@ export interface ParsedPart {
   bodies?: BodyState[];
   /** Set when the part is a coiled cable: the settings it was made from. */
   cable?: unknown;
+  /** True for a cable coiled round the edge of the tray. */
+  pinned?: boolean;
   suggestInches: boolean;
   large: boolean;
 }
@@ -93,6 +95,8 @@ export interface SavedPart {
   bodyPositions?: Float32Array;
   /** For a coiled cable: the form's settings it was made from. */
   cable?: unknown;
+  /** True for a cable coiled round the edge of the tray: it is not arranged, the rest goes inside it. */
+  pinned?: boolean;
   /** Index into the automatic pose list, and whether the user chose it. */
   poseIndex: number;
   locked: boolean;

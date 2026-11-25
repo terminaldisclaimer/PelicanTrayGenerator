@@ -41,6 +41,13 @@ export interface LeadSpec {
   /** Straight run after the bend, to the cable's end. */
   length: number;
   /**
+   * Instead of one bend: step sideways toward the middle of the coil by this much (two opposite
+   * bends) and carry on the same way, so the end runs alongside the coil just inside it.
+   */
+  jog?: number;
+  /** Another shape for this end, tried as well when the ends are placed automatically (`place: 'auto'`). */
+  alt?: Pick<LeadSpec, 'stem' | 'angle' | 'radius' | 'length' | 'jog'>;
+  /**
    * Connector on this end: its height, width, and how far it reaches past the cable's end.
    * When the cable does not join it at its middle, `up`/`down` say how far it reaches above and
    * below the cable's line, and `vMin`/`vMax` how far to each side (as it is finally placed).
@@ -61,8 +68,16 @@ export interface CableSpec {
   cornerR: number;
   /** Air gap between stacked turns. */
   gap: number;
-  /** How the footprint length may flex. */
-  fit: 'nearest' | 'grow' | 'shrink';
+  /**
+   * How the cable length is made to come out exactly. 'nearest' / 'grow' / 'shrink': the footprint
+   * length flexes. 'fixed': the footprint stays exactly as given and the bottom end leaves the
+   * coil wherever the length puts it (its `at` is ignored).
+   */
+  fit: 'nearest' | 'grow' | 'shrink' | 'fixed';
+  /** With 'fixed': also choose where the top end leaves the coil, to find a spot where both ends and their connectors sit clear. */
+  place?: 'auto';
+  /** The ends and their connectors must stay inside the coil (it sits against a wall). */
+  keepInside?: boolean;
   /** Radius of the two bends in a climb. */
   climbR: number;
   /** Wind the other way round (mirrors the whole cable, swapping the near and far sides). */
@@ -140,12 +155,12 @@ export function leadTip(junction: P2, heading: number, turn: number, stem: numbe
  * One lead, drawn from where it leaves the coil to its free end. `dz` is how
  * far it has to climb (+) or drop (−) before its level end.
  */
-function makeLead(s: CableSpec, g: Layout, lead: LeadSpec, top: boolean, z: number, dz: number): Lead {
+function makeLead(s: CableSpec, g: Layout, lead: LeadSpec, top: boolean, z: number, dz: number, at?: number): Lead {
   const who = NAME[top ? 'top' : 'bottom'];
   if (!(lead.length >= 0) || !(lead.stem >= 0)) throw new CableError(`The ${who} lead's lengths must be 0 or more.`);
   if (!(Math.abs(lead.angle) <= 180)) throw new CableError(`The ${who} lead's bend must be between −180 and 180 degrees.`);
   if (Math.abs(lead.angle) > 1e-6 && !(lead.radius > s.wireD / 2)) throw new CableError(`The ${who} lead's bend radius must be more than ${(s.wireD / 2).toFixed(1)} mm (half the cable).`);
-  const u = atToU(g, lead.at);
+  const u = at ?? atToU(g, lead.at); // `at` here is a loop distance, for an end placed by the length
   const junction = g.xy(u);
   // The top lead carries on the way the coil is wound (counter-clockwise, hollow on its left);
   // the bottom lead leaves the other way, so the hollow is on its right.
@@ -182,7 +197,13 @@ function makeLead(s: CableSpec, g: Layout, lead: LeadSpec, top: boolean, z: numb
   };
 
   straight(lead.stem);
-  bend(lead.angle * RAD * turn, lead.radius);
+  if (lead.jog && lead.jog > 1e-6) {
+    // Sideways step toward the middle: out of line and back, with a straight between if the step is big.
+    const rad = Math.max(lead.radius, s.wireD / 2 + 0.5), th = lead.jog >= 2 * rad ? Math.PI / 2 : Math.acos(1 - lead.jog / (2 * rad));
+    bend(th * turn, rad);
+    straight(Math.max(0, lead.jog - 2 * rad));
+    bend(-th * turn, rad);
+  } else bend(lead.angle * RAD * turn, lead.radius);
   if (th === 0) straight(lead.length);
   else {
     // A lead that carries more or less straight on is still over (or under) the corner of the
@@ -253,6 +274,7 @@ export function solveCable(s: CableSpec): SolvedCable {
   const problems = (bt: Built): CableWarning[] => {
     const probs: CableWarning[] = [];
     for (const [which, lead] of [['top', bt.b], ['bottom', bt.a]] as const) {
+      if (s.keepInside && lead.pts.some((p) => outside(bt.g, p))) { probs.push({ end: which, text: `The ${NAME[which]} end would run outside the coil, into the tray wall.` }); continue; }
       const c = s[which].connector;
       if (!c) continue;
       const tip = tipOf(lead), [dx, dy] = lead.dir;
@@ -267,10 +289,79 @@ export function solveCable(s: CableSpec): SolvedCable {
         const p = [tip[0] + dx * c.length * fu - dy * v, tip[1] + dy * c.length * fu + dx * v];
         if (inHollow(bt.g, p)) hollow++; else if (outside(bt.g, p)) out++; else across++;
       }
-      if (across || (hollow && out)) probs.push({ end: which, text: `The connector on the ${NAME[which]} end overlaps the coil. Move or turn that end, make a J wider, or change the coil size.` });
+      if (s.keepInside && out && !across) probs.push({ end: which, text: `The connector on the ${NAME[which]} end would be outside the coil, against the tray wall.` });
+      else if (across || (hollow && out)) probs.push({ end: which, text: `The connector on the ${NAME[which]} end overlaps the coil. Move or turn that end, make a J wider, or change the coil size.` });
+    }
+    // The two ends against each other: a connector may not lie on the other connector or on the other end's lead.
+    const box = (which: 'top' | 'bottom', lead: Lead) => {
+      const c = s[which].connector;
+      if (!c) return null;
+      let v0 = c.vMin ?? -c.width / 2, v1 = c.vMax ?? c.width / 2;
+      if (s.mirror) [v0, v1] = [-v1, -v0];
+      return { tip: tipOf(lead), dir: lead.dir, len: c.length, v0, v1 };
+    };
+    type Box = NonNullable<ReturnType<typeof box>>;
+    const holds = (b: Box, p: number[], margin: number) => {
+      const x = p[0] - b.tip[0], y = p[1] - b.tip[1], u = x * b.dir[0] + y * b.dir[1], v = -x * b.dir[1] + y * b.dir[0];
+      return u >= -margin && u <= b.len + margin && v >= b.v0 - margin && v <= b.v1 + margin;
+    };
+    const bt0 = box('top', bt.b), bb0 = box('bottom', bt.a);
+    const meets = (a: Box, b: Box) => {
+      for (let u = 0; u <= a.len + 1e-9; u += Math.max(1, a.len / Math.ceil(a.len / 2)))
+        for (let v = a.v0; v <= a.v1 + 1e-9; v += Math.max(1, (a.v1 - a.v0) / Math.max(1, Math.ceil((a.v1 - a.v0) / 2))))
+          if (holds(b, [a.tip[0] + a.dir[0] * u - a.dir[1] * v, a.tip[1] + a.dir[1] * u + a.dir[0] * v], 1)) return true;
+      return false;
+    };
+    if (bt0 && bb0 && (meets(bt0, bb0) || meets(bb0, bt0))) probs.push({ end: 'top', text: 'The two connectors overlap each other. Move one of the ends.' });
+    else {
+      if (bt0 && bt.a.pts.some((p) => holds(bt0, p, s.wireD / 2))) probs.push({ end: 'top', text: `The connector on the ${NAME.top} end lies over the cable's other end. Move one of the ends.` });
+      if (bb0 && bt.b.pts.some((p) => holds(bb0, p, s.wireD / 2))) probs.push({ end: 'bottom', text: `The connector on the ${NAME.bottom} end lies over the cable's other end. Move one of the ends.` });
     }
     return probs;
   };
+
+  if (s.fit === 'fixed') {
+    // The footprint is given. The cable's length then says how far round the coil the bottom end is
+    // from the top end; only where the top end leaves is free.
+    const g = layout(s, s.outerL);
+    const fixedAt = (top0: LeadSpec, bottom: LeadSpec, topAt: number): { bt: Built; probs: CableWarning[] } | null => {
+      const topLead = { ...top0, at: topAt };
+      const uB = atToU(g, topAt);
+      let lenA = makeLead(s, g, bottom, false, 0, 0, 0).length, lenB = makeLead(s, g, topLead, true, 0, 0).length;
+      let bt: Built | null = null;
+      for (let pass = 0; pass < 3; pass++) {
+        const travel = (s.totalLen - lenA - lenB) / g.stretch;
+        if (!(travel > 1)) return null;
+        const zEnd = g.rise * travel, uA = uB - travel;
+        const a0 = makeLead(s, g, bottom, false, 0, 0, uA), b0 = makeLead(s, g, topLead, true, 0, 0);
+        const target = (l: LeadSpec, flat: Lead, top: boolean) => {
+          if (!l.connector) return top ? zEnd : 0;
+          const flushTop = zEnd + s.wireD / 2 - (l.connector.up ?? l.connector.height / 2), flushBottom = -s.wireD / 2 + (l.connector.down ?? l.connector.height / 2);
+          return top || inHollow(g, tipOf(flat)) ? flushTop : flushBottom;
+        };
+        const b = makeLead(s, g, topLead, true, zEnd, target(topLead, b0, true) - zEnd), a = makeLead(s, g, bottom, false, 0, target(bottom, a0, false), uA);
+        bt = { g, n: 0, a, b, travel, zEnd, total: a.length + b.length + g.stretch * travel };
+        lenA = a.length; lenB = b.length;
+      }
+      return bt ? { bt, probs: problems(bt) } : null;
+    };
+    // Along the long sides first (near, then far), then the ends: connectors lie best along a long side.
+    const auto = s.place === 'auto';
+    const spots = auto ? [0, 4, 2, 6].flatMap((k) => Array.from({ length: 19 }, (_, i) => k + (i + 1) / 20)) : [s.top.at];
+    // Each end as given, then with its other shape if it has one.
+    const shapes = (l: LeadSpec): LeadSpec[] => (auto && l.alt ? [l, { ...l, jog: undefined, ...l.alt }] : [l]);
+    let fallback: SolvedCable | null = null, least = Infinity;
+    for (const top of shapes(s.top)) for (const bottom of shapes(s.bottom)) for (const at of spots) {
+      const f = fixedAt(top, bottom, at);
+      if (!f) continue;
+      const done = finish(s, f.bt);
+      done.warnings.push(...f.probs);
+      if (!done.warnings.length) return done;
+      if (done.warnings.length < least) { least = done.warnings.length; fallback = done; }
+    }
+    if (!fallback) throw new CableError('The cable is too short to go round a coil this size with these ends.');
+    return fallback;
+  }
 
   const lMin = 2 * s.cornerR + s.wireD + 1e-6;
   const feasible: Built[] = [], rejected: { bt: Built; probs: CableWarning[] }[] = [];

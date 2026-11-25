@@ -186,7 +186,8 @@ export function anneal(items: AnnealItem[], settings: AnnealSettings): AnnealPla
         if (x0 < margin) o += Math.min(x1, margin - 1) - x0 + 1;
         if (x1 >= W - margin) o += x1 - Math.max(x0, W - margin) + 1;
       }
-    for (const { b, x, y } of blocks) o += overlap(sh[i], px[i], py[i], b, x, y) + intrusion(sh[i], px[i], py[i], b, x, y);
+    // Fixtures that slide along the tray's edge (lift-out grips) may cross fixed obstacles: a grip over a cable's channel is fine.
+    if (!items[i].rail) for (const { b, x, y } of blocks) o += overlap(sh[i], px[i], py[i], b, x, y) + intrusion(sh[i], px[i], py[i], b, x, y);
     out[i] = o;
     for (let j = 0; j < n; j++) {
       if (j === i) continue;

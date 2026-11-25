@@ -6,6 +6,7 @@ import { poseCandidates, posePart, toManifold } from '../src/geom/analyze';
 import { buildCavity, DEFAULT_POCKET } from '../src/geom/pocket';
 import { autoFingers, buildFromLayout, buildTrays, DEFAULT_LIFT, DEFAULT_TRAY, distinctPoses, fingerCentre, liftHoles, TrayError, type TrayPart } from '../src/geom/tray';
 import { buildShell, splitLiner, DEFAULT_SHELL } from '../src/geom/shell';
+import { DEFAULT_CABLE, solveCable, tubeMesh } from '../src/geom/cable';
 import { IDENTITY } from '../src/geom/vec';
 import { parseSTL, writeSTL } from '../src/mesh/stl';
 import { parse3MF } from '../src/mesh/threemf';
@@ -573,6 +574,47 @@ describe('tray', () => {
     expect(splitLiner(k, t.mesh, t.depth, 60).core).toBeNull();
     for (const m of [core, liner, tray, shell, clash]) m.delete();
   }, 60000);
+
+  it('a cable pinned round the edge of the tray: other parts go inside it, and a lift-out grip may cross it', () => {
+    const L = 226.8, W = 100.5, off = 3; // tray, and cable-to-wall offset
+    const hug = { at: 0.5, stem: 0, angle: 0, radius: 8, length: 0, connector: null };
+    const c = solveCable({ ...DEFAULT_CABLE, outerL: L - 2 * off, outerW: W - 2 * off, fit: 'fixed', place: 'auto', top: hug, bottom: hug });
+    expect(c.warnings).toEqual([]);
+    const ring: TrayPart = { ...trayPart(tubeMesh(c.path, 6, 'cable'), 1), pinned: true };
+    const others = [trayPart(boxMesh(60, 40, 20, 'a'), 2), trayPart(boxMesh(50, 30, 12, 'b'), 3)];
+    const o = { ...FAST, edge: 2, length: L, width: W, lift: DEFAULT_LIFT };
+    const r = buildTrays(k, [ring, ...others], o);
+    expect(r.trays).toHaveLength(1);
+    const t = r.trays[0], at = (id: number) => t.placements.find((p) => p.partId === id)!;
+    // The cable is exactly in the middle, not turned; the tray is as deep as the deepest thing in it.
+    expect([at(1).x, at(1).y, at(1).angle].map((v) => +v.toFixed(3) + 0)).toEqual([0, 0, 0]);
+    expect(t.depth).toBeGreaterThanOrEqual(20 + 2);
+    // Both other parts are inside the ring: clear of the cable's band on every side.
+    const inner = { x: L / 2 - off - 6 - 3, y: W / 2 - off - 6 - 3 };
+    for (const id of [2, 3]) {
+      const p = at(id), [sx, sy] = id === 2 ? [60, 40] : [50, 30];
+      const turned = Math.abs(Math.round(p.angle / 90)) % 2 === 1, hx = (turned ? sy : sx) / 2, hy = (turned ? sx : sy) / 2;
+      expect(Math.abs(p.x) + hx).toBeLessThanOrEqual(inner.x);
+      expect(Math.abs(p.y) + hy).toBeLessThanOrEqual(inner.y);
+    }
+    // The cable's channel is open at the wall side all the way round at mid-height of the cable...
+    const tray = toManifold(k, t.mesh)!;
+    const probe = (x: number, y: number, z: number) => { const cs = k.CrossSection.circle(1.5, 12).translate(x, y), cut = tray.slice(z), a = cs.intersect(cut).area(); cs.delete(); cut.delete(); return a; };
+    for (const [x, y] of [[0, W / 2 - off - 3], [0, -(W / 2 - off - 3)], [L / 2 - off - 3, 0], [-(L / 2 - off - 3), 0]]) expect(probe(x, y, t.depth - 5)).toBeLessThan(0.1);
+    // ...with tray left between it and the wall away from the grips, and an island in the middle for the other parts.
+    expect(probe(60, W / 2 - 1, t.depth - 5)).toBeGreaterThan(3);
+    expect(probe(0, 0, 1)).toBeGreaterThan(6);
+    tray.delete();
+    // The two lift-out grips are still there, on the long sides, over the cable.
+    expect(t.lifts).toHaveLength(2);
+    // Without the pinning the same ring cannot even be placed: the layout's safety margins need more room than 3 mm.
+    expect(() => buildTrays(k, [{ ...ring, pinned: false }, ...others], o)).toThrow(TrayError);
+    // A second tray, when needed, is not blocked by the cable in the first.
+    const many = buildTrays(k, [ring, ...[1, 2, 3, 4].map((i) => trayPart(boxMesh(150, 60, 15, `big${i}`), 10 + i))], { ...o, stacking: false });
+    expect(many.trays.length).toBeGreaterThan(1);
+    expect(many.trays[0].placements.some((p) => p.partId === 1)).toBe(true);
+    expect(many.trays.slice(1).every((x) => x.placements.length > 0 && x.placements.every((p) => p.partId !== 1))).toBe(true);
+  }, 120000);
 
   it('lift-out holes slide along their sides, independently, to make room', () => {
     // A 60×50 part fills the tray's width, so it cannot sit beside a hole in the middle of either long side.

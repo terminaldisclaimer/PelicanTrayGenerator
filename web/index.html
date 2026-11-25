@@ -57,6 +57,18 @@
             <p class="muted small">A cable wound in stacked turns around a rounded rectangle. Each end leaves the coil its own way and can carry a connector. Give the coil size you want; its length flexes a few millimetres so the cable length comes out exactly.</p>
             <label class="row"><span>Cable diameter (<span class="u">mm</span>)</span><input class="num" id="cable-d" inputmode="decimal" autocomplete="off" /></label>
             <label class="row"><span>Cable length, end to end (<span class="u">mm</span>)</span><input class="num" id="cable-len" inputmode="decimal" autocomplete="off" /></label>
+            <div class="row">
+              <span>Coil size</span>
+              <div class="seg" role="radiogroup" aria-label="Coil size">
+                <button role="radio" data-cwrap="0" aria-checked="true">Set by hand</button>
+                <button role="radio" data-cwrap="1" aria-checked="false">Round the tray edge</button>
+              </div>
+            </div>
+            <div id="cable-wrap-rows" hidden>
+              <p class="muted small">The coil is sized to the tray on the Trays tab and sits against its wall in tray 1, with the other parts inside it. The ends run along the inside of the coil. A second cable set this way nests inside the first.</p>
+              <label class="row"><span>Cable to tray wall (<span class="u">mm</span>)</span><input class="num" id="cable-walloff" inputmode="decimal" autocomplete="off" /></label>
+              <label class="row"><span>Cable to cable (<span class="u">mm</span>)</span><input class="num" id="cable-wireoff" inputmode="decimal" autocomplete="off" /></label>
+            </div>
             <label class="row"><span>Coil length (<span class="u">mm</span>)</span><input class="num" id="cable-l" inputmode="decimal" autocomplete="off" /></label>
             <label class="row"><span>Coil width (<span class="u">mm</span>)</span><input class="num" id="cable-w" inputmode="decimal" autocomplete="off" /></label>
             <label class="row"><span>Corner radius (<span class="u">mm</span>)</span><input class="num" id="cable-r" inputmode="decimal" autocomplete="off" /></label>

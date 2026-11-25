@@ -811,7 +811,10 @@ async function generateTray(effort: Effort = lastEffort) {
   lastEffort = effort;
   const btn = $<HTMLButtonElement>('#tray-build');
   btn.disabled = true;
+  let failed = false;
   try {
+    // A cable coiled round the tray edge is sized to the tray: fit it to this tray first.
+    await refreshWrapCables();
     showProgress(0.02, 'Generating tray');
     const result = await geo.tray(options, shell, showProgress);
     const n = showResult(result, shell, outer, s.height, '');
@@ -823,11 +826,30 @@ async function generateTray(effort: Effort = lastEffort) {
     if (n > 1) $('#tray-status').textContent += hard ? ' The longer search did not find a one-tray layout either.' : ' This search did not find a one-tray layout; a longer search sometimes does.';
   } catch (e) {
     $('#tray-status').textContent = e instanceof Error ? e.message : String(e);
+    failed = true;
   } finally {
     hideProgress();
     btn.disabled = false;
   }
+  // It did not fit, or needed a second tray, with a cable round the edge: a compact coil may do better. Ask first.
+  const wrapped = parts.filter((p) => p.pinned && (p.cable as CableSettings | undefined)?.wrap);
+  if (wrapped.length && (failed || (tray?.trays.length ?? 0) > 1) && !askedCompact) {
+    askedCompact = true; // once per attempt, so declining is not asked again straight away
+    const why = failed ? $('#tray-status').textContent : 'With the cable round the tray edge, everything needs more than one tray.';
+    if (confirm(`${why}\n\nMake the cable a compact coil instead and try again? (Its size goes back to the one set by hand.)`)) {
+      for (const p of wrapped) {
+        await editCable(p, true);
+        cable.wrap = false;
+        fillCable();
+        refreshingWrap = true; // build without starting another tray run from inside
+        try { await buildCable(); } finally { refreshingWrap = false; }
+      }
+      await generateTray(effort);
+    }
+    askedCompact = false;
+  }
 }
+let askedCompact = false;
 
 /** Show a project's saved arrangement again: cut it as it was, with no searching. */
 async function restoreLayout(saved: SavedLayout) {
@@ -1405,10 +1427,10 @@ $('#library-delete-folder').addEventListener('click', async () => {
 // ---------- coiled cable (a generated part: stacked coil, a lead at each end, connector models on the ends) ----------
 type Which = 'top' | 'bottom';
 interface LeadSettings { at: number; stem: number; angle: number; radius: number; length: number; conn: string; /** Which way the model points along the cable (0..5), or null = its longest side. */ axis: number | null; roll: number }
-interface CableSettings { d: number; len: number; l: number; w: number; r: number; /** Room kept between a connector on a J and the coil beside it. */ connGap: number; mirror: boolean; top: LeadSettings; bottom: LeadSettings }
+interface CableSettings { d: number; len: number; l: number; w: number; r: number; /** Room kept between a connector on a J and the coil beside it. */ connGap: number; mirror: boolean; /** Sized to the tray and pinned round its edge, with its ends inside. */ wrap: boolean; wallOff: number; wireOff: number; /** The tray size and inset it was last built for. */ wrapKey?: string; top: LeadSettings; bottom: LeadSettings }
 const noConn = { conn: '', axis: null, roll: 0 };
 let cable: CableSettings = {
-  d: DEFAULT_CABLE.wireD, len: DEFAULT_CABLE.totalLen, l: DEFAULT_CABLE.outerL, w: DEFAULT_CABLE.outerW, r: DEFAULT_CABLE.cornerR, connGap: 2, mirror: false,
+  d: DEFAULT_CABLE.wireD, len: DEFAULT_CABLE.totalLen, l: DEFAULT_CABLE.outerL, w: DEFAULT_CABLE.outerW, r: DEFAULT_CABLE.cornerR, connGap: 2, mirror: false, wrap: false, wallOff: 3, wireOff: 3,
   top: { ...DEFAULT_CABLE.top, ...noConn }, bottom: { ...DEFAULT_CABLE.bottom, ...noConn },
 };
 try {
@@ -1428,7 +1450,51 @@ let cableShown: SolvedCable | null = null;
 /** True while a handle in the drawing is being dragged. */
 let cableHeld = false;
 
+/** The tray the parts go in, as set on the Trays tab: inside the shell when there is one. */
+function trayInsideNow(): { x: number; y: number } {
+  // What is typed on the Trays tab now, if it is complete; otherwise the last settings used.
+  const typed = readTrayInputs();
+  const t = typeof typed === 'string' ? traySettings : typed, outer: Footprint = { length: t.length - 2 * t.gap, width: t.width - 2 * t.gap, cornerRadius: DEFAULT_TRAY.cornerRadius };
+  const inside = t.shell ? trayInsideShell(outer, shellOptions(t)) : outer;
+  return { x: inside.length, y: inside.width };
+}
+/** How far in from the tray wall a wrapped cable's outside sits: its own offset, plus every wrapped cable before it in the parts list. */
+function wrapInset(c: CableSettings, self: number | null): number {
+  let inset = c.wallOff;
+  for (const p of parts) {
+    if (p.partId === self) break;
+    const other = p.pinned ? (p.cable as Partial<CableSettings> | undefined) : undefined;
+    if (other?.d) inset += other.d + c.wireOff;
+  }
+  return inset;
+}
+const wrapKeyOf = (c: CableSettings, self: number | null) => { const t = trayInsideNow(); return `${t.x.toFixed(2)}|${t.y.toFixed(2)}|${wrapInset(c, self).toFixed(2)}`; };
+/** A cable coiled round the edge of the tray: its size comes from the tray, and its ends step inside and run along the coil. */
+function wrapSpec(c: CableSettings, self: number | null): CableSpec {
+  const t = trayInsideNow(), inset = wrapInset(c, self);
+  const lead = (n: Which): LeadSpec => {
+    const o = c[n].conn ? turned[n]?.o : undefined;
+    // The cable is on one side of each end as it runs (its right for the top end, its left for the bottom one).
+    const toward = o ? (n === 'top' ? -o.vMin : o.vMax) : 0;
+    // Doubled back on itself the cable is on the other side of it, so the connector's other flank faces the cable.
+    const towardBack = o ? (n === 'top' ? o.vMax : -o.vMin) : 0;
+    const radius = Math.max(8, 1.3 * c.d), run = o ? Math.max(6, c.d) : 0;
+    return {
+      at: 0.5, stem: 0, angle: 0, radius, length: run, jog: o ? c.d + c.connGap + Math.max(0, toward) : 0,
+      // The other way to lay it: turned right round inside the coil, so the connector points back along the wall.
+      alt: o ? { stem: 0, angle: 180, radius: Math.max(radius, (c.d + c.connGap + Math.max(0, towardBack)) / 2), length: run } : undefined,
+      connector: o ? { height: o.height, width: o.width, length: o.length, up: o.up, down: o.down, vMin: o.vMin, vMax: o.vMax } : null,
+    };
+  };
+  const outerL = t.x - 2 * inset, outerW = t.y - 2 * inset;
+  return {
+    wireD: c.d, totalLen: c.len, outerL, outerW, cornerR: Math.max(c.d / 2 + 0.5, Math.min(c.r, (Math.min(outerL, outerW) - c.d) / 2)), gap: DEFAULT_CABLE.gap,
+    fit: 'fixed', place: 'auto', keepInside: true, climbR: Math.max(8, 1.3 * c.d), mirror: false, top: lead('top'), bottom: lead('bottom'),
+  };
+}
+
 const cableSpec = (c: CableSettings): CableSpec => {
+  if (c.wrap) return wrapSpec(c, cablePartId);
   const lead = (n: Which): LeadSpec => {
     const t = c[n].conn ? turned[n] : null;
     // Beside the coil only the part of a J's connector that faces it matters for the overlap check.
@@ -1446,6 +1512,15 @@ function fillCable() {
   num('#cable-w').value = fromMM(cable.w);
   num('#cable-r').value = fromMM(cable.r);
   num('#cable-gap').value = fromMM(cable.connGap);
+  num('#cable-walloff').value = fromMM(cable.wallOff);
+  num('#cable-wireoff').value = fromMM(cable.wireOff);
+  document.querySelectorAll<HTMLButtonElement>('[data-cwrap]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.cwrap === '1') === cable.wrap)));
+  // Round the tray edge: the size, the winding and where the ends go are worked out, so those controls are put away.
+  $('#cable-wrap-rows').hidden = !cable.wrap;
+  for (const id of ['#cable-l', '#cable-w', '#cable-angle', '#cable-leadlen', '#cable-radius']) (num(id).closest('label') as HTMLElement).hidden = cable.wrap;
+  $('#cable-presets').hidden = cable.wrap;
+  (document.querySelector('[data-cmir]')!.closest('.row') as HTMLElement).hidden = cable.wrap;
+  $('#cable-roll').hidden = cable.wrap;
   document.querySelectorAll<HTMLButtonElement>('[data-cmir]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.cmir === '1') === cable.mirror)));
   fillCableEnd();
   document.querySelectorAll('#cable .u').forEach((e) => (e.textContent = units));
@@ -1516,7 +1591,7 @@ function fillCableEnd() {
   put('#cable-angle', String(+e.angle.toFixed(1)));
   put('#cable-leadlen', fromMM(e.length));
   put('#cable-radius', fromMM(e.radius));
-  $('#cable-j-rows').hidden = !isJ(e);
+  $('#cable-j-rows').hidden = cable.wrap || !isJ(e);
   jShown = jSize(e);
   put('#cable-jw', fromMM(jShown.width));
   put('#cable-jl', fromMM(jShown.length));
@@ -1554,7 +1629,15 @@ async function turnConnectors() {
     const e = cable[n];
     if (!e.conn) { turned[n] = null; continue; }
     const mesh = await connectorMesh(e.conn);
-    const o = orientConnector(mesh, e.axis ?? defaultConnectorAxis(mesh), e.roll);
+    const axis = e.axis ?? defaultConnectorAxis(mesh);
+    let o = orientConnector(mesh, axis, e.roll);
+    if (cable.wrap) {
+      // Round the tray edge the connector lies against the coil: roll it so it takes the least room across the tray.
+      for (let r = 0; r < CONNECTOR_ROLLS; r++) {
+        const t = orientConnector(mesh, axis, r);
+        if (t.width < o.width - 0.05 || (Math.abs(t.width - o.width) <= 0.05 && t.height < o.height - 0.05)) { o = t; e.roll = r; }
+      }
+    }
     turned[n] = { o, name: mesh.name, outline: connectorOutline(o) };
   }
 }
@@ -1565,6 +1648,15 @@ function readCable(): string | null {
   const d = v('#cable-d'), len = v('#cable-len'), l = v('#cable-l'), w = v('#cable-w'), r = v('#cable-r'), connGap = v('#cable-gap');
   if (![d, len, l, w, r].every(Number.isFinite)) return 'Fill in the cable and coil sizes.';
   if (!(connGap >= 0 && connGap <= 30)) return 'The gap between a connector and the cable must be between 0 and 30 mm.';
+  if (cable.wrap) {
+    const wallOff = v('#cable-walloff'), wireOff = v('#cable-wireoff');
+    if (!(wallOff >= 0 && wallOff <= 50) || !(wireOff >= 0 && wireOff <= 50)) return 'The offsets must be between 0 and 50 mm.';
+    if (wallOff < traySettings.edge) return `The cable must be at least ${fmtLen(traySettings.edge, units)} ${units} from the tray wall (the "Minimum tray thickness at the edge" on the Trays tab).`;
+    if (!(d >= 0.5 && d <= 40)) return 'Cable diameter must be between 0.5 and 40 mm.';
+    if (!(len >= 10 && len <= 30000)) return 'Cable length must be between 10 mm and 30 m.';
+    cable = { ...cable, d, len, r: Number.isFinite(r) ? r : cable.r, connGap, wallOff, wireOff };
+    return null;
+  }
   if (Math.abs(connGap - cable.connGap) > 1e-6) for (const n of ENDS) fitJ.add(n); // a new gap re-sizes the Js
   if (!(d >= 0.5 && d <= 40)) return 'Cable diameter must be between 0.5 and 40 mm.';
   if (!(len >= 10 && len <= 30000)) return 'Cable length must be between 10 mm and 30 m.';
@@ -1598,7 +1690,7 @@ function previewCable(): SolvedCable | null {
     // The overlap check for a J's connector uses how far it reaches beside the coil, which is
     // only known once the cable is laid out: measure it and, if it changed, lay it out again.
     let again = false;
-    for (const n of ENDS) {
+    for (const n of cable.wrap ? [] : ENDS) {
       const r = reachBeside(n, cableShown);
       if ((r === null) !== (besideReach[n] === null) || (r !== null && Math.abs(r - besideReach[n]!) > 0.05)) { besideReach[n] = r; again = true; }
     }
@@ -1631,6 +1723,7 @@ function drawCable(c: SolvedCable) {
   const grow = (x: number, y: number) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
   for (const p of c.path) grow(p[0], p[1]);
   for (const n of ENDS) for (const p of boxes[n] ?? []) grow(p[0], p[1]);
+  if (cable.wrap) { const t = trayInsideNow(); grow(-t.x / 2, -t.y / 2); grow(t.x / 2, t.y / 2); }
   const pad = Math.max(14, cable.d * 2.5);
   // The far side is drawn at the top, so the picture is flipped top to bottom.
   // While a handle is held the picture keeps its scale, so the handle stays under the finger.
@@ -1640,10 +1733,16 @@ function drawCable(c: SolvedCable) {
   const kids: Element[] = [el('polyline', { points: c.path.map((p) => `${p[0].toFixed(2)},${(-p[1]).toFixed(2)}`).join(' '), 'stroke-width': cable.d }, c.warnings.some((w) => w.end === null) ? 'wire wire-clash' : 'wire')];
   // Handles are sized by the picture, so a thumb can take hold of them whatever the coil's size.
   const unit = Math.max(view.width / Math.max(1, svg.clientWidth || 340), view.height / Math.max(1, svg.clientHeight || 260)), hr = 8 * unit, hit = 22 * unit;
+  if (cable.wrap) {
+    // The tray wall, for scale: the coil sits just inside it.
+    const t = trayInsideNow();
+    kids.unshift(el('rect', { x: -t.x / 2, y: -t.y / 2, width: t.x, height: t.y, rx: DEFAULT_TRAY.cornerRadius, fill: 'none', stroke: '#5b6470', 'stroke-width': unit * 1.5, 'stroke-dasharray': `${unit * 6} ${unit * 4}` }));
+  }
   for (const n of ENDS) {
     const b = boxes[n], cls = END_COLOUR[n], sel = n === cableEnd ? ' sel' : '';
     const clash = c.warnings.some((w) => w.end === n);
     if (b) kids.push(el('polygon', { points: b.map((p) => `${p[0].toFixed(2)},${(-p[1]).toFixed(2)}`).join(' '), 'stroke-width': unit * 1.5 }, clash ? 'conn-clash' : `conn-${cls}`));
+    if (cable.wrap) continue; // nothing to drag: the ends are placed for you
     const j = c.leads[n].junction, t = c.ends[n].at;
     kids.push(el('circle', { cx: j[0], cy: -j[1], r: hr, 'stroke-width': unit * 2 }, `h-${cls}${sel}`));
     kids.push(el('rect', { x: t[0] - hr, y: -t[1] - hr, width: 2 * hr, height: 2 * hr, 'stroke-width': unit * 2 }, `h-${cls}${sel}`));
@@ -1703,7 +1802,7 @@ function dragCable(n: Which, part: 'junction' | 'tip', x: number, y: number) {
 const saveCable = () => { try { localStorage.setItem('cable3', JSON.stringify(cable)); } catch { /* private mode */ } };
 
 /** Load a cable part's settings back into the form, so changes there update that part. */
-async function editCable(p: PartState) {
+async function editCable(p: PartState, quiet = false) {
   const saved = p.cable as Partial<CableSettings> | undefined;
   if (!saved || typeof saved !== 'object' || !saved.top || !saved.bottom) { toast('This cable was saved without its settings, so it cannot be edited. Make a new one from Add parts.'); return; }
   cable = { ...cable, ...saved, top: { ...cable.top, ...saved.top }, bottom: { ...cable.bottom, ...saved.bottom } };
@@ -1712,6 +1811,7 @@ async function editCable(p: PartState) {
   fitJ.clear();
   fillCable();
   $('#cable-build').textContent = 'Update cable';
+  if (quiet) return; // being rebuilt in the background: the form is loaded but not brought forward
   const form = $('#cable') as HTMLDetailsElement;
   form.open = true;
   sheet.open('full');
@@ -1756,7 +1856,8 @@ async function buildCableOnce() {
     await turnConnectors();
     fillCableEnd();
     previewCable();
-    fitPendingJs();
+    if (cable.wrap) fitJ.clear(); else fitPendingJs();
+    if (cable.wrap) cable.wrapKey = wrapKeyOf(cable, cablePartId); else delete cable.wrapKey;
     const c = cable, solved = previewCable();
     // Whatever stops it or is wrong with it is said where it cannot be missed, not only under the button.
     if (!solved) { hideProgress(); toast(status.textContent || 'This cable cannot be made.'); return; }
@@ -1767,12 +1868,12 @@ async function buildCableOnce() {
     const name = `Cable ${fmtLen(c.d, units)} × ${fmtLen(c.len, units)} ${units}${used.length ? ` (${used.map((n) => turned[n]!.name).join(' + ')})` : ''}`;
     const replace = cablePartId !== null && parts.some((p) => p.partId === cablePartId) ? cablePartId : undefined;
     const hadTray = !!tray;
-    const part = await geo.cable(name, bodies, replace, JSON.parse(JSON.stringify(c)), (fr, label) => showProgress(fr, label));
+    const part = await geo.cable(name, bodies, replace, JSON.parse(JSON.stringify(c)), (fr, label) => showProgress(fr, label), c.wrap);
     parts = replace === undefined ? [...parts, part] : parts.map((p) => (p.partId === replace ? part : p));
     cablePartId = part.partId;
     hideProgress();
     refresh(replace === undefined);
-    if (hadTray) generateTray();
+    if (hadTray && !refreshingWrap) generateTray();
     status.textContent += ` Whole part ${fmtDims(part.size, units)}.`;
     $('#cable-build').textContent = 'Update cable';
   } catch (e) {
@@ -1792,8 +1893,35 @@ async function cableChanged() {
   try { await turnConnectors(); } catch (e) { $('#cable-status').textContent = e instanceof Error ? e.message : String(e); return; }
   fillCableEnd();
   previewCable();
-  fitPendingJs();
+  if (cable.wrap) fitJ.clear(); else fitPendingJs();
 }
+document.querySelectorAll<HTMLButtonElement>('[data-cwrap]').forEach((b) => b.addEventListener('click', () => {
+  readCable();
+  cable.wrap = b.dataset.cwrap === '1';
+  besideReach.top = besideReach.bottom = null;
+  fillCable();
+  cableChanged();
+}));
+
+/** True while wrapped cables are being re-sized for a tray that is about to be generated. */
+let refreshingWrap = false;
+/**
+ * Before a tray is generated: any cable coiled round the tray edge that was built for a
+ * different tray size (or a different place in the nest) is built again to fit.
+ */
+async function refreshWrapCables() {
+  if (refreshingWrap) return;
+  refreshingWrap = true;
+  try {
+    for (const p of [...parts]) {
+      const saved = p.pinned ? (p.cable as CableSettings | undefined) : undefined;
+      if (!saved?.wrap || saved.wrapKey === wrapKeyOf(saved, p.partId)) continue;
+      await editCable(p, true);
+      await buildCable();
+    }
+  } finally { refreshingWrap = false; }
+}
+
 $('#cable-build').addEventListener('click', buildCable);
 ($('#cable') as HTMLDetailsElement).addEventListener('toggle', () => { if (($('#cable') as HTMLDetailsElement).open) cableChanged(); });
 document.querySelectorAll<HTMLButtonElement>('[data-cmir]').forEach((b) => b.addEventListener('click', () => {

@@ -18,7 +18,7 @@ const post = (msg: WorkerResponse, transfer: Transferable[] = []) =>
 /** Originals stay in the worker so re-posing never re-sends the mesh. */
 /** One body of a multi-body part: its mesh as it was in the file, and what has been done to it since. */
 interface Body { name: string; positions: Float32Array; on: boolean; rot: Mat3; move: [number, number, number] }
-interface Stored { bodies?: Body[]; cable?: unknown; original: TriMesh; candidates: PoseCandidate[]; rotation: Mat3; poseIndex: number; locked: boolean; fingers: Side[] | 'auto'; stackable: boolean; stackGap: number | null; inchesChecked: boolean }
+interface Stored { bodies?: Body[]; cable?: unknown; pinned?: boolean; original: TriMesh; candidates: PoseCandidate[]; rotation: Mat3; poseIndex: number; locked: boolean; fingers: Side[] | 'auto'; stackable: boolean; stackGap: number | null; inchesChecked: boolean }
 const parts = new Map<number, Stored>();
 let nextPartId = 1;
 
@@ -33,7 +33,7 @@ async function describe(partId: number, candidate?: number): Promise<ParsedPart>
     partId, ...posed, triangles,
     poseIndex: candidate ?? s.poseIndex, poseCount: s.candidates.length, poseLocked: s.locked,
     fingers: s.fingers === 'auto' ? autoFingers(posed.height) : s.fingers, fingerAuto: s.fingers === 'auto', stackable: s.stackable, stackGap: s.stackGap,
-    bodies: s.bodies?.map((b) => ({ name: b.name, on: b.on, rot: [...b.rot], move: [...b.move] as [number, number, number] })), cable: s.cable,
+    bodies: s.bodies?.map((b) => ({ name: b.name, on: b.on, rot: [...b.rot], move: [...b.move] as [number, number, number] })), cable: s.cable, pinned: s.pinned,
     suggestInches: !s.inchesChecked && looksLikeInches(meshBounds(s.original)),
     large: triangles > LARGE_MESH_TRIANGLES,
   };
@@ -93,10 +93,10 @@ async function trayParts(overrides = new Map<number, Override>(), omit = -1): Pr
     const ov = overrides.get(partId) ?? {};
     const pose = (poseIndex: number, r: Mat3) => { const p = posePart(k, s.original, r); return { poseIndex, mesh: p.mesh, silhouette: p.silhouette, height: p.height, size: p.size }; };
     let poses = [pose(-1, s.rotation)];
-    if (!s.locked || ov.unlock) poses = distinctPoses(s.candidates.map((c, i) => pose(i, c.rotation)).sort((a, b) => a.height - b.height || a.poseIndex - b.poseIndex));
+    if (!s.pinned && (!s.locked || ov.unlock)) poses = distinctPoses(s.candidates.map((c, i) => pose(i, c.rotation)).sort((a, b) => a.height - b.height || a.poseIndex - b.poseIndex));
     return {
       partId, name: s.original.name, poses,
-      fingers: ov.fingers ?? s.fingers, stackable: ov.allowStack ? true : s.stackable, stackGap: ov.clearGap ? null : s.stackGap,
+      fingers: s.pinned ? [] : ov.fingers ?? s.fingers, stackable: s.pinned ? false : ov.allowStack ? true : s.stackable, stackGap: ov.clearGap ? null : s.stackGap, pinned: s.pinned,
     };
   });
 }
@@ -299,6 +299,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       // A coil only makes sense lying flat, the way it was built.
       s.rotation = IDENTITY; s.poseIndex = -1; s.locked = true; s.inchesChecked = true;
       s.cable = req.settings;
+      s.pinned = req.pinned || undefined;
       if (old) { s.fingers = old.fingers; s.stackable = old.stackable; s.stackGap = old.stackGap; parts.delete(req.replace!); }
       reply(req.id, [await describe(id)]);
     } else if (req.type === 'body') {
@@ -334,7 +335,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       // Copies (not transfers): the worker keeps its meshes.
       const out = [...parts.values()].map((s) => ({
         name: s.original.name, positions: s.original.positions, poseIndex: s.poseIndex, locked: s.locked, rotation: [...s.rotation], fingers: s.fingers, stackable: s.stackable, stackGap: s.stackGap,
-        cable: s.cable,
+        cable: s.cable, pinned: s.pinned,
         ...(s.bodies ? (() => {
           const all = new Float32Array(s.bodies.reduce((n, b) => n + b.positions.length, 0));
           let at = 0;
@@ -356,6 +357,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         s.stackable = sp.stackable !== false;
         s.stackGap = sp.stackGap ?? null;
         s.cable = sp.cable;
+        s.pinned = sp.pinned || undefined;
         if (sp.bodies && sp.bodyPositions) {
           let at = 0;
           s.bodies = sp.bodies.map((b) => {

@@ -157,6 +157,12 @@ export interface TrayPart {
   fingers: Side[] | 'auto';
   /** False = never put this part in a stack. Default true. */
   stackable?: boolean;
+  /**
+   * True = this part is not arranged: it sits in the middle of the first tray exactly as it is
+   * (first pose, not turned), and everything else is arranged around and inside it. For a cable
+   * coiled round the edge of the tray.
+   */
+  pinned?: boolean;
   /** Room (mm) to leave above/below this part when stacked; null/undefined = the tray's setting. */
   stackGap?: number | null;
 }
@@ -358,8 +364,10 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
     const moved = (loop: Pt[], dx: number, dy: number): Pt[] => loop.map(([x, y]) => [x + dx, y + dy]);
     // For the quick packing they sit in the middle of their sides, as fixed blocked areas.
     const blocked: Pt[][][] = defaultLifts.map((h) => [moved(liftLoop(h), h.x + o.length / 2 - inset, h.y + o.width / 2 - inset)]);
+    /** Ground taken by pinned parts (see below): nothing else may be put there. */
+    const pinnedBlocked: Pt[][][] = [];
     const packWith = (items: PackItem[], quick: boolean, withLifts = true) =>
-      pack(items, { ...region, attempts: quick ? 16 : o.packAttempts ?? 96, timeBudgetMs: quick ? 400 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep, fixedDepth: o.depth !== null, softMargin, blocked: withLifts ? blocked : [] });
+      pack(items, { ...region, attempts: quick ? 16 : o.packAttempts ?? 96, timeBudgetMs: quick ? 400 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep, fixedDepth: o.depth !== null, softMargin, blocked: withLifts ? blocked : [], blockedFirst: pinnedBlocked });
 
     // ---- 1. Allowed poses and the depth the deepest part sets ----
     onProgress?.(0.03, 'Measuring parts');
@@ -368,7 +376,9 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
     interface Unit { id: number; choices: Choice[]; part: TrayPart; depth: number }
     const tooDeep: string[] = [], tooBig: string[] = [];
     const units: Unit[] = [];
+    const pinned: TrayPart[] = [];
     for (const part of parts) {
+      if (part.pinned) { pinned.push(part); continue; }
       const within = part.poses.filter((pose) => neededDepth(part, pose) <= limit - o.floor + 1e-9);
       if (!within.length) { tooDeep.push(part.name); continue; }
       const choices = within
@@ -383,8 +393,24 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
       throw new TrayError(`${limit.toFixed(1)} mm is too shallow for: ${tooDeep.join(', ')}. Increase the tray depth or case height, or leave them empty.`);
     if (tooBig.length)
       throw new TrayError(`Too big for a ${o.length.toFixed(1)} × ${o.width.toFixed(1)} mm tray in any allowed pose: ${tooBig.join(', ')}.`);
+    // Pinned parts are not arranged. Each sits in the middle of the first tray as it is; its pocket,
+    // with the usual wall round it, is ground the others must keep off (but may sit inside, if it is a ring).
+    const mid: Pt = [o.length / 2 - inset, o.width / 2 - inset];
+    const pinnedEntries: Entry[] = [];
+    let pinnedDepth = 0;
+    for (const part of pinned) {
+      const pose = part.poses[0], depth = neededDepth(part, pose);
+      if (depth > limit - o.floor + 1e-9) throw new TrayError(`${limit.toFixed(1)} mm is too shallow for: ${part.name}. Increase the tray depth or case height.`);
+      const opening = openingOf(pose), box = opening.bounds();
+      if (Math.max(-box.min[0], box.max[0]) > o.length / 2 - o.edge + 0.05 || Math.max(-box.min[1], box.max[1]) > o.width / 2 - o.edge + 0.05)
+        throw new TrayError(`${part.name} is too big for a ${o.length.toFixed(1)} × ${o.width.toFixed(1)} mm tray: it has to sit at least ${o.edge.toFixed(1)} mm in from the edge.`);
+      pinnedBlocked.push(grown(opening).map((loop) => moved(loop, mid[0], mid[1])));
+      pinnedEntries.push({ tray: 0, part, pose, angle: 0, tx: mid[0], ty: mid[1], offset: 0, level: 0, stackSize: 1, under: [] });
+      pinnedDepth = Math.max(pinnedDepth, depth);
+    }
+
     // The deepest part (lying as low as it can) sets the depth; nothing may go deeper.
-    const D = depthCap ?? (o.depth !== null ? o.depth - o.floor : Math.max(...units.map((u) => u.depth)));
+    const D = depthCap ?? (o.depth !== null ? o.depth - o.floor : Math.max(pinnedDepth, ...units.map((u) => u.depth)));
     // Depths that other orientations would need, for the caller to try if this does not fit.
     const deeper = [...new Set(units.flatMap((u) => u.choices.map((c) => c.depth)).filter((d) => d > D + 1e-9))].sort((x, y) => x - y);
     for (const u of units) u.choices = u.choices.filter((c) => c.depth <= D + 1e-9);
@@ -432,7 +458,7 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
       let found: ReturnType<typeof anneal> = null;
       for (let k2 = 0; k2 < seeds.length && !found; k2++) {
         found = anneal(annealItems, {
-          ...region, softMargin, maxDepth: D, allowSink: o.stacking, angleStep: o.packAngleStep,
+          ...region, softMargin, maxDepth: D, allowSink: o.stacking, angleStep: o.packAngleStep, blocked: pinnedBlocked,
           iterations: o.searchIterations ?? (hard ? 400000 : thorough ? 150000 : undefined), rounds: o.searchRounds ?? (hard ? 12 : thorough ? 8 : undefined), seed: seeds[k2],
           report: o.searchReport && ((v) => o.searchReport!(v, D)),
           progress: (round, rounds, v) => onProgress?.(
@@ -456,6 +482,13 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
         trayDepths = [Math.max(...found.map((f) => f.offset + f.depth))];
         stacks = found.filter((f) => f.under.length).length;
       }
+    }
+
+    // Pinned parts join the first tray where they stand.
+    if (pinnedEntries.length) {
+      if (!trayDepths.length) { trayDepths = [0]; lifts = [defaultLifts]; }
+      entries.push(...pinnedEntries);
+      trayDepths[0] = Math.max(trayDepths[0], pinnedDepth);
     }
 
     if (leftOver && !solved) {

@@ -144,6 +144,44 @@ describe('cable coil', () => {
     expect(crossed.warnings[0].text).toMatch(/crosses itself/);
   });
 
+  it('a coil of a fixed size: the footprint stays put and the ends run along the inside', () => {
+    const hug = (connector: LeadSpec['connector'], jog: number): LeadSpec => ({ at: 0.5, stem: 0, angle: 0, radius: 8, length: connector ? 6 : 0, jog, connector });
+    const din = { height: 19.8, width: 19.8, length: 69.8 }, heater = { height: 32, width: 23, length: 105.8, vMin: -21.8, vMax: 1.2, up: 16, down: 16 }; // lopsided: for the bottom end the cable is on its +v side, so 1.2 mm of it faces the cable
+    const base = { ...DEFAULT_CABLE, outerL: 220.8, outerW: 94.5, fit: 'fixed' as const, place: 'auto' as const, keepInside: true };
+    const bare = solveCable({ ...base, top: hug(null, 0), bottom: hug(null, 0) });
+    expect(bare.footprint.length).toBe(220.8); // not flexed
+    expect(bare.footprint.width).toBe(94.5);
+    expect(pathLength(bare.path)).toBeGreaterThan(1151 * 0.997);
+    expect(pathLength(bare.path)).toBeLessThanOrEqual(1151.01);
+    expect(bare.turns).toBeCloseTo(1151 / (2 * (220.8 - 6 - 24) + 2 * (94.5 - 6 - 24) + 2 * Math.PI * 12), 1); // about two turns of the tray
+    expect(bare.footprint.height).toBeLessThan(20);
+    expect(bare.warnings).toEqual([]);
+    const [bx, by] = bounds(bare.path);
+    expect(bx[1] - bx[0]).toBeCloseTo(220.8 - 6, 2); // nothing outside the ring
+    expect(by[1] - by[0]).toBeCloseTo(94.5 - 6, 2);
+    // With connectors, each end steps inside the coil and its connector lies along the inner edge, clear of the cable.
+    // Two long connectors cannot both run forward along the same wall here, so each end may also double back.
+    const back = (toward: number) => ({ stem: 0, angle: 180, radius: Math.max(8, (6 + 3 + toward) / 2), length: 6 });
+    const both = solveCable({ ...base, top: { ...hug(din, 6 + 3 + 9.9), alt: back(9.9) }, bottom: { ...hug(heater, 6 + 3 + 1.2), alt: back(21.8) } });
+    expect(both.warnings).toEqual([]);
+    expect(both.footprint.length).toBe(220.8);
+    expect(pathLength(both.path)).toBeGreaterThan(1151 * 0.997);
+    expect(pathLength(both.path)).toBeLessThanOrEqual(1151.01);
+    for (const end of [both.ends.top, both.ends.bottom]) {
+      expect(Math.abs(end.at[0])).toBeLessThan(220.8 / 2 - 6);
+      expect(Math.abs(end.at[1])).toBeLessThan(94.5 / 2 - 6);
+      expect(Math.abs(end.dir[0]) + Math.abs(end.dir[1])).toBeCloseTo(1, 6); // along a side
+    }
+    const [cx, cy] = bounds(both.path);
+    expect(cx[1] - cx[0]).toBeCloseTo(220.8 - 6, 2); // still nothing outside the ring
+    expect(cy[1] - cy[0]).toBeCloseTo(94.5 - 6, 2);
+    // Without the choice of doubling back, the same two connectors end up on top of each other, and it says so.
+    const stuck = solveCable({ ...base, top: hug(din, 6 + 3 + 9.9), bottom: hug(heater, 6 + 3 + 1.2) });
+    expect(stuck.warnings.length).toBeGreaterThan(0);
+    // A cable with nothing left over for the coil says so.
+    expect(() => solveCable({ ...base, totalLen: 0.5, top: hug(null, 0), bottom: hug(null, 0) })).toThrow(/too short/);
+  });
+
   it('the cable is a closed solid of the right volume, and a connector lands on its end', () => {
     const c = solveCable(DEFAULT_CABLE);
     const tube = tubeMesh(c.path, 6);

@@ -367,6 +367,35 @@ It follows the owner's Fusion 360 "SnakedWire" script.
   with "Edit cable". (Its connectors are looked up in the library by name
   when it is edited, so they need to still be there.)
 
+### 3.9c A cable round the tray edge
+- "Coil size: Round the tray edge" in the cable form. The coil is as long and
+  wide as the tray (as set on the Trays tab, inside the shell) less "Cable to
+  tray wall" on every side (default 3 mm; not less than the tray's minimum
+  edge thickness). A second cable set this way nests inside the first, in by
+  the first cable's diameter plus "Cable to cable" (default 3 mm).
+- The coil's size is fixed, so the cable's length is made exact by where the
+  bottom end leaves the coil; nothing flexes.
+- **Ends inside, placed automatically.** Each end steps in from the coil and
+  runs along its inner edge, or doubles back inside it, whichever lets both
+  ends sit clear. A connector is rolled to take the least width across the
+  tray and kept "Gap between a connector and the cable" from the cable. The
+  top end's position is searched along the long sides, then the short ones,
+  for a spot where no connector overlaps the coil, the other connector or
+  the other end. If there is none, the cable is drawn with a warning.
+- **In the tray** the cable is not arranged: it is pinned in the middle of
+  tray 1 and everything else is laid out inside it (and in further trays if
+  needed). It has no finger cutouts of its own: a tray lift-out grip crossing
+  its channel is where a finger gets under it.
+- It is re-sized to the tray each time a tray is generated, if the tray size
+  or its place in the nest has changed.
+- If generation fails, or needs a second tray, with such a cable present,
+  the app asks whether to make it a compact coil (its hand-set size) and try
+  again.
+- **Not built:** choosing which tray it goes in (always the first); the app
+  comparing ring against compact coil by itself; a scoop of its own for the
+  cable when the tray's lift-out grips are off; ends that follow the coil
+  round a corner.
+
 ### 3.10 Projects: owner, versions, rename
 - **Owner.** Cloud copies of projects belong to the signed-in user: the
   email Cloudflare Access passes to the Worker with each request. Each user

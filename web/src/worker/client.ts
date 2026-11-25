@@ -59,8 +59,8 @@ export class GeometryClient {
   parse(fileName: string, kind: FileKind, data: ArrayBuffer, progress?: Progress) {
     return this.call({ type: 'parse', fileName, kind, data }, [data], progress);
   }
-  cable(name: string, bodies: TriMesh[], replace?: number, settings?: unknown, progress?: Progress) {
-    return this.call({ type: 'cable', name, bodies, replace, settings }, [], progress).then((r) => r[0]);
+  cable(name: string, bodies: TriMesh[], replace?: number, settings?: unknown, progress?: Progress, pinned = false) {
+    return this.call({ type: 'cable', name, bodies, replace, settings, pinned }, [], progress).then((r) => r[0]);
   }
   body(partId: number, index: number, change: { on?: boolean; turn?: 'x90' | 'y90' | 'z90'; move?: [number, number, number]; reset?: boolean }) {
     return this.call({ type: 'body', partId, index, ...change }).then((r) => r[0]);
