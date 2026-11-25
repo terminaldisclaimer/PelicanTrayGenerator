@@ -332,6 +332,8 @@ It follows the owner's Fusion 360 "SnakedWire" script.
   the same project name. The parts library is shared between users.
   (Trust: the Worker relies on Access having authenticated the request; it
   does not check the login token's signature itself.)
+- Projects saved before owners were recorded are handed to the first
+  signed-in person who lists projects (there was only one login then).
 - **Versions.** Automatic saves replace the project's working copy. Pressing
   Save (and "Save as…") also keeps that save as a version in the cloud. Each
   version is a full copy; the newest 40 per project are kept and older ones

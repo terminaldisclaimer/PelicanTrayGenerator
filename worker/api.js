@@ -103,6 +103,23 @@ async function handleProjects(request, env, rest) {
   const parts = rest === undefined ? [] : rest.split('/');
   if (parts.length === 0) {
     if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+    // Projects saved before they belonged to anyone sit directly under "projects/". There was
+    // only one login then, so the first signed-in person to list projects takes them over.
+    // Nothing writes such keys any more, so this runs once.
+    if (user !== 'service') {
+      const strays = (await listAll(env, 'projects/')).filter((p) => !p.name.includes('/')).slice(0, 10);
+      for (const { name: stray, ...meta } of strays) {
+        const body = await env.PARTS.get('projects/' + stray, 'arrayBuffer');
+        if (body && !(await env.PARTS.get(base + stray, 'arrayBuffer'))) await env.PARTS.put(base + stray, body, { metadata: { ...meta, id: meta.id || newId() } });
+        await env.PARTS.delete('projects/' + stray);
+      }
+      if (strays.length) {
+        // The listing lags behind writes, so answer from what was just moved.
+        const mine = await listAll(env, base);
+        for (const st of strays) if (!mine.some((p) => p.name === st.name)) mine.push(st);
+        return json(mine);
+      }
+    }
     return json(await listAll(env, base));
   }
   if (parts.length > 3 || (parts.length >= 2 && parts[1] !== 'versions')) return json({ error: 'Not found' }, 404);

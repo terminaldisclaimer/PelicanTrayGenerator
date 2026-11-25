@@ -156,4 +156,21 @@ describe('parts API', () => {
     const oldest = list[list.length - 1].version;
     expect(new Uint8Array(await (await handleApi(req('GET', `/api/projects/Tray/versions/${encodeURIComponent(oldest)}`), env)).arrayBuffer())).toEqual(new Uint8Array([4]));
   });
+
+  it('projects saved before logins were recorded go to the first signed-in person who lists them', async () => {
+    const env = { PARTS: fakeKV() };
+    await env.PARTS.put('projects/AVS', new Uint8Array([1, 2, 3]).buffer, { metadata: { size: 3, savedAt: '2026-11-23T14:17:39.383Z', parts: 8 } });
+    await env.PARTS.put('parts/a.3mf', new Uint8Array([9]).buffer, { metadata: { size: 1 } });
+    const as = (email?: string) => (method: string, path: string) => handleApi(req(method, path, { headers: email ? { 'Cf-Access-Authenticated-User-Email': email } : {} }), env);
+    // A service token (the Fusion add-in) is not a person and takes nothing.
+    expect(await (await as()('GET', '/api/projects')).json()).toEqual([]);
+    expect(env.PARTS.store.has('projects/AVS')).toBe(true);
+    const mine = (await (await as('owner@example.com')('GET', '/api/projects')).json()) as { name: string; id: string; parts: number }[];
+    expect(mine).toMatchObject([{ name: 'AVS', size: 3, savedAt: '2026-11-23T14:17:39.383Z', parts: 8 }]);
+    expect([...env.PARTS.store.keys()].sort()).toEqual(['parts/a.3mf', 'projects/owner%40example.com/AVS']);
+    expect(new Uint8Array(await (await as('owner@example.com')('GET', '/api/projects/AVS')).arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+    // Once moved it is theirs alone, and listing again changes nothing.
+    expect(await (await as('other@example.com')('GET', '/api/projects')).json()).toEqual([]);
+    expect(await (await as('owner@example.com')('GET', '/api/projects')).json()).toHaveLength(1);
+  });
 });
