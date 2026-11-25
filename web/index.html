@@ -189,11 +189,16 @@
           <h2 class="section">Project</h2>
           <p class="muted small" id="project-status">Not saved yet.</p>
           <div class="pose-row main-row">
+            <button class="btn" id="project-rename">Rename…</button>
             <button class="btn" id="project-save-as">Save as…</button>
             <button class="btn" id="project-new">New project</button>
           </div>
+          <h2 class="section">Versions of this project</h2>
+          <p class="muted small" id="version-status">Press Save to keep a version you can come back to.</p>
+          <ul id="version-list" class="parts"></ul>
+          <h2 class="section">All projects</h2>
           <ul id="project-list" class="parts"></ul>
-          <p class="muted small">Projects are saved automatically on this device as you work, and copied to your Cloudflare account (behind your login) so you can open them on your other devices.</p>
+          <p class="muted small">Projects are saved automatically on this device as you work, and copied to your Cloudflare account (behind your login) so you can open them on your other devices. Each press of Save also keeps a version there; the newest 40 are kept per project. <span id="project-user"></span></p>
           <h2 class="section">Display</h2>
           <div class="row">
             <span>Units</span>

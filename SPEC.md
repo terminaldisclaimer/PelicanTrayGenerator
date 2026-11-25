@@ -325,6 +325,27 @@ It follows the owner's Fusion 360 "SnakedWire" script.
   or into the other end's lead; turning a connector by dragging (Turn and
   Roll are buttons); flat or oval cables; more than one editable cable at a time.
 
+### 3.10 Projects: owner, versions, rename
+- **Owner.** Cloud copies of projects belong to the signed-in user: the
+  email Cloudflare Access passes to the Worker with each request. Each user
+  lists, opens, renames and deletes only their own, and two users can use
+  the same project name. The parts library is shared between users.
+  (Trust: the Worker relies on Access having authenticated the request; it
+  does not check the login token's signature itself.)
+- **Versions.** Automatic saves replace the project's working copy. Pressing
+  Save (and "Save as…") also keeps that save as a version in the cloud. Each
+  version is a full copy; the newest 40 per project are kept and older ones
+  dropped. Settings → "Versions of this project" lists them with Open and
+  delete. Open first keeps the current work as a version, then makes the
+  chosen one the working copy. Versions need the cloud; offline, Save still
+  saves on the device but keeps no version.
+- **Rename.** Settings → "Rename…" renames the open project on the device
+  and in the cloud. Versions are filed under a project id that stays with
+  the project, so they follow it. A name already in use is refused. "Save
+  as…" makes a separate copy with its own id and versions.
+- **Space.** Workers KV allows 1 GB on the free plan. A nine-part project is
+  about 0.8 MB, so 40 versions of it is about 32 MB.
+
 ## 4. Export (Bambu H3C)
 - **STL**: one binary STL per tray, in mm.
 - **3MF** (built): one per tray. The tray and its shell are two separate

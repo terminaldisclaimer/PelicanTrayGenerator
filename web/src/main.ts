@@ -9,7 +9,7 @@ import { parseSTL, writeSTL } from './mesh/stl';
 import { parse3MF, write3MF } from './mesh/threemf';
 import { CableError, CONNECTOR_ROLLS, CONNECTOR_TURNS, DEFAULT_CABLE, defaultConnectorAxis, orientConnector, placeConnector, leadTip, nearestAt, presetLead, solveCable, tubeMesh, type CableSpec, type LeadPreset, type LeadSpec, type OrientedConnector, type SolvedCable } from './geom/cable';
 import type { TriMesh } from './mesh/types';
-import { cloudDelete, cloudList, cloudLoad, cloudName, cloudSave, deleteProject, listProjects, loadProject, saveProject, type Project } from './storage';
+import { cloudDelete, cloudDeleteVersion, cloudList, cloudLoad, cloudLoadVersion, cloudName, cloudRename, cloudSave, cloudUser, cloudVersions, deleteProject, listProjects, loadProject, newProjectId, saveProject, type Project } from './storage';
 import { LARGE_MESH_TRIANGLES } from './mesh/bounds';
 import { fmtDims, fmtLen, MM_PER_IN, type Units } from './units';
 
@@ -898,6 +898,8 @@ document.querySelectorAll<HTMLButtonElement>('[data-show]').forEach((b) =>
 let projectName = '';
 try { projectName = localStorage.getItem('project') || ''; } catch { /* private mode */ }
 if (!projectName) projectName = 'My tray';
+/** Stays with the project through renames; its saved versions are filed under it. */
+let projectId = newProjectId();
 let saveTimer = 0;
 let restoring = false;
 
@@ -912,22 +914,26 @@ let cloudTimer = 0;
 let lastProject: Project | null = null;
 
 /** Copy the project to the cloud (your Cloudflare account) so other devices can open it. */
-async function uploadProject() {
+async function uploadProject(version = false) {
   clearTimeout(cloudTimer);
   if (!lastProject) return;
   const p = lastProject;
-  const ok = await cloudSave(p);
+  const ok = await cloudSave(p, version);
   if (p === lastProject) {
     const time = new Date(p.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    $('#save-state').textContent = ok ? `${p.name} · saved ${time} · synced` : `${p.name} · saved ${time} on this device only`;
+    $('#save-state').textContent = ok ? `${p.name} · saved ${time} · ${version ? 'version kept' : 'synced'}` : `${p.name} · saved ${time} on this device only`;
   }
   if (ok) renderProjects();
 }
 
-async function saveNow(uploadNow = false) {
+/**
+ * Save the project on this device and copy it to the cloud. With `version`
+ * (the Save button), the cloud also keeps this save as a version.
+ */
+async function saveNow(uploadNow = false, version = false) {
   try {
     const saved = await geo.exportParts();
-    const project: Project = { name: projectName, savedAt: new Date().toISOString(), settings: { ...traySettings }, parts: saved, layout: savedLayout ?? undefined };
+    const project: Project = { name: projectName, id: projectId, savedAt: new Date().toISOString(), settings: { ...traySettings }, parts: saved, layout: savedLayout ?? undefined };
     await saveProject(project);
     lastProject = project;
     try { localStorage.setItem('project', projectName); } catch { /* private mode */ }
@@ -935,7 +941,7 @@ async function saveNow(uploadNow = false) {
     $('#project-status').textContent = `“${projectName}” — saved ${time} (${saved.length} part${saved.length === 1 ? '' : 's'}).`;
     $('#save-state').textContent = `${projectName} · saved ${time}`;
     clearTimeout(cloudTimer);
-    if (uploadNow) await uploadProject();
+    if (uploadNow) await uploadProject(version);
     else cloudTimer = window.setTimeout(uploadProject, 2500);
     renderProjects();
     return true;
@@ -946,15 +952,12 @@ async function saveNow(uploadNow = false) {
   }
 }
 
-/** Open a project from this device or the cloud, whichever copy is newer. */
-async function openProject(name: string) {
-  let p: Project | null | undefined = await loadProject(name).catch(() => undefined);
-  const cloud = (await cloudList())?.find((c) => c.name === cloudName(name));
-  if (cloud && (!p || (cloud.savedAt ?? '') > p.savedAt)) p = (await cloudLoad(name)) ?? p;
-  if (!p) return false;
+/** Put a saved project on screen as the open one. */
+async function showProject(p: Project, name: string, note: string) {
   restoring = true;
   try {
-    projectName = p.name || name;
+    projectName = name;
+    projectId = p.id || newProjectId(); // saves from before projects had ids get one now
     try { localStorage.setItem('project', projectName); } catch { /* private mode */ }
     traySettings = { ...traySettings, ...(p.settings as Partial<TraySettings>) };
     fillTrayInputs();
@@ -966,7 +969,7 @@ async function openProject(name: string) {
     viewer.setParts(parts);
     renderList();
     if (p.layout) await restoreLayout(p.layout as SavedLayout);
-    $('#project-status').textContent = `“${projectName}” — opened (${parts.length} part${parts.length === 1 ? '' : 's'}).`;
+    $('#project-status').textContent = `“${projectName}” — ${note} (${parts.length} part${parts.length === 1 ? '' : 's'}).`;
     $('#save-state').textContent = `${projectName} · saved`;
   } catch (e) {
     hideProgress();
@@ -974,11 +977,72 @@ async function openProject(name: string) {
   } finally {
     restoring = false;
   }
+}
+
+/** Open a project from this device or the cloud, whichever copy is newer. */
+async function openProject(name: string) {
+  let p: Project | null | undefined = await loadProject(name).catch(() => undefined);
+  const cloud = (await cloudList())?.find((c) => c.name === cloudName(name));
+  if (cloud && (!p || (cloud.savedAt ?? '') > p.savedAt)) p = (await cloudLoad(name)) ?? p;
+  if (!p) return false;
+  await showProject(p, p.name || name, 'opened');
   renderProjects();
   return true;
 }
 
+const when = (iso?: string) => (iso ? new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '');
+
+/** The saved versions of the open project, newest first, each of which can be brought back. */
+async function renderVersions() {
+  const name = projectName;
+  const list = await cloudVersions(name);
+  if (name !== projectName) return; // another project was opened meanwhile
+  $('#version-status').textContent = list === null
+    ? 'Versions are kept in the cloud; they are not available offline.'
+    : list.length ? `${list.length} version${list.length === 1 ? '' : 's'} of “${name}”. Press Save to keep another.` : 'Press Save to keep a version you can come back to.';
+  $('#version-list').replaceChildren(
+    ...(list ?? []).map((v, i) => {
+      const li = document.createElement('li');
+      li.className = 'part';
+      const title = document.createElement('div');
+      title.className = 'name';
+      title.textContent = when(v.savedAt ?? v.version);
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `${i === 0 ? 'Newest · ' : ''}${v.parts ?? 0} part${v.parts === 1 ? '' : 's'}${v.size ? ` · ${(v.size / 1048576).toFixed(2)} MB` : ''}`;
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      const open = document.createElement('button');
+      open.className = 'btn';
+      open.textContent = 'Open';
+      open.onclick = async () => {
+        if (!confirm(`Go back to the version saved ${when(v.savedAt ?? v.version)}?\n\nWhat you have now is kept as a version first, so you can return to it.`)) return;
+        clearTimeout(saveTimer);
+        if (!(await saveNow(true, true))) { toast('Could not keep the current work as a version, so nothing was changed.'); return; }
+        const p = await cloudLoadVersion(name, v.version);
+        if (!p) { toast('Could not load that version.'); return; }
+        await showProject({ ...p, id: projectId }, name, `went back to the version of ${when(v.savedAt ?? v.version)}`);
+        await saveNow(true); // the working copy is now that version
+        renderProjects();
+      };
+      const del = document.createElement('button');
+      del.className = 'icon-btn';
+      del.textContent = '🗑';
+      del.setAttribute('aria-label', `Delete the version of ${when(v.savedAt ?? v.version)}`);
+      del.onclick = async () => {
+        if (!confirm(`Delete the version saved ${when(v.savedAt ?? v.version)}? This cannot be undone.`)) return;
+        await cloudDeleteVersion(name, v.version);
+        li.remove(); // the server's list can take a minute to catch up
+      };
+      actions.append(open, del);
+      li.append(title, actions, meta);
+      return li;
+    }),
+  );
+}
+
 async function renderProjects() {
+  renderVersions();
   let local: Awaited<ReturnType<typeof listProjects>> = [];
   try { local = await listProjects(); } catch { /* storage unavailable */ }
   const cloud = (await cloudList()) ?? [];
@@ -1031,16 +1095,41 @@ async function renderProjects() {
 $('#save-now').addEventListener('click', async () => {
   clearTimeout(saveTimer);
   const btn = $<HTMLButtonElement>('#save-now');
-  const ok = await saveNow(true);
+  const ok = await saveNow(true, true); // the Save button keeps a version
   btn.textContent = ok ? 'Saved ✓' : 'Failed';
   setTimeout(() => (btn.textContent = 'Save'), 1500);
 });
 
 $('#project-save-as').addEventListener('click', async () => {
-  const name = prompt('Save this project as:', projectName)?.trim();
+  const name = prompt('Save a copy of this project as:', projectName)?.trim();
   if (!name) return;
   projectName = name.slice(0, 60);
-  await saveNow();
+  projectId = newProjectId(); // a copy is its own project, with its own versions
+  await saveNow(true, true);
+});
+
+$('#project-rename').addEventListener('click', async () => {
+  const old = projectName;
+  const name = prompt('New name for this project:', old)?.trim().slice(0, 60);
+  if (!name || name === old) return;
+  if (cloudName(name) !== name) { toast('Project names can use letters, digits, spaces and _.()+,- only.'); return; }
+  clearTimeout(saveTimer); clearTimeout(cloudTimer);
+  const local = await listProjects().catch(() => []);
+  if (local.some((p) => p.name === name)) { toast(`You already have a project called “${name}”.`); return; }
+  // Make sure everything is saved under the old name, then move it.
+  await saveNow(true);
+  const cloud = await cloudList();
+  if (cloud) {
+    if (cloud.some((c) => c.name === name)) { toast(`You already have a project called “${name}”.`); return; }
+    const r = await cloudRename(old, name);
+    if (r === 'exists') { toast(`You already have a project called “${name}”.`); return; }
+    if (r === 'failed') { toast('Could not rename it in the cloud just now, so nothing was changed. Try again when you are online.'); return; }
+  }
+  projectName = name;
+  await saveNow(true); // under the new name, here and in the cloud
+  await deleteProject(old).catch(() => undefined);
+  $('#project-status').textContent = `Renamed “${old}” to “${name}”.`;
+  renderProjects();
 });
 
 $('#project-new').addEventListener('click', async () => {
@@ -1048,6 +1137,7 @@ $('#project-new').addEventListener('click', async () => {
   if (!name) return;
   await saveNow(); // keep the current one
   projectName = name.slice(0, 60);
+  projectId = newProjectId();
   for (const p of parts) geo.remove(p.partId);
   parts = [];
   picker = null; fingerOpen = null;
@@ -1531,3 +1621,4 @@ $('#version').textContent = `Version ${__APP_VERSION__}`;
 setUnits(units);
 viewer.setParts([]);
 openProject(projectName).then((found) => { if (!found) renderProjects(); });
+cloudUser().then((u) => { if (u) $('#project-user').textContent = `Signed in as ${u}; projects saved here belong to that login.`; });

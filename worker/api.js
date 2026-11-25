@@ -16,13 +16,34 @@
 //   PUT    /api/folders/<name>   -> create
 //   DELETE /api/folders/<name>   -> remove (only when no part is in it)
 //
-// Saved projects use the same four calls under /api/projects/<name> (no file
-// extension; optional X-Project-Saved-At and X-Project-Parts headers).
+// Saved projects belong to the signed-in user (the email Cloudflare Access
+// passes on); each user sees only their own. The parts library is shared.
+//
+//   GET    /api/me                               -> { user }
+//   GET    /api/projects                         -> [{ name, id, size, savedAt, parts }]
+//   GET    /api/projects/<name>                  -> file bytes (the working copy)
+//   PUT    /api/projects/<name>                  -> store the working copy. Headers: X-Project-Id
+//                                                   (stays with the project through renames),
+//                                                   X-Project-Saved-At, X-Project-Parts, and
+//                                                   X-Project-Version: 1 to also keep this save
+//                                                   as a version.
+//   POST   /api/projects/<name>                  -> rename: JSON body { "rename": "<new name>" }
+//   DELETE /api/projects/<name>                  -> remove it and its versions
+//   GET    /api/projects/<name>/versions         -> [{ version, savedAt, size, parts }], newest first
+//   GET    /api/projects/<name>/versions/<v>     -> that version's file bytes
+//   DELETE /api/projects/<name>/versions/<v>
+//
+// Each version is a full copy. The newest MAX_VERSIONS are kept per project.
 const MAX_BYTES = 25 * 1024 * 1024; // KV value limit
 const NAME_RE = /^[\w .()+,\-]{1,120}\.(3mf|stl)$/i;
 const PROJECT_RE = /^[\w .()+,\-]{1,60}$/;
 const FOLDER_RE = /^[\w .()+,\-]{1,40}$/;
 const FOLDERS_KEY = 'meta/folders';
+const ID_RE = /^[\w-]{6,40}$/;
+const VERSION_RE = /^[0-9TZ:.\-]{20,30}$/;
+// Deleting a project removes its versions in the same request, and a request may make
+// only about 50 storage calls, so this stays under that.
+export const MAX_VERSIONS = 40;
 const KINDS = {
   parts: { re: NAME_RE, hint: 'Name must be letters, digits, spaces or _.()+,- and end in .3mf or .stl' },
   projects: { re: PROJECT_RE, hint: 'Project name must be letters, digits, spaces or _.()+,-' },
@@ -69,6 +90,106 @@ async function handleFolders(request, env, raw) {
   return json({ error: 'Method not allowed' }, 405);
 }
 
+/** Who is asking: the Access login's email, or "service" for a service token. Safe to use inside a key. */
+function userOf(request) {
+  const email = (request.headers.get('Cf-Access-Authenticated-User-Email') || '').trim().toLowerCase();
+  return { name: email || 'service token', key: email ? encodeURIComponent(email) : 'service' };
+}
+const bytes = (body) => new Response(body, { headers: { 'content-type': 'application/octet-stream', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
+const newId = () => crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+
+async function handleProjects(request, env, rest) {
+  const user = userOf(request).key, base = `projects/${user}/`;
+  const parts = rest === undefined ? [] : rest.split('/');
+  if (parts.length === 0) {
+    if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+    return json(await listAll(env, base));
+  }
+  if (parts.length > 3 || (parts.length >= 2 && parts[1] !== 'versions')) return json({ error: 'Not found' }, 404);
+  let name;
+  try { name = decodeURIComponent(parts[0]); } catch { return json({ error: 'Bad name' }, 400); }
+  if (!PROJECT_RE.test(name)) return json({ error: KINDS.projects.hint }, 400);
+  const key = base + name;
+  /** The working copy's details; read with the value because listings can lag behind a write. */
+  const head = async () => {
+    const r = await env.PARTS.getWithMetadata(key, 'arrayBuffer');
+    return r && r.value ? { body: r.value, meta: r.metadata || {} } : null;
+  };
+  const versionsOf = async (id) => (await listAll(env, `versions/${user}/${id}/`)).sort((a, b) => b.name.localeCompare(a.name));
+
+  if (parts.length >= 2) {
+    const h = await head();
+    if (!h) return json({ error: 'Not found' }, 404);
+    if (!h.meta.id) return json(parts.length === 2 ? [] : { error: 'Not found' }, parts.length === 2 ? 200 : 404);
+    if (parts.length === 2) {
+      if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+      return json((await versionsOf(h.meta.id)).map((v) => ({ version: v.name, savedAt: v.savedAt, size: v.size, parts: v.parts })));
+    }
+    let v;
+    try { v = decodeURIComponent(parts[2]); } catch { return json({ error: 'Bad version' }, 400); }
+    if (!VERSION_RE.test(v)) return json({ error: 'Bad version' }, 400);
+    const vkey = `versions/${user}/${h.meta.id}/${v}`;
+    if (request.method === 'GET') {
+      const body = await env.PARTS.get(vkey, 'arrayBuffer');
+      return body ? bytes(body) : json({ error: 'Not found' }, 404);
+    }
+    if (request.method === 'DELETE') { await env.PARTS.delete(vkey); return json({ deleted: v }); }
+    return json({ error: 'Method not allowed' }, 405);
+  }
+
+  if (request.method === 'GET') {
+    const body = await env.PARTS.get(key, 'arrayBuffer');
+    return body ? bytes(body) : json({ error: 'Not found' }, 404);
+  }
+  if (request.method === 'PUT') {
+    if (Number(request.headers.get('content-length') || 0) > MAX_BYTES) return json({ error: 'File larger than 25 MB' }, 413);
+    const body = await request.arrayBuffer();
+    if (body.byteLength === 0) return json({ error: 'Empty file' }, 400);
+    if (body.byteLength > MAX_BYTES) return json({ error: 'File larger than 25 MB' }, 413);
+    const now = new Date().toISOString();
+    // The id comes from the app (it is stored in the project); for older saves, from what is already here.
+    let id = request.headers.get('X-Project-Id') || '';
+    if (!ID_RE.test(id)) id = (await head())?.meta.id || newId();
+    const metadata = {
+      id, size: body.byteLength, uploaded: now,
+      savedAt: (request.headers.get('X-Project-Saved-At') || now).slice(0, 40),
+      parts: Number(request.headers.get('X-Project-Parts')) || 0,
+    };
+    await env.PARTS.put(key, body, { metadata });
+    let version;
+    if (request.headers.get('X-Project-Version') === '1') {
+      version = now;
+      await env.PARTS.put(`versions/${user}/${id}/${version}`, body, { metadata: { savedAt: metadata.savedAt, size: metadata.size, parts: metadata.parts } });
+      // Keep the newest few; the listing may not show the one just written yet, so count it in.
+      const old = (await versionsOf(id)).filter((v) => v.name !== version);
+      for (const v of old.slice(MAX_VERSIONS - 1)) await env.PARTS.delete(`versions/${user}/${id}/${v.name}`);
+    }
+    return json({ name, ...metadata, version });
+  }
+  if (request.method === 'POST') {
+    let to;
+    try { to = (await request.json()).rename; } catch { return json({ error: 'Bad request' }, 400); }
+    if (typeof to !== 'string' || !PROJECT_RE.test(to.trim())) return json({ error: KINDS.projects.hint }, 400);
+    to = to.trim();
+    if (to === name) return json({ name });
+    if (await env.PARTS.get(base + to, 'arrayBuffer')) return json({ error: 'You already have a project with that name' }, 409);
+    const h = await head();
+    if (!h) return json({ error: 'Not found' }, 404);
+    // Versions are filed under the project's id, so they follow it to the new name untouched.
+    const metadata = { ...h.meta, id: h.meta.id || newId() };
+    await env.PARTS.put(base + to, h.body, { metadata });
+    await env.PARTS.delete(key);
+    return json({ name: to, ...metadata });
+  }
+  if (request.method === 'DELETE') {
+    const h = await head();
+    await env.PARTS.delete(key);
+    if (h?.meta.id) for (const v of await versionsOf(h.meta.id)) await env.PARTS.delete(`versions/${user}/${h.meta.id}/${v.name}`);
+    return json({ deleted: name });
+  }
+  return json({ error: 'Method not allowed' }, 405);
+}
+
 export async function handleApi(request, env) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return null;
@@ -77,7 +198,10 @@ export async function handleApi(request, env) {
   const origin = request.headers.get('Origin');
   if (request.method !== 'GET' && origin && origin !== url.origin) return json({ error: 'Bad origin' }, 403);
 
-  const m = /^\/api\/(parts|projects|folders)(?:\/([^/]+))?$/.exec(url.pathname);
+  if (url.pathname === '/api/me') return json({ user: userOf(request).name });
+  const pm = /^\/api\/projects(?:\/(.+))?$/.exec(url.pathname);
+  if (pm) return handleProjects(request, env, pm[1]);
+  const m = /^\/api\/(parts|folders)(?:\/([^/]+))?$/.exec(url.pathname);
   if (!m) return json({ error: 'Not found' }, 404);
   if (m[1] === 'folders') return handleFolders(request, env, m[2]);
   const kind = m[1], prefix = kind + '/';
@@ -105,7 +229,7 @@ export async function handleApi(request, env) {
     if (body.byteLength === 0) return json({ error: 'Empty file' }, 400);
     if (body.byteLength > MAX_BYTES) return json({ error: 'File larger than 25 MB' }, 413);
     const metadata = { size: body.byteLength, uploaded: new Date().toISOString() };
-    if (kind === 'parts') {
+    {
       metadata.version = (request.headers.get('X-Part-Version') || '').slice(0, 40);
       // A named folder files the part there; without one a part that is already in the library stays where it is.
       const asked = request.headers.get('X-Part-Folder');
@@ -115,9 +239,6 @@ export async function handleApi(request, env) {
         if (folder && !FOLDER_RE.test(folder)) return json({ error: 'Folder name must be 1-40 letters, digits, spaces or _.()+,-' }, 400);
       } else folder = (await listAll(env, key)).find((p) => p.name === '')?.folder;
       if (folder) metadata.folder = folder;
-    } else {
-      metadata.savedAt = (request.headers.get('X-Project-Saved-At') || metadata.uploaded).slice(0, 40);
-      metadata.parts = Number(request.headers.get('X-Project-Parts')) || 0;
     }
     await env.PARTS.put(key, body, { metadata });
     return json({ name, ...metadata });

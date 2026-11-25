@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error plain JS worker module
-import { handleApi } from '../../worker/api.js';
+import { handleApi, MAX_VERSIONS } from '../../worker/api.js';
 
 function fakeKV() {
   const store = new Map<string, { value: ArrayBuffer; metadata: unknown }>();
   return {
     store,
     async get(k: string) { return store.get(k)?.value ?? null; },
+    async getWithMetadata(k: string) { const e = store.get(k); return { value: e?.value ?? null, metadata: e?.metadata ?? null }; },
     async put(k: string, value: ArrayBuffer, o: { metadata: unknown }) { store.set(k, { value, metadata: o.metadata }); },
     async delete(k: string) { store.delete(k); },
     async list({ prefix }: { prefix: string }) {
@@ -92,5 +93,67 @@ describe('parts API', () => {
     expect((await handleApi(req('POST', '/api/parts/missing.stl', { body: JSON.stringify({ folder: 'AVS' }) }), env)).status).toBe(404);
     // The folder list is not a part or a project.
     expect(await (await handleApi(req('GET', '/api/projects'), env)).json()).toEqual([]);
+  });
+
+  it('projects belong to the signed-in user, keep a version on each real save, and can be renamed', async () => {
+    const env = { PARTS: fakeKV() };
+    const as = (email: string) => (method: string, path: string, init: RequestInit = {}) => handleApi(req(method, path, { ...init, headers: { 'Cf-Access-Authenticated-User-Email': email, ...(init.headers as object) } }), env);
+    const ann = as('Ann@Example.com'), bob = as('bob@example.com');
+    expect(await (await ann('GET', '/api/me')).json()).toEqual({ user: 'ann@example.com' });
+    const save = (who: typeof ann, name: string, body: number[], version: boolean, id = 'proj-ann-0001') =>
+      who('PUT', `/api/projects/${encodeURIComponent(name)}`, { body: new Uint8Array(body), headers: { 'X-Project-Id': id, 'X-Project-Parts': '2', ...(version ? { 'X-Project-Version': '1' } : {}) } });
+    const versions = async (who: typeof ann, name: string) => (await (await who('GET', `/api/projects/${encodeURIComponent(name)}/versions`)).json()) as { version: string; size: number }[];
+    const tick = () => new Promise((r) => setTimeout(r, 3)); // versions are named by time
+
+    // An autosave only replaces the working copy; a real save also keeps a version.
+    expect((await save(ann, 'Tray', [1], false)).status).toBe(200);
+    expect(await versions(ann, 'Tray')).toEqual([]);
+    await save(ann, 'Tray', [1, 2], true); await tick();
+    await save(ann, 'Tray', [1, 2, 3], false);
+    await save(ann, 'Tray', [1, 2, 3, 4], true);
+    const v = await versions(ann, 'Tray');
+    expect(v.map((x) => x.size)).toEqual([4, 2]); // newest first
+    expect(new Uint8Array(await (await ann('GET', `/api/projects/Tray/versions/${encodeURIComponent(v[1].version)}`)).arrayBuffer())).toEqual(new Uint8Array([1, 2]));
+    expect(new Uint8Array(await (await ann('GET', '/api/projects/Tray')).arrayBuffer())).toEqual(new Uint8Array([1, 2, 3, 4]));
+
+    // Someone else sees none of it, and can use the same name for their own.
+    expect(await (await bob('GET', '/api/projects')).json()).toEqual([]);
+    expect((await bob('GET', '/api/projects/Tray')).status).toBe(404);
+    expect((await bob('GET', '/api/projects/Tray/versions')).status).toBe(404);
+    await save(bob, 'Tray', [9], true, 'proj-bob-0001');
+    expect(await (await ann('GET', '/api/projects')).json()).toMatchObject([{ name: 'Tray', id: 'proj-ann-0001', size: 4, parts: 2 }]);
+    expect((await versions(bob, 'Tray')).map((x) => x.size)).toEqual([1]);
+
+    // Renaming keeps the contents and the versions, and will not overwrite another project.
+    await save(ann, 'Other', [7], false, 'proj-ann-0002');
+    expect((await ann('POST', '/api/projects/Tray', { body: JSON.stringify({ rename: 'Other' }) })).status).toBe(409);
+    expect((await ann('POST', '/api/projects/Tray', { body: JSON.stringify({ rename: 'bad/name' }) })).status).toBe(400);
+    expect((await ann('POST', '/api/projects/Tray', { body: JSON.stringify({ rename: 'AVS case' }) })).status).toBe(200);
+    expect((await ann('GET', '/api/projects/Tray')).status).toBe(404);
+    expect(new Uint8Array(await (await ann('GET', '/api/projects/AVS%20case')).arrayBuffer())).toEqual(new Uint8Array([1, 2, 3, 4]));
+    expect((await versions(ann, 'AVS case')).map((x) => x.size)).toEqual([4, 2]);
+    expect((await versions(bob, 'Tray')).map((x) => x.size)).toEqual([1]); // untouched
+
+    // A single version can be removed; deleting the project removes the rest, and only that project's.
+    const [newest] = await versions(ann, 'AVS case');
+    await ann('DELETE', `/api/projects/AVS%20case/versions/${encodeURIComponent(newest.version)}`);
+    expect((await versions(ann, 'AVS case')).map((x) => x.size)).toEqual([2]);
+    await ann('DELETE', '/api/projects/AVS%20case');
+    expect([...env.PARTS.store.keys()].filter((k) => k.includes('ann')).sort()).toEqual(['projects/ann%40example.com/Other']);
+    expect([...env.PARTS.store.keys()].filter((k) => k.includes('bob'))).toHaveLength(2);
+    expect((await ann('GET', '/api/projects/x/y/z/w')).status).toBe(404);
+  });
+
+  it('keeps only the newest versions of a project', async () => {
+    const env = { PARTS: fakeKV() };
+    for (let i = 0; i < MAX_VERSIONS + 3; i++) {
+      await handleApi(req('PUT', '/api/projects/Tray', { body: new Uint8Array([i + 1]), headers: { 'X-Project-Id': 'proj-0001', 'X-Project-Version': '1' } }), env);
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    const list = (await (await handleApi(req('GET', '/api/projects/Tray/versions'), env)).json()) as { version: string }[];
+    expect(list).toHaveLength(MAX_VERSIONS);
+    // The oldest three are the ones that went.
+    const oldest = list[list.length - 1].version;
+    expect(new Uint8Array(await (await handleApi(req('GET', `/api/projects/Tray/versions/${encodeURIComponent(oldest)}`), env)).arrayBuffer())).toEqual(new Uint8Array([4]));
   });
 });
