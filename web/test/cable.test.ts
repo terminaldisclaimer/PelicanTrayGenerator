@@ -182,6 +182,31 @@ describe('cable coil', () => {
     const widthAt = (u: number) => { const vs = outline.filter((q) => Math.abs(q[0] - u) < 1e-6).map((q) => q[1]); return Math.max(...vs) - Math.min(...vs); };
     expect(widthAt(10)).toBeCloseTo(6, 3);
     expect(widthAt(22)).toBeCloseTo(30, 3);
+    // A lopsided part (a thin stem with a big head off to one side at the far end): the cable joins the
+    // middle of the stem's end, not the middle of the whole part, and the stem is taken as the cable end.
+    const shift = (m: { positions: Float32Array }, d: number[]) => Array.from(m.positions, (v, i) => v + d[i % 3]);
+    const probe = { name: 'probe', positions: new Float32Array([...boxMesh(4, 60, 4, 'stem').positions, ...shift(boxMesh(20, 10, 20, 'head'), [-3, 60, -14])]) };
+    expect(defaultConnectorAxis(probe)).toBe(2); // +Y: the stem's end (y = 0) on the cable
+    const backwards = { name: 'p2', positions: new Float32Array(Array.from(probe.positions, (v, i) => (i % 3 === 1 ? 70 - v : v))) };
+    expect(defaultConnectorAxis(backwards)).toBe(3); // −Y: still the stem's end on the cable
+    const po = orientConnector(probe, 2, 0);
+    expect(po.length).toBeCloseTo(70, 3);
+    // The stem (4 × 4, centred on the cable) reaches 2 each way; the head reaches further on one side only.
+    expect(connectorReach(po, 0, 50, 1)).toBeCloseTo(2, 3);
+    expect(connectorReach(po, 0, 50, -1)).toBeCloseTo(2, 3);
+    expect([po.up, po.down].map((v) => +v.toFixed(3)).sort((a, b) => a - b)).toEqual([5, 15]); // off-centre in height: the head is 20 tall, 15 of it above the cable's line
+    expect(po.vMax - po.vMin).toBeCloseTo(po.width, 6);
+    expect(Math.max(Math.abs(po.vMin), Math.abs(po.vMax))).toBeGreaterThan(po.width / 2 + 1); // not centred on the box
+    const stemEnd = placeConnector(po, end, 'probe', 0);
+    const near: number[][] = [];
+    for (let i = 0; i < stemEnd.positions.length; i += 3) {
+      const along = (stemEnd.positions[i] - end.at[0]) * end.dir[0] + (stemEnd.positions[i + 1] - end.at[1]) * end.dir[1];
+      if (along < 0.5) near.push([...stemEnd.positions.slice(i, i + 3)]);
+    }
+    expect(bounds(near).map(([lo, hi]) => +((lo + hi) / 2).toFixed(3))).toEqual(end.at.map((v) => +v.toFixed(3))); // the stem's end sits on the cable's end
+    // A connector that is off-centre in height is still kept within the stack: its real top is what is levelled.
+    const lop = solveCable({ ...DEFAULT_CABLE, top: { ...presetLead('inline', true, 'right', DEFAULT_CABLE, 40), connector: { height: po.height, width: po.width, length: po.length, up: po.up, down: po.down, vMin: po.vMin, vMax: po.vMax } } });
+    expect(lop.ends.top.at[2] + po.up).toBeCloseTo(lop.footprint.height - 3, 3);
     // Turning it never mirrors it: still a solid with positive volume.
     for (let axis = 0; axis < 6; axis++) {
       const m = toManifold(k, placeConnector(orientConnector(plug, axis, 1), end, 'plug'))!;

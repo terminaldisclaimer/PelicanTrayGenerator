@@ -1332,8 +1332,9 @@ const cableSpec = (c: CableSettings): CableSpec => {
   const lead = (n: Which): LeadSpec => {
     const t = c[n].conn ? turned[n] : null;
     // Beside the coil only the part of a J's connector that faces it matters for the overlap check.
-    const width = t && isJ(c[n]) && besideReach[n] !== null ? 2 * besideReach[n]! : t?.o.width ?? 0;
-    return { at: c[n].at, stem: c[n].stem, angle: c[n].angle, radius: c[n].radius, length: c[n].length, connector: t ? { height: t.o.height, width, length: t.o.length } : null };
+    const r = t && isJ(c[n]) ? besideReach[n] : null;
+    const connector = t ? { height: t.o.height, width: t.o.width, length: t.o.length, up: t.o.up, down: t.o.down, vMin: r !== null ? -r : t.o.vMin, vMax: r !== null ? r : t.o.vMax } : null;
+    return { at: c[n].at, stem: c[n].stem, angle: c[n].angle, radius: c[n].radius, length: c[n].length, connector };
   };
   return { wireD: c.d, totalLen: c.len, outerL: c.l, outerW: c.w, cornerR: c.r, gap: DEFAULT_CABLE.gap, fit: 'nearest', climbR: Math.max(8, 1.3 * c.d), mirror: c.mirror, top: lead('top'), bottom: lead('bottom') };
 };

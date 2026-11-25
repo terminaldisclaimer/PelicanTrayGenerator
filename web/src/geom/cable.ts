@@ -40,8 +40,13 @@ export interface LeadSpec {
   radius: number;
   /** Straight run after the bend, to the cable's end. */
   length: number;
-  /** Connector on this end: its height, width, and how far it reaches past the cable's end. null = bare. */
-  connector: { height: number; width: number; length: number } | null;
+  /**
+   * Connector on this end: its height, width, and how far it reaches past the cable's end.
+   * When the cable does not join it at its middle, `up`/`down` say how far it reaches above and
+   * below the cable's line, and `vMin`/`vMax` how far to each side (as it is finally placed).
+   * null = bare.
+   */
+  connector: { height: number; width: number; length: number; up?: number; down?: number; vMin?: number; vMax?: number } | null;
 }
 export interface CableSpec {
   /** Cable diameter. */
@@ -236,7 +241,7 @@ export function solveCable(s: CableSpec): SolvedCable {
     const zEnd = g.rise * travel;
     const target = (l: LeadSpec, flat: Lead, top: boolean) => {
       if (!l.connector) return top ? zEnd : 0;
-      const flushTop = zEnd + s.wireD / 2 - l.connector.height / 2, flushBottom = -s.wireD / 2 + l.connector.height / 2;
+      const flushTop = zEnd + s.wireD / 2 - (l.connector.up ?? l.connector.height / 2), flushBottom = -s.wireD / 2 + (l.connector.down ?? l.connector.height / 2);
       return top || inHollow(g, tipOf(flat)) ? flushTop : flushBottom;
     };
     const b = makeLead(s, g, s.top, true, zEnd, target(s.top, b0, true) - zEnd);
@@ -254,9 +259,12 @@ export function solveCable(s: CableSpec): SolvedCable {
       // Checked from just past its near end, which is where the lead itself arrives.
       let hollow = 0, out = 0, across = 0;
       const steps = Math.max(4, Math.ceil(c.length / 4));
-      for (let i = 1; i <= steps; i++) for (const fv of [-0.5, 0, 0.5]) {
+      // Sideways extents are given as finally placed; this runs before any mirroring, where they are the other way round.
+      let v0 = c.vMin ?? -c.width / 2, v1 = c.vMax ?? c.width / 2;
+      if (s.mirror) [v0, v1] = [-v1, -v0];
+      for (let i = 1; i <= steps; i++) for (const v of [v0, (v0 + v1) / 2, v1]) {
         const fu = Math.max(i / steps, Math.min(1, 2 / c.length));
-        const p = [tip[0] + dx * c.length * fu - dy * c.width * fv, tip[1] + dy * c.length * fu + dx * c.width * fv];
+        const p = [tip[0] + dx * c.length * fu - dy * v, tip[1] + dy * c.length * fu + dx * v];
         if (inHollow(bt.g, p)) hollow++; else if (outside(bt.g, p)) out++; else across++;
       }
       if (across || (hollow && out)) probs.push({ end: which, text: `The connector on the ${NAME[which]} end overlaps the coil. Move or turn that end, make a J wider, or change the coil size.` });
@@ -493,17 +501,45 @@ export const CONNECTOR_ROLLS = 4;
  * u runs along the cable away from its end (the model spans u = 0..length),
  * v is sideways (centred on 0), w is up (centred on 0).
  */
-export interface OrientedConnector { uvw: Float32Array; length: number; width: number; height: number }
+export interface OrientedConnector {
+  uvw: Float32Array; length: number; width: number; height: number;
+  /** How far it reaches above and below the cable's line, and to each side of it (v from `vMin` to `vMax`). */
+  up: number; down: number; vMin: number; vMax: number;
+}
 
-/** The model axis (0..5 = +X −X +Y −Y +Z −Z) that should run along the cable by default: its longest dimension. */
+/** Bounds, across the two other axes, of the part of a model within `slab` of one end of axis `a`. */
+function endFace(p: Float32Array, a: number, atMax: boolean, slab: number): { lo: [number, number]; hi: [number, number]; area: number } {
+  let min = Infinity, max = -Infinity;
+  for (let i = a; i < p.length; i += 3) { if (p[i] < min) min = p[i]; if (p[i] > max) max = p[i]; }
+  const b = (a + 1) % 3, c = (a + 2) % 3, lo: [number, number] = [Infinity, Infinity], hi: [number, number] = [-Infinity, -Infinity];
+  for (let i = 0; i < p.length; i += 3) {
+    if (atMax ? p[i + a] < max - slab : p[i + a] > min + slab) continue;
+    lo[0] = Math.min(lo[0], p[i + b]); hi[0] = Math.max(hi[0], p[i + b]);
+    lo[1] = Math.min(lo[1], p[i + c]); hi[1] = Math.max(hi[1], p[i + c]);
+  }
+  return { lo, hi, area: (hi[0] - lo[0]) * (hi[1] - lo[1]) };
+}
+/** How much of each end of a model counts as its end face. */
+const faceSlab = (length: number) => Math.max(0.5, Math.min(2, length * 0.02));
+
+/**
+ * The model axis (0..5 = +X −X +Y −Y +Z −Z) that should run along the cable by default: its
+ * longest dimension, pointing so that its smaller end is the one the cable goes into (a plug's
+ * strain relief, a probe's stem), with the bigger end away from the cable.
+ */
 export function defaultConnectorAxis(mesh: TriMesh): number {
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < mesh.positions.length; i++) { const a = i % 3, v = mesh.positions[i]; if (v < lo[a]) lo[a] = v; if (v > hi[a]) hi[a] = v; }
-  const d = [0, 1, 2].map((a) => hi[a] - lo[a]);
-  return 2 * d.indexOf(Math.max(...d));
+  const d = [0, 1, 2].map((a) => hi[a] - lo[a]), a = d.indexOf(Math.max(...d)), slab = faceSlab(d[a]);
+  // Pointing +a puts the model's low end on the cable; pointing −a puts its high end there.
+  return endFace(mesh.positions, a, false, slab).area <= endFace(mesh.positions, a, true, slab).area ? 2 * a : 2 * a + 1;
 }
 
-/** Turn a connector so model axis `axis` runs along the cable, rolled `roll` quarter turns about it. */
+/**
+ * Turn a connector so model axis `axis` runs along the cable, rolled `roll` quarter turns about
+ * it. The cable joins it at the middle of its near end face (not the middle of the whole model,
+ * which is somewhere else on a lopsided part).
+ */
 export function orientConnector(mesh: TriMesh, axis: number, roll: number): OrientedConnector {
   const a = Math.floor(axis / 2) % 3, sign = axis % 2 === 0 ? 1 : -1;
   const b = (a + 1) % 3, c = (a + 2) % 3; // (a, b, c) is a right-handed order of model axes
@@ -517,9 +553,15 @@ export function orientConnector(mesh: TriMesh, axis: number, roll: number): Orie
     uvw[i] = u; uvw[i + 1] = v; uvw[i + 2] = w;
     for (let k = 0; k < 3; k++) { const x = uvw[i + k]; if (x < lo[k]) lo[k] = x; if (x > hi[k]) hi[k] = x; }
   }
-  const mid = [lo[0], (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+  // Middle of the end face the cable goes into.
+  const slab = faceSlab(hi[0] - lo[0]), fl = [Infinity, Infinity], fh = [-Infinity, -Infinity];
+  for (let i = 0; i < uvw.length; i += 3) {
+    if (uvw[i] > lo[0] + slab) continue;
+    for (let k = 0; k < 2; k++) { const x = uvw[i + 1 + k]; if (x < fl[k]) fl[k] = x; if (x > fh[k]) fh[k] = x; }
+  }
+  const mid = [lo[0], (fl[0] + fh[0]) / 2, (fl[1] + fh[1]) / 2];
   for (let i = 0; i < uvw.length; i++) uvw[i] -= mid[i % 3];
-  return { uvw, length: hi[0] - lo[0], width: hi[1] - lo[1], height: hi[2] - lo[2] };
+  return { uvw, length: hi[0] - lo[0], width: hi[1] - lo[1], height: hi[2] - lo[2], up: hi[2] - mid[2], down: mid[2] - lo[2], vMin: lo[1] - mid[1], vMax: hi[1] - mid[1] };
 }
 
 /**

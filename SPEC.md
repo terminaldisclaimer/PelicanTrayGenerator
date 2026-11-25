@@ -304,8 +304,12 @@ It follows the owner's Fusion 360 "SnakedWire" script.
   script's centre lead), None. "Other end of coil" moves the end half a
   turn round. Which long side an outside end lands on follows from the
   winding direction; "Wound: other way" mirrors the cable.
-- **Connectors:** each end can carry a model from the library. It is put on
-  the cable's end, centred on it, pointing along it. "Turn" points a
+- **Connectors:** each end can carry a model from the library. The cable
+  joins it at the middle of the model's own end face (the outline of the
+  first millimetre or two of the model at that end), so a lopsided part such
+  as a thin stem with a head off to one side joins at its stem. By default
+  the model's longest side runs along the cable, with its smaller end as
+  the one the cable goes into (a plug's strain relief, a probe's stem). "Turn" points a
   different side of the model along the cable (6 ways; default is its
   longest side), "Roll" turns it a quarter turn about the cable. A lead with
   a connector climbs or drops (two bends) so the connector stays within the
