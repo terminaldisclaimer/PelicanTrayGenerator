@@ -190,7 +190,11 @@ function makeLead(s: CableSpec, g: Layout, lead: LeadSpec, top: boolean, z: numb
   return { u, pts, dir: [Math.cos(h), Math.sin(h), 0], length: len, junction, heading, turn };
 }
 
+/** Something physically wrong with a cable that can still be drawn. `end` says which end it concerns, if one. */
+export interface CableWarning { end: 'top' | 'bottom' | null; text: string }
 export interface SolvedCable {
+  /** Clashes found: a connector over the coil, or the cable crossing itself. Empty when it is sound. */
+  warnings: CableWarning[];
   /** Centreline from the free end of the bottom-turn lead to the free end of the top-turn lead. */
   path: P3[];
   /** The two cable ends: where a connector attaches and the direction it points (unit, level). */
@@ -241,8 +245,8 @@ export function solveCable(s: CableSpec): SolvedCable {
   };
 
   /** A connector has to lie wholly in the hollow or wholly outside the coil, not across the cable. */
-  const problems = (bt: Built): string[] => {
-    const probs: string[] = [];
+  const problems = (bt: Built): CableWarning[] => {
+    const probs: CableWarning[] = [];
     for (const [which, lead] of [['top', bt.b], ['bottom', bt.a]] as const) {
       const c = s[which].connector;
       if (!c) continue;
@@ -255,13 +259,13 @@ export function solveCable(s: CableSpec): SolvedCable {
         const p = [tip[0] + dx * c.length * fu - dy * c.width * fv, tip[1] + dy * c.length * fu + dx * c.width * fv];
         if (inHollow(bt.g, p)) hollow++; else if (outside(bt.g, p)) out++; else across++;
       }
-      if (across || (hollow && out)) probs.push(`the ${NAME[which]} connector would run into the coil`);
+      if (across || (hollow && out)) probs.push({ end: which, text: `The connector on the ${NAME[which]} end overlaps the coil. Move or turn that end, make a J wider, or change the coil size.` });
     }
     return probs;
   };
 
   const lMin = 2 * s.cornerR + s.wireD + 1e-6;
-  const feasible: Built[] = [], rejected: { bt: Built; probs: string[] }[] = [];
+  const feasible: Built[] = [], rejected: { bt: Built; probs: CableWarning[] }[] = [];
   let firstError: CableError | null = null;
   const b0 = build(s.outerL, 0); // throws for settings that can never work
   if (b0) {
@@ -299,21 +303,24 @@ export function solveCable(s: CableSpec): SolvedCable {
     }
   }
   const off = (bt: Built) => Math.abs(bt.g.outerL - s.outerL);
-  if (!feasible.length) {
-    if (rejected.length) throw new CableError(`${cap(rejected.reduce((m, x) => (off(x.bt) < off(m.bt) ? x : m)).probs.join('; '))}. Move it, turn it, shorten it, or change the coil size.`);
-    throw firstError ?? new CableError('No coil fits these settings; the cable may be too short for the two leads.');
-  }
-  // Closest to the asked-for coil length first; one where the cable would cross itself is passed over.
+  if (!feasible.length && !rejected.length) throw firstError ?? new CableError('No coil fits these settings; the cable may be too short for the two leads.');
+  // Closest to the asked-for coil length first, clean ones before any with a clash. A clash
+  // (a connector over the coil, or the cable crossing itself) does not stop the cable being
+  // drawn: it comes back with a warning, so it can be seen and put right.
   feasible.sort((x, y) => off(x) - off(y));
-  let crossing: CableError | null = null;
-  for (const bt of feasible) {
-    try { return finish(s, bt); } catch (e) { if (e instanceof CableError) { crossing ??= e; continue; } throw e; }
+  rejected.sort((x, y) => off(x.bt) - off(y.bt));
+  const order = [...feasible.map((bt) => ({ bt, probs: [] as CableWarning[] })), ...rejected];
+  let fallback: SolvedCable | null = null;
+  for (const { bt, probs } of order) {
+    const done = finish(s, bt);
+    done.warnings.push(...probs);
+    if (!done.warnings.length) return done;
+    fallback ??= done;
   }
-  throw crossing!;
+  return fallback!;
 }
-const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
-/** The centreline and ends for one worked-out coil; throws if the cable would run into itself. */
+/** The centreline and ends for one worked-out coil, with a warning if the cable would run into itself. */
 function finish(s: CableSpec, bt: Built): SolvedCable {
   const { g } = bt;
   const pts: P3[] = [];
@@ -340,7 +347,8 @@ function finish(s: CableSpec, bt: Built): SolvedCable {
   }
 
   // The cable must not run into itself (compare points more than 40 mm apart along it).
-  {
+  const warnings: CableWarning[] = [];
+  crossing: {
     const along = [0];
     for (let i = 1; i < path.length; i++) along.push(along[i - 1] + Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1], path[i][2] - path[i - 1][2]));
     const cell = s.wireD, grid = new Map<string, number[]>();
@@ -353,13 +361,16 @@ function finish(s: CableSpec, bt: Built): SolvedCable {
         for (const k of grid.get(`${kx + dx},${ky + dy},${kz + dzz}`) ?? []) {
           if (k <= i || along[k] - along[i] < 40) continue;
           const d2 = (path[i][0] - path[k][0]) ** 2 + (path[i][1] - path[k][1]) ** 2 + (path[i][2] - path[k][2]) ** 2;
-          if (d2 < need) throw new CableError(`The cable would run into itself there (${Math.sqrt(d2).toFixed(1)} mm between centres, needs ${s.wireD.toFixed(1)}). Move or turn that end, shorten it, or use a wider coil.`);
+          if (d2 < need) {
+            warnings.push({ end: null, text: `The cable crosses itself (${Math.sqrt(d2).toFixed(1)} mm between centres where it needs ${s.wireD.toFixed(1)}). Move or turn an end, shorten it, or use a wider coil.` });
+            break crossing;
+          }
         }
     }
   }
   const seen = (l: Lead) => ({ junction: [l.junction[0], sy * l.junction[1]] as P2, heading: sy * l.heading, turn: sy * l.turn });
   return {
-    path,
+    path, warnings,
     ends: {
       bottom: { at: path[0], dir: [bt.a.dir[0], sy * bt.a.dir[1], 0] },
       top: { at: path[path.length - 1], dir: [bt.b.dir[0], sy * bt.b.dir[1], 0] },

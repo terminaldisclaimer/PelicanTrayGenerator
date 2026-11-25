@@ -128,3 +128,7 @@ select.btn { appearance: auto; max-width: 100%; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
 #cable-which { margin-top: 4px; }
 #cable-which [data-cend="bottom"][aria-checked="true"] { background: #5ac8fa; }
+
+#cable-status.cable-warn { color: #ffb4a8; font-size: 14px; }
+#cable-edit .conn-clash { fill: rgba(255, 90, 70, .45); stroke: #ff5a46; }
+#cable-edit .wire-clash { stroke: #c96a5e; }

@@ -1347,6 +1347,25 @@ function fillCable() {
   document.querySelectorAll('#cable .u').forEach((e) => (e.textContent = units));
 }
 
+/** A J is an end that doubles right back: a half-turn bend away from the coil. */
+const isJ = (e: LeadSettings) => Math.abs(e.angle + 180) < 0.5;
+/** A J's size as it is usually given: across the U (outside to outside of the cable), and from the bottom of the U to the tip. */
+const jSize = (e: LeadSettings) => ({ width: 2 * e.radius + cable.d, length: e.length + cable.d / 2 + e.radius });
+/** Reshape an end as a J of this size, at the end of the coil it is at now. */
+function setJ(n: Which, width: number, length: number) {
+  const end = (cableShown?.leads[n].junction[0] ?? -1) < 0 ? 'left' : 'right';
+  cable[n] = { ...cable[n], ...presetLead('j', n === 'top', end, { wireD: cable.d, outerL: cable.l, outerW: cable.w, cornerR: cable.r, gap: DEFAULT_CABLE.gap }, 0, { width, length }) };
+}
+/** A J whose connector would sit on the coil is widened just enough to clear it. Returns true if it changed. */
+function widenJ(n: Which): boolean {
+  const e = cable[n], t = e.conn ? turned[n] : null;
+  if (!t || !isJ(e)) return false;
+  const need = Math.ceil(t.o.width / 2 + 1.5 * cable.d + 1.5), now = jSize(e);
+  if (now.width >= need) return false;
+  setJ(n, need, now.length);
+  return true;
+}
+
 /** The controls under the drawing, for whichever end is selected. */
 function fillCableEnd() {
   const e = cable[cableEnd];
@@ -1354,6 +1373,9 @@ function fillCableEnd() {
   num('#cable-angle').value = String(+e.angle.toFixed(1));
   num('#cable-leadlen').value = fromMM(e.length);
   num('#cable-radius').value = fromMM(e.radius);
+  $('#cable-j-rows').hidden = !isJ(e);
+  num('#cable-jw').value = fromMM(jSize(e).width);
+  num('#cable-jl').value = fromMM(jSize(e).length);
   const el = $('#cable-conn') as HTMLSelectElement;
   const opt = (value: string, label: string) => { const o = document.createElement('option'); o.value = value; o.textContent = label; o.selected = value === e.conn; return o; };
   const items = [...(libraryItems ?? [])].sort((a, b) => (a.folder ?? '').localeCompare(b.folder ?? '') || a.name.localeCompare(b.name));
@@ -1405,7 +1427,18 @@ function readCable(): string | null {
   if (!(Math.abs(angle) <= 180)) return 'The bend must be between −180 and 180 degrees.';
   if (!(length >= 0)) return 'The length after the bend must be 0 or more.';
   if (!(radius > 0)) return 'Enter a bend radius.';
-  cable = { ...cable, d, len, l, w, r, [cableEnd]: { ...cable[cableEnd], angle, length, radius } };
+  const before = cable[cableEnd], wasJ = isJ(before) && !$('#cable-j-rows').hidden;
+  cable = { ...cable, d, len, l, w, r, [cableEnd]: { ...before, angle, length, radius } };
+  // The J boxes are another way of giving the same end; a change typed there wins.
+  if (wasJ && isJ(cable[cableEnd])) {
+    const jw = v('#cable-jw'), jl = v('#cable-jl'), shown = jSize(before);
+    if (!(jw > 0) || !(jl > 0)) return 'Enter the J width and length.';
+    if (Math.abs(jw - shown.width) > 0.005 || Math.abs(jl - shown.length) > 0.005) {
+      if (jw < 2 * d + DEFAULT_CABLE.gap) return `A J must be at least ${fmtLen(2 * d + DEFAULT_CABLE.gap, units)} ${units} wide, so its two legs do not touch.`;
+      if (jl < jw / 2) return `A J must be at least ${fmtLen(jw / 2, units)} ${units} long (half its width).`;
+      setJ(cableEnd, jw, jl);
+    }
+  }
   return null;
 }
 
@@ -1416,11 +1449,15 @@ function previewCable(): SolvedCable | null {
   try {
     cableShown = solveCable(cableSpec(cable));
     const f = cableShown.footprint;
-    status.textContent = `${cableShown.turns.toFixed(2)} turns. Coil ${fmtDims([f.length, f.width, f.height], units)} (you asked for ${fmtLen(cable.l, units)} long). Hollow middle ${fmtLen(cableShown.hollow.length, units)} × ${fmtLen(cableShown.hollow.width, units)} ${units}.`;
+    const warn = cableShown.warnings.map((w) => w.text).join(' ');
+    status.textContent = (warn ? `Check this: ${warn} ` : '') +
+      `${cableShown.turns.toFixed(2)} turns. Coil ${fmtDims([f.length, f.width, f.height], units)} (you asked for ${fmtLen(cable.l, units)} long). Hollow middle ${fmtLen(cableShown.hollow.length, units)} × ${fmtLen(cableShown.hollow.width, units)} ${units}.`;
+    status.classList.toggle('cable-warn', !!warn);
     drawCable(cableShown);
     return cableShown;
   } catch (e) {
-    status.textContent = e instanceof Error ? e.message : String(e);
+    status.textContent = `This cable cannot be made: ${e instanceof Error ? e.message : String(e)}`;
+    status.classList.add('cable-warn');
     return null;
   }
 }
@@ -1445,12 +1482,13 @@ function drawCable(c: SolvedCable) {
   if (!cableHeld || !svg.getAttribute('viewBox')) svg.setAttribute('viewBox', `${x0 - pad} ${-(y1 + pad)} ${x1 - x0 + 2 * pad} ${y1 - y0 + 2 * pad}`);
   const view = svg.viewBox.baseVal;
   const el = (tag: string, attrs: Record<string, string | number>, cls = '') => { const e = document.createElementNS(SVG, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v)); if (cls) e.setAttribute('class', cls); return e; };
-  const kids: Element[] = [el('polyline', { points: c.path.map((p) => `${p[0].toFixed(2)},${(-p[1]).toFixed(2)}`).join(' '), 'stroke-width': cable.d }, 'wire')];
+  const kids: Element[] = [el('polyline', { points: c.path.map((p) => `${p[0].toFixed(2)},${(-p[1]).toFixed(2)}`).join(' '), 'stroke-width': cable.d }, c.warnings.some((w) => w.end === null) ? 'wire wire-clash' : 'wire')];
   // Handles are sized by the picture, so a thumb can take hold of them whatever the coil's size.
   const unit = Math.max(view.width / Math.max(1, svg.clientWidth || 340), view.height / Math.max(1, svg.clientHeight || 260)), hr = 8 * unit, hit = 22 * unit;
   for (const n of ENDS) {
     const b = boxes[n], cls = END_COLOUR[n], sel = n === cableEnd ? ' sel' : '';
-    if (b) kids.push(el('polygon', { points: b.map((p) => `${p[0].toFixed(2)},${(-p[1]).toFixed(2)}`).join(' '), 'stroke-width': unit * 1.5 }, `conn-${cls}`));
+    const clash = c.warnings.some((w) => w.end === n);
+    if (b) kids.push(el('polygon', { points: b.map((p) => `${p[0].toFixed(2)},${(-p[1]).toFixed(2)}`).join(' '), 'stroke-width': unit * 1.5 }, clash ? 'conn-clash' : `conn-${cls}`));
     const j = c.leads[n].junction, t = c.ends[n].at;
     kids.push(el('circle', { cx: j[0], cy: -j[1], r: hr, 'stroke-width': unit * 2 }, `h-${cls}${sel}`));
     kids.push(el('rect', { x: t[0] - hr, y: -t[1] - hr, width: 2 * hr, height: 2 * hr, 'stroke-width': unit * 2 }, `h-${cls}${sel}`));
@@ -1521,14 +1559,18 @@ async function buildCable() {
 async function buildCableOnce() {
   const status = $('#cable-status');
   const wrong = readCable();
-  if (wrong) { status.textContent = wrong; return; }
+  if (wrong) { status.textContent = wrong; status.classList.add('cable-warn'); toast(wrong); return; }
   saveCable();
   try {
     showProgress(0.05, 'Working out the coil');
     await turnConnectors();
+    const widened = ENDS.filter(widenJ);
     fillCableEnd();
     const c = cable, solved = previewCable();
-    if (!solved) { hideProgress(); return; }
+    if (widened.length) toast(`The J was widened to ${fmtLen(jSize(cable[widened[0]]).width, units)} ${units} so its connector clears the coil.`);
+    // Whatever stops it or is wrong with it is said where it cannot be missed, not only under the button.
+    if (!solved) { hideProgress(); toast(status.textContent || 'This cable cannot be made.'); return; }
+    if (solved.warnings.length) toast(`Cable added, but check it: ${solved.warnings.map((w) => w.text).join(' ')}`);
     const bodies: TriMesh[] = [tubeMesh(solved.path, c.d)];
     const used = ENDS.filter((n) => c[n].conn && turned[n]);
     for (const n of used) bodies.push(placeConnector(turned[n]!.o, solved.ends[n], turned[n]!.name));
@@ -1546,6 +1588,8 @@ async function buildCableOnce() {
   } catch (e) {
     hideProgress();
     status.textContent = e instanceof Error ? e.message : String(e);
+    status.classList.add('cable-warn');
+    toast(status.textContent);
   }
 }
 
@@ -1556,8 +1600,10 @@ async function cableChanged() {
   if (wrong) { $('#cable-status').textContent = wrong; return; }
   saveCable();
   try { await turnConnectors(); } catch (e) { $('#cable-status').textContent = e instanceof Error ? e.message : String(e); return; }
+  const widened = ENDS.filter(widenJ);
   fillCableEnd();
   previewCable();
+  if (widened.length) toast(`The J was widened to ${fmtLen(jSize(cable[widened[0]]).width, units)} ${units} so its connector clears the coil.`);
 }
 $('#cable-build').addEventListener('click', buildCable);
 ($('#cable') as HTMLDetailsElement).addEventListener('toggle', () => { if (($('#cable') as HTMLDetailsElement).open) cableChanged(); });

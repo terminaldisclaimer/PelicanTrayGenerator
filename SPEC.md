@@ -313,8 +313,17 @@ It follows the owner's Fusion 360 "SnakedWire" script.
   end and for any end in the middle, bottom level with the bottom of the
   stack for an outside end on the bottom turn. A connector must lie wholly
   in the hollow or wholly outside the coil, not across the cable.
-- It is refused, with the reason, if the cable would run into itself, the
-  radii cannot be wound, or the centre connector does not fit.
+- **J size.** When an end is a J (a half-turn bend away from the coil), two
+  more boxes give its width across the U and its length from the U to the
+  tip. If a connector on a J would sit on the coil, the J is widened just
+  enough to clear it, and a message says so.
+- **Clashes are warnings, not refusals.** A connector lying across the cable
+  (it must be wholly in the hollow or wholly outside) or a cable crossing
+  itself still draws and can still be added: the status line and a message
+  at the top of the screen say what is wrong, and the drawing shows the
+  offending connector in red, so it can be seen and dragged clear. Only
+  settings that cannot be wound at all (radii, a cable too short for its
+  ends) are refused, and that is also said at the top of the screen.
 - The result is one ordinary part (cable and connectors joined), lying flat
   with its pose locked, so pockets, finger holes, layout and saving work as
   for any part. The pocket is a channel around an island of tray.

@@ -119,16 +119,29 @@ describe('cable coil', () => {
     expect(Math.abs(tip)).toBeLessThan(c.hollow.length / 2);
   });
 
-  it('says what is wrong instead of drawing something that cannot be wound', () => {
+  it('refuses what cannot be wound at all, and warns about clashes while still drawing the cable', () => {
+    // Impossible outright.
     expect(() => solveCable({ ...DEFAULT_CABLE, cornerR: 2 })).toThrow(CableError);
-    // A connector may not lie across the cable: too wide for the hollow, or a sideways one poking out through the coil.
-    expect(() => make(lead('none', true, 'left'), lead('middle', false, 'left', 5, { connector: { height: 19, width: 40, length: 50 } }))).toThrow(/run into the coil/);
-    expect(() => make({ at: 4.5, stem: 0, angle: 90, radius: 8, length: 2, connector: { height: 10, width: 10, length: 40 } }, lead('none', false, 'left'))).toThrow(/run into the coil/);
-    expect(() => make(lead('none', true, 'left'), lead('middle', false, 'left', 5, { connector: { height: 19, width: 19, length: 3000 } }))).toThrow(CableError);
     expect(() => solveCable({ ...DEFAULT_CABLE, totalLen: 30 })).toThrow(CableError);
     expect(() => make({ at: 1, stem: 0, angle: -180, radius: 2, length: 30, connector: null }, lead('none', false, 'left'))).toThrow(/bend radius/);
+    // A sound cable has no warnings.
+    expect(solveCable(DEFAULT_CABLE).warnings).toEqual([]);
+    // A connector lying across the cable: too wide for the hollow, poking out through the coil, or far too long.
+    const wide = make(lead('none', true, 'left'), lead('middle', false, 'left', 5, { connector: { height: 19, width: 40, length: 50 } }));
+    expect(wide.warnings).toMatchObject([{ end: 'bottom' }]);
+    expect(wide.warnings[0].text).toMatch(/overlaps the coil/);
+    expect(wide.path.length).toBeGreaterThan(100); // still drawn
+    expect(make({ at: 4.5, stem: 0, angle: 90, radius: 8, length: 2, connector: { height: 10, width: 10, length: 40 } }, lead('none', false, 'left')).warnings).toMatchObject([{ end: 'top' }]);
+    expect(make(lead('none', true, 'left'), lead('middle', false, 'left', 5, { connector: { height: 19, width: 19, length: 3000 } })).warnings).toHaveLength(1);
+    // The owner's heater coil (106 long, 23 wide) on the default 20 mm J sits 1 mm into the coil; a wider J clears it.
+    const heater = { height: 32, width: 23, length: 105.8 };
+    expect(make(lead('j', true, 'left', 50, { connector: heater }), lead('middle', false, 'left', 5)).warnings).toMatchObject([{ end: 'top' }]);
+    const wider: LeadSpec = { ...presetLead('j', true, 'left', DEFAULT_CABLE, 0, { width: 32, length: 50 }), connector: heater };
+    expect(make(wider, lead('middle', false, 'left', 5)).warnings).toEqual([]);
     // A lead bent back across its own coil on the same turn.
-    expect(() => make({ at: 0.5, stem: 0, angle: 90, radius: 8, length: 60, connector: null }, lead('none', false, 'left'))).toThrow(/run into itself/);
+    const crossed = make({ at: 0.5, stem: 0, angle: 90, radius: 8, length: 60, connector: null }, lead('none', false, 'left'));
+    expect(crossed.warnings).toMatchObject([{ end: null }]);
+    expect(crossed.warnings[0].text).toMatch(/crosses itself/);
   });
 
   it('the cable is a closed solid of the right volume, and a connector lands on its end', () => {
