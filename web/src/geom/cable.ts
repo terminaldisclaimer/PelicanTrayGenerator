@@ -45,15 +45,17 @@ export interface LeadSpec {
    * bends) and carry on the same way, so the end runs alongside the coil just inside it.
    */
   jog?: number;
+  /** Other lengths for this end's final straight run, tried as well when the ends are placed automatically. */
+  lengths?: number[];
   /** Another shape for this end, tried as well when the ends are placed automatically (`place: 'auto'`). */
-  alt?: Pick<LeadSpec, 'stem' | 'angle' | 'radius' | 'length' | 'jog'>;
+  alt?: Pick<LeadSpec, 'stem' | 'angle' | 'radius' | 'length' | 'jog'> & { /** The connector as it should be turned for this shape, if different. */ connector?: LeadSpec['connector'] };
   /**
    * Connector on this end: its height, width, and how far it reaches past the cable's end.
    * When the cable does not join it at its middle, `up`/`down` say how far it reaches above and
    * below the cable's line, and `vMin`/`vMax` how far to each side (as it is finally placed).
    * null = bare.
    */
-  connector: { height: number; width: number; length: number; up?: number; down?: number; vMin?: number; vMax?: number } | null;
+  connector: { height: number; width: number; length: number; up?: number; down?: number; vMin?: number; vMax?: number; /** Its shape from above in a few boxes, each [from, to along it, vMin, vMax]: lets a slim stem be told from a wide head. */ profile?: [number, number, number, number][] } | null;
 }
 export interface CableSpec {
   /** Cable diameter. */
@@ -78,6 +80,8 @@ export interface CableSpec {
   place?: 'auto';
   /** The ends and their connectors must stay inside the coil (it sits against a wall). */
   keepInside?: boolean;
+  /** With `place: 'auto'`: sizes (either way round) of things that should still fit in the middle; a placement that leaves room for more of them wins. */
+  roomFor?: [number, number][];
   /** Radius of the two bends in a climb. */
   climbR: number;
   /** Wind the other way round (mirrors the whole cable, swapping the near and far sides). */
@@ -221,6 +225,8 @@ export interface CableWarning { end: 'top' | 'bottom' | null; text: string }
 export interface SolvedCable {
   /** Clashes found: a connector over the coil, or the cable crossing itself. Empty when it is sound. */
   warnings: CableWarning[];
+  /** When the ends were placed automatically: whether each took its other shape (`alt`). */
+  usedAlt?: { top: boolean; bottom: boolean };
   /** Centreline from the free end of the bottom-turn lead to the free end of the top-turn lead. */
   path: P3[];
   /** The two cable ends: where a connector attaches and the direction it points (unit, level). */
@@ -271,11 +277,12 @@ export function solveCable(s: CableSpec): SolvedCable {
   };
 
   /** A connector has to lie wholly in the hollow or wholly outside the coil, not across the cable. */
-  const problems = (bt: Built): CableWarning[] => {
+  const problems = (bt: Built, tops: LeadSpec = s.top, bottoms: LeadSpec = s.bottom): CableWarning[] => {
+    const spec = { top: tops, bottom: bottoms };
     const probs: CableWarning[] = [];
     for (const [which, lead] of [['top', bt.b], ['bottom', bt.a]] as const) {
       if (s.keepInside && lead.pts.some((p) => outside(bt.g, p))) { probs.push({ end: which, text: `The ${NAME[which]} end would run outside the coil, into the tray wall.` }); continue; }
-      const c = s[which].connector;
+      const c = spec[which].connector;
       if (!c) continue;
       const tip = tipOf(lead), [dx, dy] = lead.dir;
       // Checked from just past its near end, which is where the lead itself arrives.
@@ -294,7 +301,7 @@ export function solveCable(s: CableSpec): SolvedCable {
     }
     // The two ends against each other: a connector may not lie on the other connector or on the other end's lead.
     const box = (which: 'top' | 'bottom', lead: Lead) => {
-      const c = s[which].connector;
+      const c = spec[which].connector;
       if (!c) return null;
       let v0 = c.vMin ?? -c.width / 2, v1 = c.vMax ?? c.width / 2;
       if (s.mirror) [v0, v1] = [-v1, -v0];
@@ -343,22 +350,73 @@ export function solveCable(s: CableSpec): SolvedCable {
         bt = { g, n: 0, a, b, travel, zEnd, total: a.length + b.length + g.stretch * travel };
         lenA = a.length; lenB = b.length;
       }
-      return bt ? { bt, probs: problems(bt) } : null;
+      return bt ? { bt, probs: problems(bt, topLead, bottom) } : null;
     };
     // Along the long sides first (near, then far), then the ends: connectors lie best along a long side.
     const auto = s.place === 'auto';
-    const spots = auto ? [0, 4, 2, 6].flatMap((k) => Array.from({ length: 19 }, (_, i) => k + (i + 1) / 20)) : [s.top.at];
-    // Each end as given, then with its other shape if it has one.
-    const shapes = (l: LeadSpec): LeadSpec[] => (auto && l.alt ? [l, { ...l, jog: undefined, ...l.alt }] : [l]);
-    let fallback: SolvedCable | null = null, least = Infinity;
-    for (const top of shapes(s.top)) for (const bottom of shapes(s.bottom)) for (const at of spots) {
-      const f = fixedAt(top, bottom, at);
+    /**
+     * How much use the middle of the coil still is with the ends where they are: how many of the
+     * wanted things still fit, then the area of the biggest clear rectangle left in the hollow.
+     */
+    const roomLeft = (bt: Built, tops: LeadSpec, bottoms: LeadSpec): number => {
+      const spec = { top: tops, bottom: bottoms };
+      const hx = g.lc / 2 - s.wireD / 2, hy = g.wc / 2 - s.wireD / 2, pad = s.wireD / 2 + 1;
+      const taken: [number, number, number, number][] = []; // x0, y0, x1, y1
+      for (const [which, lead] of [['top', bt.b], ['bottom', bt.a]] as const) {
+        const c = spec[which].connector;
+        const xs: number[] = [], ys: number[] = [];
+        for (const p of lead.pts) { xs.push(p[0] - pad, p[0] + pad); ys.push(p[1] - pad, p[1] + pad); }
+        if (xs.length) taken.push([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]);
+        if (c) {
+          const tip = tipOf(lead), [dx, dy] = lead.dir;
+          for (const [u0, u1, v0, v1] of c.profile ?? [[0, c.length, c.vMin ?? -c.width / 2, c.vMax ?? c.width / 2]]) {
+            const cs = [[u0, v0], [u0, v1], [u1, v0], [u1, v1]].map(([u, v]) => [tip[0] + dx * u - dy * v, tip[1] + dy * u + dx * v]);
+            taken.push([Math.min(...cs.map((q) => q[0])) - 1, Math.min(...cs.map((q) => q[1])) - 1, Math.max(...cs.map((q) => q[0])) + 1, Math.max(...cs.map((q) => q[1])) + 1]);
+          }
+        }
+      }
+      const needs = s.roomFor ?? [];
+      if (!taken.length) return needs.length * 1e7 + 4 * hx * hy;
+      // The best rectangle has every side on the hollow's edge or on the side of something in the way.
+      const cut = (lo: number, hi: number, vals: number[]) => [...new Set([lo, hi, ...vals.filter((v) => v > lo && v < hi)])].sort((p, q) => p - q);
+      const xs = cut(-hx, hx, taken.flatMap((t) => [t[0], t[2]])), ys = cut(-hy, hy, taken.flatMap((t) => [t[1], t[3]]));
+      let best = 0;
+      const fits = needs.map(() => false);
+      for (let i = 0; i < xs.length; i++) for (let j = i + 1; j < xs.length; j++) for (let k = 0; k < ys.length; k++) for (let m = k + 1; m < ys.length; m++) {
+        const w = xs[j] - xs[i], h = ys[m] - ys[k];
+        if (w * h <= best && fits.every(Boolean)) continue;
+        if (taken.some((t) => t[0] < xs[j] - 1e-9 && t[2] > xs[i] + 1e-9 && t[1] < ys[m] - 1e-9 && t[3] > ys[k] + 1e-9)) continue;
+        best = Math.max(best, w * h);
+        needs.forEach(([a2, b2], n2) => { if ((w >= a2 && h >= b2) || (w >= b2 && h >= a2)) fits[n2] = true; });
+      }
+      // Room for one more of the wanted things beats any amount of extra area.
+      return fits.filter(Boolean).length * 1e7 + best;
+    };
+    const spots = auto ? [0, 4, 2, 6].flatMap((k) => { const n = k % 4 === 0 ? 12 : 4; return Array.from({ length: n }, (_, i) => k + (i + 0.5) / n); }) : [s.top.at];
+    // Each end as given, then with its other shape if it has one; each of those with its other lengths.
+    const shapes = (l: LeadSpec): { lead: LeadSpec; alt: boolean }[] => {
+      const forms = [{ lead: l, alt: false }];
+      if (auto && l.alt) forms.push({ lead: { ...l, jog: undefined, ...l.alt, connector: l.alt.connector ?? l.connector }, alt: true });
+      return auto && l.lengths?.length ? forms.flatMap((f) => [f, ...l.lengths!.map((length) => ({ lead: { ...f.lead, length }, alt: f.alt }))]) : forms;
+    };
+    // Every way of laying the ends that is sound is tried; the one that leaves room for the most of
+    // what else has to go in the middle, and then the most room, is kept.
+    const wanted = (s.roomFor?.length ?? 0) * 1e7;
+    let fallback: SolvedCable | null = null, least = Infinity, best: SolvedCable | null = null, bestRoom = -1;
+    search: for (const top of shapes(s.top)) for (const bottom of shapes(s.bottom)) for (const at of spots) {
+      const f = fixedAt(top.lead, bottom.lead, at);
       if (!f) continue;
+      if (f.probs.length) { if (f.probs.length < least && !best) { const d = finish(s, f.bt); d.warnings.push(...f.probs); least = f.probs.length; fallback = d; } continue; }
+      const room = auto ? roomLeft(f.bt, top.lead, bottom.lead) : 0;
+      if (room <= bestRoom) continue; // cannot beat what we have: skip the costly self-crossing check
       const done = finish(s, f.bt);
-      done.warnings.push(...f.probs);
-      if (!done.warnings.length) return done;
-      if (done.warnings.length < least) { least = done.warnings.length; fallback = done; }
+      if (done.warnings.length) { if (!best && !fallback) fallback = done; continue; }
+      done.usedAlt = { top: top.alt, bottom: bottom.alt };
+      if (!auto) return done;
+      best = done; bestRoom = room;
+      if (wanted > 0 && room >= wanted) break search; // everything wanted fits: good enough
     }
+    if (best) return best;
     if (!fallback) throw new CableError('The cable is too short to go round a coil this size with these ends.');
     return fallback;
   }
@@ -653,6 +711,26 @@ export function orientConnector(mesh: TriMesh, axis: number, roll: number): Orie
   const mid = [lo[0], (fl[0] + fh[0]) / 2, (fl[1] + fh[1]) / 2];
   for (let i = 0; i < uvw.length; i++) uvw[i] -= mid[i % 3];
   return { uvw, length: hi[0] - lo[0], width: hi[1] - lo[1], height: hi[2] - lo[2], up: hi[2] - mid[2], down: mid[2] - lo[2], vMin: lo[1] - mid[1], vMax: hi[1] - mid[1] };
+}
+
+/** A turned connector's shape from above as a few boxes [from, to, vMin, vMax]: neighbouring slices of similar width are run together. */
+export function connectorProfile(o: OrientedConnector, step = 2, tolerance = 2): [number, number, number, number][] {
+  const n = Math.max(1, Math.ceil(o.length / step)), lo = new Array<number>(n).fill(Infinity), hi = new Array<number>(n).fill(-Infinity), p = o.uvw;
+  for (let i = 0; i + 8 < p.length; i += 9) {
+    const us = [p[i], p[i + 3], p[i + 6]], vs = [p[i + 1], p[i + 4], p[i + 7]];
+    const b0 = Math.max(0, Math.floor(Math.min(...us) / step)), b1 = Math.min(n - 1, Math.floor(Math.max(...us) / step));
+    for (let b = b0; b <= b1; b++) { lo[b] = Math.min(lo[b], ...vs); hi[b] = Math.max(hi[b], ...vs); }
+  }
+  const out: [number, number, number, number][] = [];
+  for (let b = 0; b < n; b++) {
+    if (!Number.isFinite(lo[b])) continue;
+    const last = out[out.length - 1], u1 = Math.min(o.length, (b + 1) * step);
+    // Join a slice to the box before it when that widens the box by no more than the tolerance.
+    if (last && Math.abs(last[1] - b * step) < 1e-9 && Math.min(last[2], lo[b]) >= Math.max(last[2], lo[b]) - tolerance && Math.max(last[3], hi[b]) <= Math.min(last[3], hi[b]) + tolerance) {
+      last[1] = u1; last[2] = Math.min(last[2], lo[b]); last[3] = Math.max(last[3], hi[b]);
+    } else out.push([b * step, u1, lo[b], hi[b]]);
+  }
+  return out;
 }
 
 /**

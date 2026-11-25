@@ -7,7 +7,7 @@ import { DEFAULT_LIFT, DEFAULT_TRAY, fingerCentre, SIDES, type LayoutData, type 
 import { DEFAULT_SHELL, shellExtraHeight, shellPitch, shellProblem, trayInsideShell, type Footprint, type ShellOptions } from './geom/shell';
 import { parseSTL, writeSTL } from './mesh/stl';
 import { parse3MF, write3MF } from './mesh/threemf';
-import { CableError, CONNECTOR_ROLLS, CONNECTOR_TURNS, DEFAULT_CABLE, defaultConnectorAxis, orientConnector, placeConnector, connectorOutline, connectorReach, leadTip, nearestAt, presetLead, solveCable, tubeMesh, type CableSpec, type LeadPreset, type LeadSpec, type OrientedConnector, type SolvedCable } from './geom/cable';
+import { CableError, CONNECTOR_ROLLS, CONNECTOR_TURNS, DEFAULT_CABLE, defaultConnectorAxis, orientConnector, placeConnector, connectorOutline, connectorProfile, connectorReach, leadTip, nearestAt, presetLead, solveCable, tubeMesh, type CableSpec, type LeadPreset, type LeadSpec, type OrientedConnector, type SolvedCable } from './geom/cable';
 import type { TriMesh } from './mesh/types';
 import { cloudDelete, cloudDeleteVersion, cloudList, cloudLoad, cloudLoadVersion, cloudName, cloudRename, cloudSave, cloudUser, cloudVersions, deleteProject, listProjects, loadProject, newProjectId, saveProject, type Project } from './storage';
 import { LARGE_MESH_TRIANGLES } from './mesh/bounds';
@@ -1444,7 +1444,7 @@ const ENDS: Which[] = ['top', 'bottom'];
 /** The end the controls under the drawing belong to. */
 let cableEnd: Which = 'top';
 /** Each end's connector as it is turned now (loaded from the library in the background). */
-const turned: Record<Which, { o: OrientedConnector; name: string; outline: [number, number][] } | null> = { top: null, bottom: null };
+const turned: Record<Which, { o: OrientedConnector; name: string; outline: [number, number][]; /** Round the tray edge: how it is turned when its end doubles back, and whether that is the shape in use. */ back?: OrientedConnector; backOutline?: [number, number][]; useBack?: boolean } | null> = { top: null, bottom: null };
 /** The last coil that could be worked out: what the drawing shows and what dragging measures against. */
 let cableShown: SolvedCable | null = null;
 /** True while a handle in the drawing is being dragged. */
@@ -1473,23 +1473,29 @@ const wrapKeyOf = (c: CableSettings, self: number | null) => { const t = trayIns
 function wrapSpec(c: CableSettings, self: number | null): CableSpec {
   const t = trayInsideNow(), inset = wrapInset(c, self);
   const lead = (n: Which): LeadSpec => {
-    const o = c[n].conn ? turned[n]?.o : undefined;
+    const tn = c[n].conn ? turned[n] : null, o = tn?.o, ob = tn?.back ?? o;
+    const conn = (x: OrientedConnector) => ({ height: x.height, width: x.width, length: x.length, up: x.up, down: x.down, vMin: x.vMin, vMax: x.vMax, profile: connectorProfile(x) });
     // The cable is on one side of each end as it runs (its right for the top end, its left for the bottom one).
     const toward = o ? (n === 'top' ? -o.vMin : o.vMax) : 0;
     // Doubled back on itself the cable is on the other side of it, so the connector's other flank faces the cable.
-    const towardBack = o ? (n === 'top' ? o.vMax : -o.vMin) : 0;
+    const towardBack = ob ? (n === 'top' ? ob.vMax : -ob.vMin) : 0;
     const radius = Math.max(8, 1.3 * c.d), run = o ? Math.max(6, c.d) : 0;
     return {
       at: 0.5, stem: 0, angle: 0, radius, length: run, jog: o ? c.d + c.connGap + Math.max(0, toward) : 0,
       // The other way to lay it: turned right round inside the coil, so the connector points back along the wall.
-      alt: o ? { stem: 0, angle: 180, radius: Math.max(radius, (c.d + c.connGap + Math.max(0, towardBack)) / 2), length: run } : undefined,
-      connector: o ? { height: o.height, width: o.width, length: o.length, up: o.up, down: o.down, vMin: o.vMin, vMax: o.vMax } : null,
+      alt: ob ? { stem: 0, angle: 180, radius: Math.max(radius, (c.d + c.connGap + Math.max(0, towardBack)) / 2), length: run, connector: conn(ob) } : undefined,
+      // Longer runs along the wall are tried too: they move where the other end leaves the coil.
+      lengths: o ? [30, 60, 90, 120, 150] : undefined,
+      connector: o ? conn(o) : null,
     };
   };
   const outerL = t.x - 2 * inset, outerW = t.y - 2 * inset;
   return {
     wireD: c.d, totalLen: c.len, outerL, outerW, cornerR: Math.max(c.d / 2 + 0.5, Math.min(c.r, (Math.min(outerL, outerW) - c.d) / 2)), gap: DEFAULT_CABLE.gap,
-    fit: 'fixed', place: 'auto', keepInside: true, climbR: Math.max(8, 1.3 * c.d), mirror: false, top: lead('top'), bottom: lead('bottom'),
+    fit: 'fixed', place: 'auto', keepInside: true,
+    // What else has to go in the middle, each with its pocket's clearance and wall: the ends are laid to leave room for them.
+    roomFor: parts.filter((p) => !p.pinned && p.partId !== self).map((p) => [p.size[0] + 7, p.size[1] + 7] as [number, number]),
+    climbR: Math.max(8, 1.3 * c.d), mirror: false, top: lead('top'), bottom: lead('bottom'),
   };
 }
 
@@ -1630,14 +1636,20 @@ async function turnConnectors() {
     if (!e.conn) { turned[n] = null; continue; }
     const mesh = await connectorMesh(e.conn);
     const axis = e.axis ?? defaultConnectorAxis(mesh);
-    let o = orientConnector(mesh, axis, e.roll);
+    let o = orientConnector(mesh, axis, e.roll), back: OrientedConnector | undefined;
     if (cable.wrap) {
-      // Round the tray edge the connector lies against the coil: roll it so it takes the least room across the tray.
-      for (let r = 0; r < CONNECTOR_ROLLS; r++) {
-        const t = orientConnector(mesh, axis, r);
-        if (t.width < o.width - 0.05 || (Math.abs(t.width - o.width) <= 0.05 && t.height < o.height - 0.05)) { o = t; e.roll = r; }
-      }
+      // Round the tray edge the connector lies against the coil: roll it to take the least room across the
+      // tray, and of the rolls that do, the one whose slim side faces the cable (which side that is depends
+      // on whether its end runs on or doubles back).
+      const rolls = Array.from({ length: CONNECTOR_ROLLS }, (_, r) => orientConnector(mesh, axis, r));
+      const narrow = Math.min(...rolls.map((t) => t.width));
+      const pick = (toward: (t: OrientedConnector) => number) => rolls.filter((t) => t.width <= narrow + 0.05).reduce((m, t) => (toward(t) < toward(m) - 0.05 || (Math.abs(toward(t) - toward(m)) <= 0.05 && t.height < m.height) ? t : m));
+      o = pick((t) => (n === 'top' ? -t.vMin : t.vMax));
+      back = pick((t) => (n === 'top' ? t.vMax : -t.vMin));
     }
+    const was = turned[n];
+    turned[n] = { o, name: mesh.name, outline: connectorOutline(o), back, backOutline: back && connectorOutline(back), useBack: was?.name === mesh.name ? was.useBack : false };
+    continue;
     turned[n] = { o, name: mesh.name, outline: connectorOutline(o) };
   }
 }
@@ -1695,6 +1707,7 @@ function previewCable(): SolvedCable | null {
       if ((r === null) !== (besideReach[n] === null) || (r !== null && Math.abs(r - besideReach[n]!) > 0.05)) { besideReach[n] = r; again = true; }
     }
     if (again) cableShown = solveCable(cableSpec(cable));
+    for (const n of ENDS) if (turned[n]) turned[n]!.useBack = !!(cable.wrap && cableShown.usedAlt?.[n]);
     const f = cableShown.footprint;
     const warn = cableShown.warnings.map((w) => w.text).join(' ');
     status.textContent = (warn ? `Check this: ${warn} ` : '') +
@@ -1716,7 +1729,7 @@ function drawCable(c: SolvedCable) {
     const t = cable[n].conn ? turned[n] : null;
     if (!t) return null;
     const { at, dir } = c.ends[n], [dx, dy] = dir;
-    return t.outline.map(([u, v]) => [at[0] + dx * u - dy * v, at[1] + dy * u + dx * v] as [number, number]);
+    return (t.useBack && t.backOutline ? t.backOutline : t.outline).map(([u, v]) => [at[0] + dx * u - dy * v, at[1] + dy * u + dx * v] as [number, number]);
   };
   const boxes = { top: box('top'), bottom: box('bottom') };
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
@@ -1864,7 +1877,7 @@ async function buildCableOnce() {
     if (solved.warnings.length) toast(`Cable added, but check it: ${solved.warnings.map((w) => w.text).join(' ')}`);
     const bodies: TriMesh[] = [tubeMesh(solved.path, c.d)];
     const used = ENDS.filter((n) => c[n].conn && turned[n]);
-    for (const n of used) bodies.push(placeConnector(turned[n]!.o, solved.ends[n], turned[n]!.name));
+    for (const n of used) bodies.push(placeConnector(turned[n]!.useBack && turned[n]!.back ? turned[n]!.back! : turned[n]!.o, solved.ends[n], turned[n]!.name));
     const name = `Cable ${fmtLen(c.d, units)} × ${fmtLen(c.len, units)} ${units}${used.length ? ` (${used.map((n) => turned[n]!.name).join(' + ')})` : ''}`;
     const replace = cablePartId !== null && parts.some((p) => p.partId === cablePartId) ? cablePartId : undefined;
     const hadTray = !!tray;
