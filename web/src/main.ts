@@ -146,6 +146,9 @@ addMenu.querySelector('label')!.addEventListener('click', () => setTimeout(() =>
 $('#add-cable').addEventListener('click', () => {
   showAddMenu(false);
   document.querySelector<HTMLButtonElement>('.tab[data-tab="parts"]')?.click();
+  // From here it is a new cable; an existing one is edited from its own row in the parts list.
+  cablePartId = null;
+  $('#cable-build').textContent = 'Add cable';
   const form = $('#cable') as HTMLDetailsElement;
   form.open = true;
   sheet.open('full'); // the form is long: give it the whole sheet
@@ -206,6 +209,8 @@ async function togglePicker(p: PartState) {
 
 /** Part whose finger-cutout picker is open. */
 let fingerOpen: number | null = null;
+/** The part whose list of bodies is open, if any. */
+let bodiesOpen: number | null = null;
 const SIDE_NAME: Record<Side, string> = { top: 'far long side', bottom: 'near long side', left: 'left end', right: 'right end' };
 const SVG = 'http://www.w3.org/2000/svg';
 
@@ -294,6 +299,84 @@ function fingerPicker(p: PartState): HTMLElement {
     ' Top-down view: tap + to add a cutout on that side, − to remove it. Size, depth and the swept shape are set on the Trays tab.';
   wrap.append(svg, row, hint);
   return wrap;
+}
+
+/**
+ * The bodies of a part that came from a file with several. The part is still one thing to the
+ * layout (one pocket, moved as one); here each body can be left out, turned or shifted.
+ */
+function bodiesPanel(p: PartState): HTMLElement {
+  const box = document.createElement('div');
+  box.className = 'bodies';
+  const note = document.createElement('p');
+  note.className = 'muted small';
+  note.textContent = 'These came in one file and stay together as one part. Each can be left out, given a quarter turn about its own middle, or moved.';
+  box.append(note);
+  p.bodies!.forEach((b, i) => {
+    const change = (c: Parameters<typeof geo.body>[2]) => update(p, geo.body(p.partId, i, c));
+    const card = document.createElement('div');
+    card.className = 'body';
+    const head = document.createElement('label');
+    head.className = 'check';
+    const on = document.createElement('input');
+    on.type = 'checkbox'; on.checked = b.on;
+    on.setAttribute('aria-label', `Include ${b.name}`);
+    on.onchange = () => change({ on: on.checked });
+    head.append(on, b.name);
+    card.append(head);
+    if (b.on) {
+      const turns = document.createElement('div');
+      turns.className = 'pose-row';
+      for (const [label, turn] of [['Turn X', 'x90'], ['Turn Y', 'y90'], ['Turn Z', 'z90']] as const) {
+        const t = document.createElement('button');
+        t.className = 'btn small-btn'; t.textContent = label;
+        t.setAttribute('aria-label', `${b.name}: quarter turn about ${label.slice(-1)}`);
+        t.onclick = () => change({ turn });
+        turns.append(t);
+      }
+      const reset = document.createElement('button');
+      reset.className = 'btn small-btn'; reset.textContent = 'Reset';
+      reset.onclick = () => change({ reset: true });
+      turns.append(reset);
+      const move = document.createElement('div');
+      move.className = 'body-move';
+      const boxes = (['X', 'Y', 'Z'] as const).map((axis, a) => {
+        const l = document.createElement('label');
+        const input = document.createElement('input');
+        input.className = 'num'; input.inputMode = 'text'; input.autocomplete = 'off';
+        input.value = fromMM(b.move[a]);
+        input.setAttribute('aria-label', `${b.name}: move along ${axis}, in ${units}`);
+        l.append(`${axis} `, input);
+        move.append(l);
+        return input;
+      });
+      for (const input of boxes) input.onchange = () => {
+        const v = boxes.map((x) => toMM(parseFloat(x.value.replace(',', '.').replace('−', '-'))));
+        if (!v.every(Number.isFinite)) { toast('Enter a number for each of X, Y and Z (0 for no move).'); return; }
+        change({ move: v as [number, number, number] });
+      };
+      const moveLabel = document.createElement('div');
+      moveLabel.className = 'muted small';
+      moveLabel.textContent = `Moved by (${units}), in the file's own directions:`;
+      card.append(turns, moveLabel, move);
+    }
+    box.append(card);
+  });
+  const split = document.createElement('button');
+  split.className = 'btn small-btn';
+  split.textContent = 'Split into separate parts';
+  split.onclick = async () => {
+    if (!confirm(`Make each body of "${p.mesh.name}" its own part? They will then be laid out separately.`)) return;
+    try {
+      bodiesOpen = null;
+      const hadTray = !!tray;
+      parts = await geo.split(p.partId);
+      refresh();
+      if (hadTray) generateTray();
+    } catch (e) { toast(e instanceof Error ? e.message : String(e)); }
+  };
+  box.append(split);
+  return box;
 }
 
 function renderList() {
@@ -408,6 +491,23 @@ function renderList() {
           grid.append(b);
         }
         li.append(grid);
+      }
+
+      if (p.bodies || p.cable) {
+        const row = document.createElement('div');
+        row.className = 'pose-row main-row';
+        const btn = (label: string, run: () => void) => { const b = document.createElement('button'); b.className = 'btn small-btn'; b.textContent = label; b.onclick = run; row.append(b); return b; };
+        if (p.bodies) {
+          const used = p.bodies.filter((b) => b.on).length;
+          btn(bodiesOpen === p.partId ? 'Close bodies' : `Bodies: ${used}${used < p.bodies.length ? ` of ${p.bodies.length}` : ''}`, () => { bodiesOpen = bodiesOpen === p.partId ? null : p.partId; if (sheet.snap === 'peek') sheet.open('half'); renderList(); })
+            .setAttribute('aria-expanded', String(bodiesOpen === p.partId));
+        }
+        if (p.cable) {
+          btn('Edit cable', () => editCable(p));
+          btn('Add to library', () => cableToLibrary(p));
+        }
+        li.append(row);
+        if (p.bodies && bodiesOpen === p.partId) li.append(bodiesPanel(p));
       }
 
       if (!p.solid) {
@@ -1372,21 +1472,30 @@ const besideReach: Record<Which, number | null> = { top: null, bottom: null };
  * stretch of the connector is beside the coil. Returns true if the J changed.
  */
 function fitJToConnector(n: Which): boolean {
-  const e = cable[n], t = e.conn ? turned[n] : null, shown = cableShown;
-  if (!t || !isJ(e) || !shown) return false;
-  const { at, dir } = shown.ends[n], half = shown.footprint.length / 2;
-  // The stretch of the connector, measured from the cable's end, that is alongside the coil.
-  const us = Math.abs(dir[0]) > 1e-6 ? [(-half - at[0]) / dir[0], (half - at[0]) / dir[0]].sort((a, b) => a - b) : [-Infinity, Infinity];
-  const from = Math.max(0, us[0]), to = Math.min(t.o.length, us[1]);
-  if (to <= from) return false; // it lies wholly past the end of the coil: nothing to clear
-  // Sideways is "up × the way it points"; the coil's middle is on one side of that.
-  const side = Math.sign(-at[0] * -dir[1] + -at[1] * dir[0]) || 1;
-  const reach = connectorReach(t.o, from, to, side);
+  const e = cable[n], shown = cableShown;
+  const reach = shown ? reachBeside(n, shown) : null;
+  if (reach === null) return false;
   besideReach[n] = reach;
   const width = Math.max(2 * cable.d + DEFAULT_CABLE.gap, reach + 1.5 * cable.d + cable.connGap), now = jSize(e);
   if (Math.abs(now.width - width) < 0.01) return false;
   setJ(n, width, Math.max(now.length, width / 2));
   return true;
+}
+/**
+ * For a J with a connector: how far the connector reaches toward the coil along the stretch of
+ * it that lies beside the coil. null when the end is not a J, has no connector, or the
+ * connector lies wholly past the end of the coil (then nothing needs clearing).
+ */
+function reachBeside(n: Which, shown: SolvedCable): number | null {
+  const e = cable[n], t = e.conn ? turned[n] : null;
+  if (!t || !isJ(e)) return null;
+  const { at, dir } = shown.ends[n], half = shown.footprint.length / 2;
+  const us = Math.abs(dir[0]) > 1e-6 ? [(-half - at[0]) / dir[0], (half - at[0]) / dir[0]].sort((a, b) => a - b) : [-Infinity, Infinity];
+  const from = Math.max(0, us[0]), to = Math.min(t.o.length, us[1]);
+  if (to <= from) return 0;
+  // Sideways is "up × the way it points"; the coil's middle is on one side of that.
+  const side = Math.sign(-at[0] * -dir[1] + -at[1] * dir[0]) || 1;
+  return connectorReach(t.o, from, to, side);
 }
 /** Run any pending J fitting and redraw. Says what it did. */
 function fitPendingJs() {
@@ -1486,6 +1595,14 @@ function previewCable(): SolvedCable | null {
   const status = $('#cable-status');
   try {
     cableShown = solveCable(cableSpec(cable));
+    // The overlap check for a J's connector uses how far it reaches beside the coil, which is
+    // only known once the cable is laid out: measure it and, if it changed, lay it out again.
+    let again = false;
+    for (const n of ENDS) {
+      const r = reachBeside(n, cableShown);
+      if ((r === null) !== (besideReach[n] === null) || (r !== null && Math.abs(r - besideReach[n]!) > 0.05)) { besideReach[n] = r; again = true; }
+    }
+    if (again) cableShown = solveCable(cableSpec(cable));
     const f = cableShown.footprint;
     const warn = cableShown.warnings.map((w) => w.text).join(' ');
     status.textContent = (warn ? `Check this: ${warn} ` : '') +
@@ -1585,6 +1702,41 @@ function dragCable(n: Which, part: 'junction' | 'tip', x: number, y: number) {
 
 const saveCable = () => { try { localStorage.setItem('cable3', JSON.stringify(cable)); } catch { /* private mode */ } };
 
+/** Load a cable part's settings back into the form, so changes there update that part. */
+async function editCable(p: PartState) {
+  const saved = p.cable as Partial<CableSettings> | undefined;
+  if (!saved || typeof saved !== 'object' || !saved.top || !saved.bottom) { toast('This cable was saved without its settings, so it cannot be edited. Make a new one from Add parts.'); return; }
+  cable = { ...cable, ...saved, top: { ...cable.top, ...saved.top }, bottom: { ...cable.bottom, ...saved.bottom } };
+  cablePartId = p.partId;
+  besideReach.top = besideReach.bottom = null;
+  fitJ.clear();
+  fillCable();
+  $('#cable-build').textContent = 'Update cable';
+  const form = $('#cable') as HTMLDetailsElement;
+  form.open = true;
+  sheet.open('full');
+  try { await turnConnectors(); } catch (e) { toast(e instanceof Error ? e.message : String(e)); }
+  fillCableEnd();
+  previewCable();
+  setTimeout(() => form.scrollIntoView({ block: 'start', behavior: 'smooth' }), 250);
+}
+
+/** Put a cable part in the library, with its settings inside the file so it stays editable when added back. */
+async function cableToLibrary(p: PartState) {
+  const name = libraryName(`${p.mesh.name}.3mf`);
+  const known = libraryItems?.find((x) => x.name === name);
+  if (known && !confirm(`"${name}" is already in the library. Replace it?`)) return;
+  try {
+    const file = write3MF([{ name: p.mesh.name, positions: p.mesh.positions }], p.mesh.name, { CutoutsCable: JSON.stringify(p.cable) }) as Uint8Array<ArrayBuffer>;
+    const folder = known ? known.folder : libraryFolder || undefined;
+    const res = await fetch(`/api/parts/${encodeURIComponent(name)}`, { method: 'PUT', body: file, headers: { 'content-type': 'application/octet-stream', ...(!known && folder ? { 'X-Part-Folder': encodeURIComponent(folder) } : {}) } });
+    if (!res.ok) throw new Error(res.headers.get('content-type')?.includes('json') ? (await res.json()).error ?? String(res.status) : String(res.status));
+    justUploaded.set(name, { name, size: file.byteLength, uploaded: new Date().toISOString(), until: Date.now() + 120_000, folder });
+    toast(`Added to the library${folder ? ` in ${folder}` : ''} as ${name}.`);
+    loadLibrary();
+  } catch (e) { toast(`Could not add it to the library: ${e instanceof Error ? e.message : e}`); }
+}
+
 /** One build at a time: a change made while one is running is picked up by a rerun, never a second cable. */
 let cableBusy = false, cableAgain = false;
 async function buildCable() {
@@ -1615,7 +1767,7 @@ async function buildCableOnce() {
     const name = `Cable ${fmtLen(c.d, units)} × ${fmtLen(c.len, units)} ${units}${used.length ? ` (${used.map((n) => turned[n]!.name).join(' + ')})` : ''}`;
     const replace = cablePartId !== null && parts.some((p) => p.partId === cablePartId) ? cablePartId : undefined;
     const hadTray = !!tray;
-    const part = await geo.cable(name, bodies, replace, (fr, label) => showProgress(fr, label));
+    const part = await geo.cable(name, bodies, replace, JSON.parse(JSON.stringify(c)), (fr, label) => showProgress(fr, label));
     parts = replace === undefined ? [...parts, part] : parts.map((p) => (p.partId === replace ? part : p));
     cablePartId = part.partId;
     hideProgress();

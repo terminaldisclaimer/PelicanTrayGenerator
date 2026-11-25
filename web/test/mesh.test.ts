@@ -95,3 +95,39 @@ describe('project file', () => {
     expect(cloudName('')).toBe('project');
   });
 });
+
+describe('notes and multi-body parts in saved files', () => {
+  it('a 3MF carries a named note, readable back, special characters and all', async () => {
+    const { write3MF, read3MFMetadata, parse3MF } = await import('../src/mesh/threemf');
+    const note = JSON.stringify({ d: 6, name: 'a "quoted" <cable> & co' });
+    const zip = write3MF([boxMesh(10, 10, 10, 'cable')], 'Cable', { CutoutsCable: note });
+    const buf = zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength) as ArrayBuffer;
+    expect(read3MFMetadata(buf, 'CutoutsCable')).toBe(note);
+    expect(read3MFMetadata(buf, 'Missing')).toBeNull();
+    expect(parse3MF(buf)).toHaveLength(1); // still an ordinary 3MF
+    expect(read3MFMetadata(new ArrayBuffer(8), 'CutoutsCable')).toBeNull();
+  });
+
+  it('a saved project keeps a multi-body part\'s bodies and a cable\'s settings', async () => {
+    const { encodeProject, decodeProject } = await import('../src/storage');
+    const a = boxMesh(10, 10, 10, 'a').positions, b = boxMesh(4, 4, 20, 'b').positions;
+    const both = new Float32Array([...a, ...b]);
+    const p = {
+      name: 'P', id: 'abc123456789', savedAt: '2026-11-25T10:00:00Z', settings: { length: 300 },
+      parts: [
+        { name: 'kit', positions: a, poseIndex: 0, locked: false, rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], fingers: 'auto' as const,
+          bodies: [{ name: 'a', on: true, rot: [1, 0, 0, 0, 1, 0, 0, 0, 1], move: [0, 0, 0] as [number, number, number], floats: a.length }, { name: 'b', on: false, rot: [0, -1, 0, 1, 0, 0, 0, 0, 1], move: [5, 0, -2] as [number, number, number], floats: b.length }],
+          bodyPositions: both },
+        { name: 'plain', positions: b, poseIndex: -1, locked: true, rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], fingers: ['top' as const], cable: { d: 6, top: { at: 4.5 } } },
+      ],
+    };
+    const back = decodeProject(encodeProject(p));
+    expect(back.id).toBe('abc123456789');
+    expect(back.parts[0].positions).toEqual(a);
+    expect(back.parts[0].bodyPositions).toEqual(both);
+    expect(back.parts[0].bodies).toEqual(p.parts[0].bodies);
+    expect(back.parts[1].positions).toEqual(b); // the part after it starts in the right place
+    expect(back.parts[1].bodyPositions).toBeUndefined();
+    expect(back.parts[1].cable).toEqual({ d: 6, top: { at: 4.5 } });
+  });
+});

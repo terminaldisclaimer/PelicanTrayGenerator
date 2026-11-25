@@ -135,12 +135,12 @@ function mul(p: number[], c: number[]): number[] {
  * its shell), each its own mesh so a slicer can give them different filaments.
  * Bodies are written where they are: nothing is moved or merged.
  */
-export function write3MF(bodies: TriMesh[], name = 'object'): Uint8Array {
+export function write3MF(bodies: TriMesh[], name = 'object', metadata: Record<string, string> = {}): Uint8Array {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const num = (v: number) => { const s = v.toFixed(4); return s.includes('.') ? s.replace(/\.?0+$/, '') || '0' : s; };
   const parts: string[] = [
     '<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n',
-    ` <metadata name="Title">${esc(name)}</metadata>\n <metadata name="Application">Cutouts</metadata>\n <resources>\n`,
+    ` <metadata name="Title">${esc(name)}</metadata>\n <metadata name="Application">Cutouts</metadata>\n${Object.entries(metadata).map(([k, v]) => ` <metadata name="${esc(k)}">${esc(v)}</metadata>\n`).join('')} <resources>\n`,
   ];
   bodies.forEach((b, bi) => {
     // Share vertices between triangles: 3MF meshes are indexed, and slicers need them joined to see a closed solid.
@@ -164,4 +164,16 @@ export function write3MF(bodies: TriMesh[], name = 'object'): Uint8Array {
     '_rels/.rels': strToU8('<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'),
     '3D/3dmodel.model': strToU8(parts.join('')),
   }, { level: 6 });
+}
+
+/** A named <metadata> value from a 3MF's main model file, or null (this app writes its own notes there). */
+export function read3MFMetadata(buf: ArrayBuffer, name: string): string | null {
+  try {
+    const files = unzipSync(new Uint8Array(buf), { filter: (f) => /\.model$/i.test(f.name) });
+    for (const data of Object.values(files)) {
+      const m = new RegExp(`<metadata\\s+name="${name}"[^>]*>([\\s\\S]*?)</metadata>`).exec(strFromU8(data));
+      if (m) return m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+    }
+  } catch { /* not a readable 3MF */ }
+  return null;
 }

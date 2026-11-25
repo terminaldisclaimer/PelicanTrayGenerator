@@ -60,8 +60,9 @@ export function encodeProject(p: Project): ArrayBuffer {
   const header = {
     format: 1, name: p.name, id: p.id, savedAt: p.savedAt, settings: p.settings, layout: p.layout,
     parts: p.parts.map((part) => {
-      const entry = { ...part, positions: undefined, offset, floats: part.positions.length };
-      offset += part.positions.byteLength;
+      // A multi-body part also carries its bodies' own meshes, straight after its own.
+      const entry = { ...part, positions: undefined, bodyPositions: undefined, offset, floats: part.positions.length, bodyFloats: part.bodyPositions?.length ?? 0 };
+      offset += part.positions.byteLength + (part.bodyPositions?.byteLength ?? 0);
       return entry;
     }),
   };
@@ -73,8 +74,11 @@ export function encodeProject(p: Project): ArrayBuffer {
   out.set(head, 8);
   let at = 8 + head.length + pad;
   for (const part of p.parts) {
-    out.set(new Uint8Array(part.positions.buffer, part.positions.byteOffset, part.positions.byteLength), at);
-    at += part.positions.byteLength;
+    for (const arr of [part.positions, part.bodyPositions]) {
+      if (!arr) continue;
+      out.set(new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength), at);
+      at += arr.byteLength;
+    }
   }
   return out.buffer;
 }
@@ -87,9 +91,10 @@ export function decodeProject(buf: ArrayBuffer): Project {
   const base = 8 + headLen + ((4 - ((8 + headLen) % 4)) % 4);
   return {
     name: header.name, id: header.id, savedAt: header.savedAt, settings: header.settings, layout: header.layout,
-    parts: header.parts.map((e: SavedPart & { offset: number; floats: number }) => {
-      const { offset, floats, ...rest } = e;
-      return { ...rest, positions: new Float32Array(buf.slice(base + offset, base + offset + floats * 4)) };
+    parts: header.parts.map((e: SavedPart & { offset: number; floats: number; bodyFloats?: number }) => {
+      const { offset, floats, bodyFloats, ...rest } = e;
+      const start = base + offset, mid = start + floats * 4;
+      return { ...rest, positions: new Float32Array(buf.slice(start, mid)), ...(bodyFloats ? { bodyPositions: new Float32Array(buf.slice(mid, mid + bodyFloats * 4)) } : {}) };
     }),
   };
 }

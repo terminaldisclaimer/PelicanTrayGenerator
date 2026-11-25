@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import wasmUrl from 'manifold-3d/manifold.wasm?url';
 import { parseSTL } from '../mesh/stl';
-import { parse3MF } from '../mesh/threemf';
+import { parse3MF, read3MFMetadata } from '../mesh/threemf';
 import { looksLikeInches, meshBounds, scaleMesh, LARGE_MESH_TRIANGLES, MAX_MESH_TRIANGLES } from '../mesh/bounds';
 import type { TriMesh } from '../mesh/types';
 import { initKernel } from '../geom/kernel';
@@ -16,7 +16,9 @@ const post = (msg: WorkerResponse, transfer: Transferable[] = []) =>
   (self as unknown as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
 
 /** Originals stay in the worker so re-posing never re-sends the mesh. */
-interface Stored { original: TriMesh; candidates: PoseCandidate[]; rotation: Mat3; poseIndex: number; locked: boolean; fingers: Side[] | 'auto'; stackable: boolean; stackGap: number | null; inchesChecked: boolean }
+/** One body of a multi-body part: its mesh as it was in the file, and what has been done to it since. */
+interface Body { name: string; positions: Float32Array; on: boolean; rot: Mat3; move: [number, number, number] }
+interface Stored { bodies?: Body[]; cable?: unknown; original: TriMesh; candidates: PoseCandidate[]; rotation: Mat3; poseIndex: number; locked: boolean; fingers: Side[] | 'auto'; stackable: boolean; stackGap: number | null; inchesChecked: boolean }
 const parts = new Map<number, Stored>();
 let nextPartId = 1;
 
@@ -31,9 +33,39 @@ async function describe(partId: number, candidate?: number): Promise<ParsedPart>
     partId, ...posed, triangles,
     poseIndex: candidate ?? s.poseIndex, poseCount: s.candidates.length, poseLocked: s.locked,
     fingers: s.fingers === 'auto' ? autoFingers(posed.height) : s.fingers, fingerAuto: s.fingers === 'auto', stackable: s.stackable, stackGap: s.stackGap,
+    bodies: s.bodies?.map((b) => ({ name: b.name, on: b.on, rot: [...b.rot], move: [...b.move] as [number, number, number] })), cable: s.cable,
     suggestInches: !s.inchesChecked && looksLikeInches(meshBounds(s.original)),
     large: triangles > LARGE_MESH_TRIANGLES,
   };
+}
+
+/** The bodies of a part put together: each turned about its own middle and moved, those switched off left out. */
+function compose(bodies: Body[]): Float32Array {
+  const used = bodies.filter((b) => b.on);
+  const out = new Float32Array(used.reduce((n, b) => n + b.positions.length, 0));
+  let at = 0;
+  for (const b of used) {
+    const p = b.positions, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < p.length; i++) { const a = i % 3; if (p[i] < lo[a]) lo[a] = p[i]; if (p[i] > hi[a]) hi[a] = p[i]; }
+    const c = [0, 1, 2].map((a) => (lo[a] + hi[a]) / 2), r = b.rot;
+    for (let i = 0; i < p.length; i += 3) {
+      const x = p[i] - c[0], y = p[i + 1] - c[1], z = p[i + 2] - c[2];
+      out[at++] = r[0] * x + r[1] * y + r[2] * z + c[0] + b.move[0];
+      out[at++] = r[3] * x + r[4] * y + r[5] * z + c[1] + b.move[1];
+      out[at++] = r[6] * x + r[7] * y + r[8] * z + c[2] + b.move[2];
+    }
+  }
+  return out;
+}
+
+/** After a body changes: rebuild the part's mesh. A locked pose is kept; otherwise it lies however suits the new shape. */
+async function recompose(s: Stored) {
+  const k = await initKernel(wasmUrl);
+  s.original = { name: s.original.name, positions: compose(s.bodies!) };
+  if (s.original.positions.length === 0) throw new Error('A part needs at least one of its bodies switched on.');
+  s.candidates = poseCandidates(k, s.original);
+  if (s.locked) s.poseIndex = -1;
+  else { s.poseIndex = 0; s.rotation = s.candidates[0].rotation; }
 }
 
 async function add(mesh: TriMesh): Promise<number> {
@@ -194,12 +226,28 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       post({ id: req.id, type: 'progress', fraction: 0.1, label: `Reading ${req.fileName}` });
       const base = req.fileName.replace(/\.(stl|3mf)$/i, '');
       const meshes: TriMesh[] = req.kind === 'stl' ? [parseSTL(req.data, base)] : parse3MF(req.data, base);
-      // Name parts after the file; add the body name only when a file has several.
-      meshes.forEach((m, i) => (m.name = meshes.length === 1 ? base : `${base} · ${m.name === base ? i + 1 : m.name}`));
       const out: ParsedPart[] = [];
-      for (let i = 0; i < meshes.length; i++) {
-        post({ id: req.id, type: 'progress', fraction: 0.3 + (0.7 * i) / meshes.length, label: `Finding resting pose: ${meshes[i].name}` });
-        out.push(await describe(await add(meshes[i])));
+      const cableNote = req.kind === '3mf' ? read3MFMetadata(req.data, 'CutoutsCable') : null;
+      post({ id: req.id, type: 'progress', fraction: 0.4, label: `Finding resting pose: ${base}` });
+      if (meshes.length === 1 || cableNote) {
+        // One body, or a coiled cable saved from this app (cable and connectors, kept as they were built).
+        const positions = meshes.length === 1 ? meshes[0].positions : compose(meshes.map((m) => ({ name: m.name, positions: m.positions, on: true, rot: IDENTITY, move: [0, 0, 0] })));
+        const id = await add({ name: base, positions });
+        if (cableNote) {
+          const s = parts.get(id)!;
+          try { s.cable = JSON.parse(cableNote); } catch { /* an unreadable note: it is still a part */ }
+          s.rotation = IDENTITY; s.poseIndex = -1; s.locked = true; s.inchesChecked = true;
+        }
+        out.push(await describe(id));
+      } else {
+        // Several bodies: one part, put together the way the file has them. Each body can be changed later.
+        const bodies: Body[] = meshes.map((m, i) => ({ name: m.name === base ? `Body ${i + 1}` : m.name, positions: m.positions, on: true, rot: IDENTITY, move: [0, 0, 0] }));
+        const id = await add({ name: base, positions: compose(bodies) });
+        const s = parts.get(id)!;
+        s.bodies = bodies;
+        // It starts the way up the file has it, since the bodies were arranged that way on purpose (untick Lock pose to let it be turned).
+        s.rotation = IDENTITY; s.poseIndex = -1; s.locked = true;
+        out.push(await describe(id));
       }
       reply(req.id, out);
     } else if (req.type === 'pose') {
@@ -250,18 +298,49 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const s = parts.get(id)!;
       // A coil only makes sense lying flat, the way it was built.
       s.rotation = IDENTITY; s.poseIndex = -1; s.locked = true; s.inchesChecked = true;
+      s.cable = req.settings;
       if (old) { s.fingers = old.fingers; s.stackable = old.stackable; s.stackGap = old.stackGap; parts.delete(req.replace!); }
       reply(req.id, [await describe(id)]);
+    } else if (req.type === 'body') {
+      const s = parts.get(req.partId), b = s?.bodies?.[req.index];
+      if (!s || !b) throw new Error('Unknown part or body');
+      const before = { on: b.on, rot: b.rot, move: b.move };
+      if (req.reset) { b.on = true; b.rot = IDENTITY; b.move = [0, 0, 0]; }
+      if (req.on !== undefined) b.on = req.on;
+      if (req.turn) b.rot = mul(DELTA[req.turn], b.rot);
+      if (req.move) b.move = req.move;
+      try { await recompose(s); } catch (e) { Object.assign(b, before); await recompose(s); throw e; }
+      reply(req.id, [await describe(req.partId)]);
+    } else if (req.type === 'split') {
+      const s = parts.get(req.partId);
+      if (!s?.bodies) throw new Error('This part is a single body.');
+      const made: number[] = [];
+      for (const b of s.bodies.filter((x) => x.on)) made.push(await add({ name: `${s.original.name} · ${b.name}`, positions: compose([b]) }));
+      parts.delete(req.partId);
+      const out: ParsedPart[] = [];
+      for (const id of parts.keys()) out.push(await describe(id));
+      reply(req.id, out);
     } else if (req.type === 'scale') {
       const s = parts.get(req.partId);
       if (!s) throw new Error('Unknown part');
-      if (req.factor !== 1) s.original = scaleMesh(s.original, req.factor);
+      if (req.factor !== 1) {
+        s.original = scaleMesh(s.original, req.factor);
+        // The bodies are scaled too (about the origin, like the whole), and how far each was moved with them.
+        for (const b of s.bodies ?? []) { b.positions = b.positions.map((v) => v * req.factor); b.move = b.move.map((v) => v * req.factor) as [number, number, number]; }
+      }
       s.inchesChecked = true;
       reply(req.id, [await describe(req.partId)]);
     } else if (req.type === 'export') {
       // Copies (not transfers): the worker keeps its meshes.
       const out = [...parts.values()].map((s) => ({
         name: s.original.name, positions: s.original.positions, poseIndex: s.poseIndex, locked: s.locked, rotation: [...s.rotation], fingers: s.fingers, stackable: s.stackable, stackGap: s.stackGap,
+        cable: s.cable,
+        ...(s.bodies ? (() => {
+          const all = new Float32Array(s.bodies.reduce((n, b) => n + b.positions.length, 0));
+          let at = 0;
+          for (const b of s.bodies) { all.set(b.positions, at); at += b.positions.length; }
+          return { bodies: s.bodies.map((b) => ({ name: b.name, on: b.on, rot: [...b.rot], move: b.move, floats: b.positions.length })), bodyPositions: all };
+        })() : {}),
       }));
       post({ id: req.id, type: 'saved', parts: out });
     } else if (req.type === 'restore') {
@@ -276,6 +355,15 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         s.fingers = sp.fingers;
         s.stackable = sp.stackable !== false;
         s.stackGap = sp.stackGap ?? null;
+        s.cable = sp.cable;
+        if (sp.bodies && sp.bodyPositions) {
+          let at = 0;
+          s.bodies = sp.bodies.map((b) => {
+            const positions = sp.bodyPositions!.slice(at, at + b.floats);
+            at += b.floats;
+            return { name: b.name, positions, on: b.on, rot: (b.rot.length === 9 ? b.rot : IDENTITY) as Mat3, move: b.move };
+          });
+        }
         s.locked = sp.locked;
         if (sp.poseIndex >= 0 && sp.poseIndex < s.candidates.length) { s.poseIndex = sp.poseIndex; s.rotation = s.candidates[sp.poseIndex].rotation; }
         else if (sp.rotation.length === 9) { s.poseIndex = -1; s.rotation = sp.rotation as Mat3; }

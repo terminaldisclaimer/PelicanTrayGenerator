@@ -9,7 +9,11 @@ export type PoseAction = 'next' | 'x90' | 'y90' | 'z90' | 'flip';
 export type WorkerRequest =
   | { id: number; type: 'parse'; fileName: string; kind: FileKind; data: ArrayBuffer }
   /** Add a part made of several bodies joined into one (a coiled cable and its connectors), lying as built. `replace` swaps it for an earlier one. */
-  | { id: number; type: 'cable'; name: string; bodies: TriMesh[]; replace?: number }
+  | { id: number; type: 'cable'; name: string; bodies: TriMesh[]; replace?: number; /** The form's settings, kept with the part so it can be edited again. */ settings?: unknown }
+  /** Change one body of a part made of several: leave it out or put it back, give it a quarter turn, move it, or undo all that. */
+  | { id: number; type: 'body'; partId: number; index: number; on?: boolean; turn?: 'x90' | 'y90' | 'z90'; move?: [number, number, number]; reset?: boolean }
+  /** Break a part made of several bodies into one part per body. Answers with every part now loaded. */
+  | { id: number; type: 'split'; partId: number }
   | { id: number; type: 'pose'; partId: number; action: PoseAction }
   /** All automatic poses of one part, for the picker. */
   | { id: number; type: 'poses'; partId: number }
@@ -60,6 +64,10 @@ export interface ParsedPart {
   stackable: boolean;
   /** This part's own stacking gap in mm, or null when it uses the tray's setting. */
   stackGap: number | null;
+  /** Set when the part is made of several bodies that can be changed one by one. */
+  bodies?: BodyState[];
+  /** Set when the part is a coiled cable: the settings it was made from. */
+  cable?: unknown;
   suggestInches: boolean;
   large: boolean;
 }
@@ -74,9 +82,17 @@ export interface TrayInfo {
 }
 
 /** A part as stored in a saved project: its mesh in mm plus the user's choices. */
+/** One body of a part that came from a file with several: how it has been changed since. */
+export interface BodyState { name: string; on: boolean; /** Quarter turns applied, as a row-major 3×3 matrix. */ rot: number[]; move: [number, number, number] }
+
 export interface SavedPart {
   name: string;
   positions: Float32Array;
+  /** For a part made of several bodies: each body's state, how many numbers of `bodyPositions` are its, and all the bodies' meshes as they were in the file, end to end. */
+  bodies?: (BodyState & { floats: number })[];
+  bodyPositions?: Float32Array;
+  /** For a coiled cable: the form's settings it was made from. */
+  cable?: unknown;
   /** Index into the automatic pose list, and whether the user chose it. */
   poseIndex: number;
   locked: boolean;

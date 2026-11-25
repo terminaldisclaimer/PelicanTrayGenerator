@@ -339,12 +339,33 @@ It follows the owner's Fusion 360 "SnakedWire" script.
 - The result is one ordinary part (cable and connectors joined), lying flat
   with its pose locked, so pockets, finger holes, layout and saving work as
   for any part. The pocket is a channel around an island of tray.
-- Changing the form and pressing "Update cable" replaces that part. After a
-  reload the cable is a plain part: the form keeps its last values, and
-  pressing the button adds a new cable.
 - **Not built:** a check that the two connectors do not run into each other
   or into the other end's lead; turning a connector by dragging (Turn and
-  Roll are buttons); flat or oval cables; more than one editable cable at a time.
+  Roll are buttons); flat or oval cables.
+
+### 3.9a Parts made of several bodies
+- A 3MF that holds several bodies comes in as **one part**, with the bodies
+  where the file has them and the way up the file has them (pose locked;
+  untick "Lock pose" to let the layout turn it). It gets one pocket and is
+  laid out as one thing.
+- The part's row has a "Bodies" button. It lists the bodies; each can be
+  left out or put back, given quarter turns about X, Y or Z (about its own
+  middle), moved by typed X/Y/Z distances in the file's directions, or
+  reset. At least one body must stay in.
+- "Split into separate parts" makes each body its own part (the old
+  behaviour).
+- The bodies and what was done to them are saved with the project, so they
+  can still be changed after reopening it.
+
+### 3.9b Cables as parts
+- A coiled cable keeps the settings it was made from, in the part and in the
+  saved project. Its row has "Edit cable", which loads them back into the
+  cable form; changes there update that cable. Any number of cables can be
+  in a project; "Add parts → Add a coiled cable" always starts a new one.
+- "Add to library" on a cable's row uploads it as a 3MF with its settings
+  written inside the file. Added back from the library it is a cable again,
+  with "Edit cable". (Its connectors are looked up in the library by name
+  when it is edited, so they need to still be there.)
 
 ### 3.10 Projects: owner, versions, rename
 - **Owner.** Cloud copies of projects belong to the signed-in user: the
