@@ -445,7 +445,7 @@ export function solveCable(s: CableSpec): SolvedCable {
           lo = lMin; hi = s.outerL;
           if ((build(lo, n)?.total ?? Infinity) > s.totalLen) return null;
         }
-        for (let i = 0; i < 60; i++) { const mid = 0.5 * (lo + hi); if ((build(mid, n)?.total ?? Infinity) < s.totalLen) lo = mid; else hi = mid; }
+        for (let i = 0; i < 34; i++) { const mid = 0.5 * (lo + hi); if ((build(mid, n)?.total ?? Infinity) < s.totalLen) lo = mid; else hi = mid; } // to well under a micron
         return build(hi, n);
       } catch (e) { if (e instanceof CableError) { firstError ??= e; return null; } throw e; }
     };

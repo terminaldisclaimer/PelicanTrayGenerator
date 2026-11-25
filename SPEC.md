@@ -396,6 +396,22 @@ It follows the owner's Fusion 360 "SnakedWire" script.
   cable when the tray's lift-out grips are off; ends that follow the coil
   round a corner.
 
+### 3.9d Finding the smallest coil
+- "Find the smallest coil" in the cable form (when the size is set by hand).
+  It tries coil sizes from the smallest upward (width in 6 mm steps, length
+  in 8 mm steps, up to the tray) and, for each, every pairing of end styles
+  (into the middle, in line, J) at the same or opposite ends of the coil.
+- A candidate counts only if nothing clashes and the coil is no taller than
+  the tray already has to be: the tallest other part or connector, within
+  the tray depth or case height. So the coil is as tall and as small in plan
+  as the tray's depth allows.
+- The winner is the one whose bounding box (coil, ends and connectors, seen
+  from above) has the least area. Its size and ends are put in the form.
+- It takes some seconds (about 18 s for the owner's 1151 mm cable with two
+  connectors) and shows progress.
+- **Not built:** judging candidates by generating the whole tray; comparing
+  this against the cable round the tray edge automatically.
+
 ### 3.10 Projects: owner, versions, rename
 - **Owner.** Cloud copies of projects belong to the signed-in user: the
   email Cloudflare Access passes to the Worker with each request. Each user

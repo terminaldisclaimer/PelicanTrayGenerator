@@ -1527,6 +1527,7 @@ function fillCable() {
   $('#cable-presets').hidden = cable.wrap;
   (document.querySelector('[data-cmir]')!.closest('.row') as HTMLElement).hidden = cable.wrap;
   $('#cable-roll').hidden = cable.wrap;
+  $('#cable-best').hidden = $('#cable-best-note').hidden = cable.wrap;
   document.querySelectorAll<HTMLButtonElement>('[data-cmir]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.cmir === '1') === cable.mirror)));
   fillCableEnd();
   document.querySelectorAll('#cable .u').forEach((e) => (e.textContent = units));
@@ -1915,6 +1916,87 @@ document.querySelectorAll<HTMLButtonElement>('[data-cwrap]').forEach((b) => b.ad
   fillCable();
   cableChanged();
 }));
+
+/**
+ * How tall a coil may be without making the tray any deeper: as tall as the tallest thing already
+ * going in it (another part, or one of this cable's connectors), within the case's limit.
+ */
+function coilHeightLimit(): number {
+  const typed = readTrayInputs(), t = typeof typed === 'string' ? traySettings : typed;
+  const limit = Math.min(t.depth ?? Infinity, t.height === null ? Infinity : t.height - (t.shell ? shellExtraHeight(shellOptions(t)) : 0)) - t.floor;
+  const tallest = Math.max(0, ...parts.filter((p) => p.partId !== cablePartId).map((p) => p.height), ...ENDS.map((n) => (cable[n].conn && turned[n] ? turned[n]!.o.height : 0)));
+  // With nothing else to go by, a few turns' worth.
+  return Math.min(limit, tallest > 0 ? tallest : 4 * (cable.d + DEFAULT_CABLE.gap) + cable.d);
+}
+
+/**
+ * Search coil sizes and ways of laying the two ends for the cable that takes the least floor:
+ * the smallest box round the whole thing (coil, ends and connectors) that is no taller than
+ * `coilHeightLimit`. A short, tall coil with its connectors tucked in its own hollow usually wins.
+ */
+async function findSmallestCoil() {
+  const wrong = readCable();
+  const status = $('#cable-status');
+  if (wrong) { status.textContent = wrong; toast(wrong); return; }
+  try { await turnConnectors(); } catch (e) { toast(e instanceof Error ? e.message : String(e)); return; }
+  const c = cable, d = c.d, tray = trayInsideNow(), hMax = coilHeightLimit(), pitch = d + DEFAULT_CABLE.gap;
+  const base = (l: number, w: number) => ({ wireD: d, outerL: l, outerW: w, cornerR: Math.max(d / 2 + 0.5, Math.min(c.r, (w - d) / 2)), gap: DEFAULT_CABLE.gap });
+  const conn = (n: Which) => { const o = c[n].conn ? turned[n]?.o : undefined; return o ? { height: o.height, width: o.width, length: o.length, up: o.up, down: o.down, vMin: o.vMin, vMax: o.vMax } : null; };
+  const kinds: LeadPreset[] = ['middle', 'inline', 'j'];
+  let best: { area: number; l: number; w: number; top: LeadSpec; bottom: LeadSpec; solved: SolvedCable } | null = null, tried = 0;
+  const widths: number[] = [], lengths: number[] = [];
+  for (let w = Math.ceil(Math.max(3 * d, 2 * (d / 2 + 0.5) + d) / 2) * 2; w <= Math.min(tray.y - 2 * traySettings.edge, 140); w += 6) widths.push(w);
+  for (let l = widths[0] ?? 3 * d; l <= tray.x - 2 * traySettings.edge; l += 8) lengths.push(l);
+  showProgress(0.02, 'Looking for the smallest coil');
+  let step = 0;
+  // Smallest coils first, so that once a whole cable is found no bigger coil need be tried.
+  const cells = widths.flatMap((w) => lengths.filter((l) => l >= w).map((l) => ({ l, w }))).sort((p, q) => p.l * p.w - q.l * q.w);
+  {
+    for (const { l, w } of cells) {
+      if (best && l * w >= best.area) break; // this coil alone, and every one after it, is bigger than the best whole cable
+      // A coil this small needs more turns than the tray is deep.
+      const b = base(l, w), perim = 2 * (l - d - 2 * b.cornerR) + 2 * (w - d - 2 * b.cornerR) + 2 * Math.PI * b.cornerR;
+      if ((c.len / perim) * pitch + d > hMax + pitch) continue;
+      for (const kt of kinds) for (const kb of kinds) for (const [et, eb] of [['left', 'right'], ['left', 'left']] as const) {
+        const lead = (n: Which, kind: LeadPreset, end: 'left' | 'right'): LeadSpec => {
+          const k = conn(n), jw = Math.max(2 * d + DEFAULT_CABLE.gap, (k ? k.width / 2 : 0) + 1.5 * d + c.connGap);
+          return { ...presetLead(kind, n === 'top', end, b, kind === 'middle' ? 5 : Math.max(6, d), { width: jw, length: jw / 2 + Math.max(6, d) }), connector: k };
+        };
+        const top = lead('top', kt, et), bottom = lead('bottom', kb, eb);
+        tried++;
+        let solved: SolvedCable;
+        try { solved = solveCable({ ...b, totalLen: c.len, fit: 'nearest', climbR: Math.max(8, 1.3 * d), mirror: false, top, bottom }); } catch { continue; }
+        if (solved.warnings.length || solved.footprint.height > hMax + 0.05) continue;
+        // The box round everything, seen from above.
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+        const grow = (x: number, y: number, r: number) => { x0 = Math.min(x0, x - r); x1 = Math.max(x1, x + r); y0 = Math.min(y0, y - r); y1 = Math.max(y1, y + r); };
+        for (const p of solved.path) grow(p[0], p[1], d / 2);
+        for (const n of ENDS) {
+          const k = n === 'top' ? top.connector : bottom.connector;
+          if (!k) continue;
+          const { at, dir } = solved.ends[n];
+          for (const [u, v] of [[0, k.vMin!], [0, k.vMax!], [k.length, k.vMin!], [k.length, k.vMax!]]) grow(at[0] + dir[0] * u - dir[1] * v, at[1] + dir[1] * u + dir[0] * v, 0);
+        }
+        if (x1 - x0 > tray.x - 2 * traySettings.edge || y1 - y0 > tray.y - 2 * traySettings.edge) continue;
+        const area = (x1 - x0) * (y1 - y0);
+        if (!best || area < best.area - 1) best = { area, l, w, top, bottom, solved };
+      }
+      // Let the screen breathe now and then.
+      if (++step % 4 === 0) { showProgress(Math.min(0.95, step / cells.length), `Looking for the smallest coil (${tried} tried)`); await new Promise((r) => setTimeout(r)); }
+    }
+  }
+  hideProgress();
+  if (!best) { const msg = `No coil of this cable fits a tray ${fmtLen(hMax, units)} ${units} deep. Deepen the tray, or use a shorter or thinner cable.`; status.textContent = msg; toast(msg); return; }
+  const keep = (n: Which, l: LeadSpec): LeadSettings => ({ ...c[n], at: l.at, stem: l.stem, angle: l.angle, radius: l.radius, length: l.length });
+  cable = { ...c, wrap: false, mirror: false, l: best.l, w: best.w, top: keep('top', best.top), bottom: keep('bottom', best.bottom) };
+  besideReach.top = besideReach.bottom = null;
+  fitJ.clear();
+  fillCable();
+  await cableChanged();
+  const f = best.solved.footprint;
+  toast(`Smallest found (of ${tried} tried): ${(best.area / 100).toFixed(0)} cm² of floor, coil ${fmtDims([f.length, f.width, f.height], units)}, no taller than the ${fmtLen(hMax, units)} ${units} the tray already needs.`);
+}
+$('#cable-best').addEventListener('click', findSmallestCoil);
 
 /** True while wrapped cables are being re-sized for a tray that is about to be generated. */
 let refreshingWrap = false;
