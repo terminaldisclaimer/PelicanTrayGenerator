@@ -1940,12 +1940,22 @@ async function findSmallestCoil() {
   if (wrong) { status.textContent = wrong; toast(wrong); return; }
   try { await turnConnectors(); } catch (e) { toast(e instanceof Error ? e.message : String(e)); return; }
   const c = cable, d = c.d, tray = trayInsideNow(), hMax = coilHeightLimit(), pitch = d + DEFAULT_CABLE.gap;
-  const base = (l: number, w: number) => ({ wireD: d, outerL: l, outerW: w, cornerR: Math.max(d / 2 + 0.5, Math.min(c.r, (w - d) / 2)), gap: DEFAULT_CABLE.gap });
-  const conn = (n: Which) => { const o = c[n].conn ? turned[n]?.o : undefined; return o ? { height: o.height, width: o.width, length: o.length, up: o.up, down: o.down, vMin: o.vMin, vMax: o.vMax } : null; };
+  // The corner radius set in the form is how tightly this cable may be bent: no coil is tried that needs it tighter.
+  const base = (l: number, w: number) => ({ wireD: d, outerL: l, outerW: w, cornerR: c.r, gap: DEFAULT_CABLE.gap });
+  // Each connector as it is turned now, and given a half roll: a lopsided one beside the coil wants its slim side to the cable.
+  const rolled = (n: Which): OrientedConnector[] => {
+    const e = c[n], mesh = e.conn ? connectorMeshes.get(e.conn) : undefined;
+    if (!mesh) return [];
+    const axis = e.axis ?? defaultConnectorAxis(mesh);
+    return [orientConnector(mesh, axis, e.roll), orientConnector(mesh, axis, e.roll + 2)];
+  };
+  const turns = { top: rolled('top'), bottom: rolled('bottom') };
+  const describe = (o: OrientedConnector) => ({ height: o.height, width: o.width, length: o.length, up: o.up, down: o.down, vMin: o.vMin, vMax: o.vMax, profile: connectorProfile(o) });
+  const conns = { top: turns.top.map(describe), bottom: turns.bottom.map(describe) };
   const kinds: LeadPreset[] = ['middle', 'inline', 'j'];
-  let best: { area: number; l: number; w: number; top: LeadSpec; bottom: LeadSpec; solved: SolvedCable } | null = null, tried = 0;
+  let best: { area: number; l: number; w: number; top: LeadSpec; bottom: LeadSpec; solved: SolvedCable; half: { top: number; bottom: number } } | null = null, tried = 0;
   const widths: number[] = [], lengths: number[] = [];
-  for (let w = Math.ceil(Math.max(3 * d, 2 * (d / 2 + 0.5) + d) / 2) * 2; w <= Math.min(tray.y - 2 * traySettings.edge, 140); w += 6) widths.push(w);
+  for (let w = Math.ceil(Math.max(3 * d, 2 * c.r + d) / 2) * 2; w <= Math.min(tray.y - 2 * traySettings.edge, 140); w += 6) widths.push(w);
   for (let l = widths[0] ?? 3 * d; l <= tray.x - 2 * traySettings.edge; l += 8) lengths.push(l);
   showProgress(0.02, 'Looking for the smallest coil');
   let step = 0;
@@ -1957,12 +1967,16 @@ async function findSmallestCoil() {
       // A coil this small needs more turns than the tray is deep.
       const b = base(l, w), perim = 2 * (l - d - 2 * b.cornerR) + 2 * (w - d - 2 * b.cornerR) + 2 * Math.PI * b.cornerR;
       if ((c.len / perim) * pitch + d > hMax + pitch) continue;
-      for (const kt of kinds) for (const kb of kinds) for (const [et, eb] of [['left', 'right'], ['left', 'left']] as const) {
-        const lead = (n: Which, kind: LeadPreset, end: 'left' | 'right'): LeadSpec => {
-          const k = conn(n), jw = Math.max(2 * d + DEFAULT_CABLE.gap, (k ? k.width / 2 : 0) + 1.5 * d + c.connGap);
-          return { ...presetLead(kind, n === 'top', end, b, kind === 'middle' ? 5 : Math.max(6, d), { width: jw, length: jw / 2 + Math.max(6, d) }), connector: k };
+      // Each end's ways of going: into the middle, in line, or a J (a J with either side of its connector to the coil).
+      const ways = (n: Which) => kinds.flatMap((kind) => (kind === 'j' && conns[n].length ? [0, 1] : [0]).map((half) => ({ kind, half })));
+      for (const wt of ways('top')) for (const wb of ways('bottom')) for (const [et, eb] of [['left', 'right'], ['left', 'left']] as const) {
+        const lead = (n: Which, way: { kind: LeadPreset; half: number }, end: 'left' | 'right'): LeadSpec => {
+          const k = conns[n][way.half] ?? null;
+          // A J just wide enough for the slimmer side of its connector to clear the coil.
+          const jw = Math.max(2 * d + DEFAULT_CABLE.gap, (k ? Math.min(-k.vMin, k.vMax) : 0) + 1.5 * d + c.connGap);
+          return { ...presetLead(way.kind, n === 'top', end, b, way.kind === 'middle' ? 5 : Math.max(6, d), { width: jw, length: jw / 2 + Math.max(6, d) }), connector: k };
         };
-        const top = lead('top', kt, et), bottom = lead('bottom', kb, eb);
+        const top = lead('top', wt, et), bottom = lead('bottom', wb, eb);
         tried++;
         let solved: SolvedCable;
         try { solved = solveCable({ ...b, totalLen: c.len, fit: 'nearest', climbR: Math.max(8, 1.3 * d), mirror: false, top, bottom }); } catch { continue; }
@@ -1978,8 +1992,32 @@ async function findSmallestCoil() {
           for (const [u, v] of [[0, k.vMin!], [0, k.vMax!], [k.length, k.vMin!], [k.length, k.vMax!]]) grow(at[0] + dir[0] * u - dir[1] * v, at[1] + dir[1] * u + dir[0] * v, 0);
         }
         if (x1 - x0 > tray.x - 2 * traySettings.edge || y1 - y0 > tray.y - 2 * traySettings.edge) continue;
-        const area = (x1 - x0) * (y1 - y0);
-        if (!best || area < best.area - 1) best = { area, l, w, top, bottom, solved };
+        // The floor it really covers: the coil (its hollow too, which nothing else can use), the ends, and each
+        // connector's own outline, all with the pocket's clearance and half a wall round them. Counted on a
+        // 2 mm grid. A thin stem beside the coil then costs little, where a box round it would cost a lot.
+        const cell = 2, room = 3.5, gx0 = x0 - room, gy0 = y0 - room, nx = Math.ceil((x1 - x0 + 2 * room) / cell) + 1, ny = Math.ceil((y1 - y0 + 2 * room) / cell) + 1;
+        const used = new Uint8Array(nx * ny);
+        const fill = (ax: number, ay: number, bx: number, by: number) => {
+          const i0 = Math.max(0, Math.floor((ax - gx0) / cell)), i1 = Math.min(nx - 1, Math.floor((bx - gx0) / cell)), j0 = Math.max(0, Math.floor((ay - gy0) / cell)), j1 = Math.min(ny - 1, Math.floor((by - gy0) / cell));
+          for (let j = j0; j <= j1; j++) used.fill(1, j * nx + i0, j * nx + i1 + 1);
+        };
+        const f = solved.footprint;
+        fill(-f.length / 2 - room, -f.width / 2 - room, f.length / 2 + room, f.width / 2 + room);
+        for (const p of solved.path) fill(p[0] - d / 2 - room, p[1] - d / 2 - room, p[0] + d / 2 + room, p[1] + d / 2 + room);
+        for (const n of ENDS) {
+          const k = n === 'top' ? top.connector : bottom.connector;
+          if (!k) continue;
+          const { at, dir } = solved.ends[n];
+          for (const [u0, u1, v0, v1] of k.profile ?? [[0, k.length, k.vMin!, k.vMax!]]) {
+            const cs = [[u0, v0], [u0, v1], [u1, v0], [u1, v1]].map(([u, v]) => [at[0] + dir[0] * u - dir[1] * v, at[1] + dir[1] * u + dir[0] * v]);
+            fill(Math.min(...cs.map((q) => q[0])) - room, Math.min(...cs.map((q) => q[1])) - room, Math.max(...cs.map((q) => q[0])) + room, Math.max(...cs.map((q) => q[1])) + room);
+          }
+        }
+        let covered = 0;
+        for (let i = 0; i < used.length; i++) covered += used[i];
+        // Mostly the floor covered; a little for the box round it, since a tidy shape packs better.
+        const area = covered * cell * cell + 0.1 * (x1 - x0) * (y1 - y0);
+        if (!best || area < best.area - 1) best = { area, l, w, top, bottom, solved, half: { top: wt.half, bottom: wb.half } };
       }
       // Let the screen breathe now and then.
       if (++step % 4 === 0) { showProgress(Math.min(0.95, step / cells.length), `Looking for the smallest coil (${tried} tried)`); await new Promise((r) => setTimeout(r)); }
@@ -1987,14 +2025,14 @@ async function findSmallestCoil() {
   }
   hideProgress();
   if (!best) { const msg = `No coil of this cable fits a tray ${fmtLen(hMax, units)} ${units} deep. Deepen the tray, or use a shorter or thinner cable.`; status.textContent = msg; toast(msg); return; }
-  const keep = (n: Which, l: LeadSpec): LeadSettings => ({ ...c[n], at: l.at, stem: l.stem, angle: l.angle, radius: l.radius, length: l.length });
+  const keep = (n: Which, l: LeadSpec): LeadSettings => ({ ...c[n], at: l.at, stem: l.stem, angle: l.angle, radius: l.radius, length: l.length, roll: (c[n].roll + 2 * best!.half[n]) % CONNECTOR_ROLLS });
   cable = { ...c, wrap: false, mirror: false, l: best.l, w: best.w, top: keep('top', best.top), bottom: keep('bottom', best.bottom) };
   besideReach.top = besideReach.bottom = null;
   fitJ.clear();
   fillCable();
   await cableChanged();
   const f = best.solved.footprint;
-  toast(`Smallest found (of ${tried} tried): ${(best.area / 100).toFixed(0)} cm² of floor, coil ${fmtDims([f.length, f.width, f.height], units)}, no taller than the ${fmtLen(hMax, units)} ${units} the tray already needs.`);
+  toast(`Smallest found (of ${tried} tried): about ${(best.area / 110).toFixed(0)} cm² of floor with its walls, coil ${fmtDims([f.length, f.width, f.height], units)}, no taller than the ${fmtLen(hMax, units)} ${units} the tray already needs.`);
 }
 $('#cable-best').addEventListener('click', findSmallestCoil);
 

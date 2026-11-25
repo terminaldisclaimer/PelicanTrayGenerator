@@ -405,11 +405,20 @@ It follows the owner's Fusion 360 "SnakedWire" script.
   the tray already has to be: the tallest other part or connector, within
   the tray depth or case height. So the coil is as tall and as small in plan
   as the tray's depth allows.
-- The winner is the one whose bounding box (coil, ends and connectors, seen
-  from above) has the least area. Its size and ends are put in the form.
+- The winner is the one that covers the least floor: the coil (hollow
+  included), the ends, and each connector's own outline, each with the
+  pocket's clearance and half a wall round it, counted on a 2 mm grid, plus
+  a tenth of the bounding box so a tidy shape wins a tie. A thin stem beside
+  the coil therefore costs little; a wide plug costs a lot and tends to go
+  in the hollow.
+- The cable is never bent tighter than the corner radius set in the form.
+- A J is made just wide enough for its connector, and is tried with the
+  connector either way round, so a lopsided one gets its slim side to the
+  coil. The chosen roll is put in the form.
 - It takes some seconds (about 18 s for the owner's 1151 mm cable with two
   connectors) and shows progress.
-- **Not built:** judging candidates by generating the whole tray; comparing
+- **Not built:** judging candidates by generating the whole tray; turning a connector
+  a quarter turn (only as set, or rolled half-way); comparing
   this against the cable round the tray edge automatically.
 
 ### 3.10 Projects: owner, versions, rename
