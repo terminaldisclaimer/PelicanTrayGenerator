@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { ManifoldToplevel } from 'manifold-3d';
 import { initKernel } from '../src/geom/kernel';
 import { toManifold } from '../src/geom/analyze';
-import { CableError, DEFAULT_CABLE, defaultConnectorAxis, orientConnector, placeConnector, leadTip, nearestAt, presetLead, solveCable, tubeMesh, type CableSpec, type LeadPreset, type LeadSpec } from '../src/geom/cable';
+import { CableError, connectorOutline, connectorReach, DEFAULT_CABLE, defaultConnectorAxis, orientConnector, placeConnector, leadTip, nearestAt, presetLead, solveCable, tubeMesh, type CableSpec, type LeadPreset, type LeadSpec } from '../src/geom/cable';
 import { boxMesh } from './fixtures';
 
 let k: ManifoldToplevel;
@@ -169,6 +169,19 @@ describe('cable coil', () => {
     expect(bx[1]).toBeCloseTo(end.at[0] + 30, 3);
     expect((by[0] + by[1]) / 2).toBeCloseTo(end.at[1], 3); // centred on the cable
     expect((bz[0] + bz[1]) / 2).toBeCloseTo(end.at[2], 3);
+    // How far it reaches to one side, counting only a stretch of its length: a plug with a wide flange at its far end.
+    const flanged = { name: 'f', positions: new Float32Array([...Array.from(boxMesh(6, 20, 6, 'body').positions, (v, i) => (i % 3 === 0 ? v + 12 : v)), ...Array.from(boxMesh(30, 4, 6, 'flange').positions, (v, i) => (i % 3 === 1 ? v + 20 : v))]) };
+    const fo = orientConnector(flanged, 2, 1); // rolled so the flange sticks out sideways
+    expect(fo.length).toBeCloseTo(24, 3);
+    const half = fo.width / 2;
+    expect(connectorReach(fo, 0, 24, 1)).toBeCloseTo(half, 3); // whole length: the flange counts
+    expect(connectorReach(fo, 0, 15, 1)).toBeLessThan(half - 5); // only the slim body is in this stretch
+    expect(connectorReach(fo, 0, 15, 1)).toBeCloseTo(connectorReach(fo, 0, 15, -1), 3);
+    // Its outline from above follows that shape: slim along the body, wide at the flange.
+    const outline = connectorOutline(fo, 2);
+    const widthAt = (u: number) => { const vs = outline.filter((q) => Math.abs(q[0] - u) < 1e-6).map((q) => q[1]); return Math.max(...vs) - Math.min(...vs); };
+    expect(widthAt(10)).toBeCloseTo(6, 3);
+    expect(widthAt(22)).toBeCloseTo(30, 3);
     // Turning it never mirrors it: still a solid with positive volume.
     for (let axis = 0; axis < 6; axis++) {
       const m = toManifold(k, placeConnector(orientConnector(plug, axis, 1), end, 'plug'))!;

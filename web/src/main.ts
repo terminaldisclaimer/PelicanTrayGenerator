@@ -7,7 +7,7 @@ import { DEFAULT_LIFT, DEFAULT_TRAY, fingerCentre, SIDES, type LayoutData, type 
 import { DEFAULT_SHELL, shellExtraHeight, shellPitch, shellProblem, trayInsideShell, type Footprint, type ShellOptions } from './geom/shell';
 import { parseSTL, writeSTL } from './mesh/stl';
 import { parse3MF, write3MF } from './mesh/threemf';
-import { CableError, CONNECTOR_ROLLS, CONNECTOR_TURNS, DEFAULT_CABLE, defaultConnectorAxis, orientConnector, placeConnector, leadTip, nearestAt, presetLead, solveCable, tubeMesh, type CableSpec, type LeadPreset, type LeadSpec, type OrientedConnector, type SolvedCable } from './geom/cable';
+import { CableError, CONNECTOR_ROLLS, CONNECTOR_TURNS, DEFAULT_CABLE, defaultConnectorAxis, orientConnector, placeConnector, connectorOutline, connectorReach, leadTip, nearestAt, presetLead, solveCable, tubeMesh, type CableSpec, type LeadPreset, type LeadSpec, type OrientedConnector, type SolvedCable } from './geom/cable';
 import type { TriMesh } from './mesh/types';
 import { cloudDelete, cloudDeleteVersion, cloudList, cloudLoad, cloudLoadVersion, cloudName, cloudRename, cloudSave, cloudUser, cloudVersions, deleteProject, listProjects, loadProject, newProjectId, saveProject, type Project } from './storage';
 import { LARGE_MESH_TRIANGLES } from './mesh/bounds';
@@ -1305,10 +1305,10 @@ $('#library-delete-folder').addEventListener('click', async () => {
 // ---------- coiled cable (a generated part: stacked coil, a lead at each end, connector models on the ends) ----------
 type Which = 'top' | 'bottom';
 interface LeadSettings { at: number; stem: number; angle: number; radius: number; length: number; conn: string; /** Which way the model points along the cable (0..5), or null = its longest side. */ axis: number | null; roll: number }
-interface CableSettings { d: number; len: number; l: number; w: number; r: number; mirror: boolean; top: LeadSettings; bottom: LeadSettings }
+interface CableSettings { d: number; len: number; l: number; w: number; r: number; /** Room kept between a connector on a J and the coil beside it. */ connGap: number; mirror: boolean; top: LeadSettings; bottom: LeadSettings }
 const noConn = { conn: '', axis: null, roll: 0 };
 let cable: CableSettings = {
-  d: DEFAULT_CABLE.wireD, len: DEFAULT_CABLE.totalLen, l: DEFAULT_CABLE.outerL, w: DEFAULT_CABLE.outerW, r: DEFAULT_CABLE.cornerR, mirror: false,
+  d: DEFAULT_CABLE.wireD, len: DEFAULT_CABLE.totalLen, l: DEFAULT_CABLE.outerL, w: DEFAULT_CABLE.outerW, r: DEFAULT_CABLE.cornerR, connGap: 2, mirror: false,
   top: { ...DEFAULT_CABLE.top, ...noConn }, bottom: { ...DEFAULT_CABLE.bottom, ...noConn },
 };
 try {
@@ -1322,7 +1322,7 @@ const ENDS: Which[] = ['top', 'bottom'];
 /** The end the controls under the drawing belong to. */
 let cableEnd: Which = 'top';
 /** Each end's connector as it is turned now (loaded from the library in the background). */
-const turned: Record<Which, { o: OrientedConnector; name: string } | null> = { top: null, bottom: null };
+const turned: Record<Which, { o: OrientedConnector; name: string; outline: [number, number][] } | null> = { top: null, bottom: null };
 /** The last coil that could be worked out: what the drawing shows and what dragging measures against. */
 let cableShown: SolvedCable | null = null;
 /** True while a handle in the drawing is being dragged. */
@@ -1331,7 +1331,9 @@ let cableHeld = false;
 const cableSpec = (c: CableSettings): CableSpec => {
   const lead = (n: Which): LeadSpec => {
     const t = c[n].conn ? turned[n] : null;
-    return { at: c[n].at, stem: c[n].stem, angle: c[n].angle, radius: c[n].radius, length: c[n].length, connector: t ? { height: t.o.height, width: t.o.width, length: t.o.length } : null };
+    // Beside the coil only the part of a J's connector that faces it matters for the overlap check.
+    const width = t && isJ(c[n]) && besideReach[n] !== null ? 2 * besideReach[n]! : t?.o.width ?? 0;
+    return { at: c[n].at, stem: c[n].stem, angle: c[n].angle, radius: c[n].radius, length: c[n].length, connector: t ? { height: t.o.height, width, length: t.o.length } : null };
   };
   return { wireD: c.d, totalLen: c.len, outerL: c.l, outerW: c.w, cornerR: c.r, gap: DEFAULT_CABLE.gap, fit: 'nearest', climbR: Math.max(8, 1.3 * c.d), mirror: c.mirror, top: lead('top'), bottom: lead('bottom') };
 };
@@ -1342,11 +1344,14 @@ function fillCable() {
   num('#cable-l').value = fromMM(cable.l);
   num('#cable-w').value = fromMM(cable.w);
   num('#cable-r').value = fromMM(cable.r);
+  num('#cable-gap').value = fromMM(cable.connGap);
   document.querySelectorAll<HTMLButtonElement>('[data-cmir]').forEach((b) => b.setAttribute('aria-checked', String((b.dataset.cmir === '1') === cable.mirror)));
   fillCableEnd();
   document.querySelectorAll('#cable .u').forEach((e) => (e.textContent = units));
 }
 
+/** The J size last written into the J boxes, to tell when one has been typed over. */
+let jShown = { width: 0, length: 0 };
 /** A J is an end that doubles right back: a half-turn bend away from the coil. */
 const isJ = (e: LeadSettings) => Math.abs(e.angle + 180) < 0.5;
 /** A J's size as it is usually given: across the U (outside to outside of the cable), and from the bottom of the U to the tip. */
@@ -1356,26 +1361,55 @@ function setJ(n: Which, width: number, length: number) {
   const end = (cableShown?.leads[n].junction[0] ?? -1) < 0 ? 'left' : 'right';
   cable[n] = { ...cable[n], ...presetLead('j', n === 'top', end, { wireD: cable.d, outerL: cable.l, outerW: cable.w, cornerR: cable.r, gap: DEFAULT_CABLE.gap }, 0, { width, length }) };
 }
-/** A J whose connector would sit on the coil is widened just enough to clear it. Returns true if it changed. */
-function widenJ(n: Which): boolean {
-  const e = cable[n], t = e.conn ? turned[n] : null;
-  if (!t || !isJ(e)) return false;
-  const need = Math.ceil(t.o.width / 2 + 1.5 * cable.d + 1.5), now = jSize(e);
-  if (now.width >= need) return false;
-  setJ(n, need, now.length);
+/** Ends whose J should be sized to its connector at the next redraw (after a connector is picked, turned or rolled). */
+const fitJ = new Set<Which>();
+/** For a fitted J: how far its connector reaches toward the coil alongside it (less than half its width when the wide part is elsewhere). */
+const besideReach: Record<Which, number | null> = { top: null, bottom: null };
+/**
+ * Size a J to its connector: just wide enough that the widest part of the connector lying
+ * beside the coil clears the cable by the set gap. Needs the cable as drawn, to know which
+ * stretch of the connector is beside the coil. Returns true if the J changed.
+ */
+function fitJToConnector(n: Which): boolean {
+  const e = cable[n], t = e.conn ? turned[n] : null, shown = cableShown;
+  if (!t || !isJ(e) || !shown) return false;
+  const { at, dir } = shown.ends[n], half = shown.footprint.length / 2;
+  // The stretch of the connector, measured from the cable's end, that is alongside the coil.
+  const us = Math.abs(dir[0]) > 1e-6 ? [(-half - at[0]) / dir[0], (half - at[0]) / dir[0]].sort((a, b) => a - b) : [-Infinity, Infinity];
+  const from = Math.max(0, us[0]), to = Math.min(t.o.length, us[1]);
+  if (to <= from) return false; // it lies wholly past the end of the coil: nothing to clear
+  // Sideways is "up × the way it points"; the coil's middle is on one side of that.
+  const side = Math.sign(-at[0] * -dir[1] + -at[1] * dir[0]) || 1;
+  const reach = connectorReach(t.o, from, to, side);
+  besideReach[n] = reach;
+  const width = Math.max(2 * cable.d + DEFAULT_CABLE.gap, reach + 1.5 * cable.d + cable.connGap), now = jSize(e);
+  if (Math.abs(now.width - width) < 0.01) return false;
+  setJ(n, width, Math.max(now.length, width / 2));
   return true;
+}
+/** Run any pending J fitting and redraw. Says what it did. */
+function fitPendingJs() {
+  const done = ENDS.filter((n) => fitJ.has(n) && fitJToConnector(n));
+  fitJ.clear();
+  if (!done.length) return;
+  fillCableEnd();
+  previewCable();
+  toast(`J set to ${done.map((n) => `${fmtLen(jSize(cable[n]).width, units)} ${units}`).join(' and ')} wide, so its connector clears the cable by ${fmtLen(cable.connGap, units)} ${units}.`);
 }
 
 /** The controls under the drawing, for whichever end is selected. */
 function fillCableEnd() {
   const e = cable[cableEnd];
   document.querySelectorAll<HTMLButtonElement>('[data-cend]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.cend === cableEnd)));
-  num('#cable-angle').value = String(+e.angle.toFixed(1));
-  num('#cable-leadlen').value = fromMM(e.length);
-  num('#cable-radius').value = fromMM(e.radius);
+  // A box being typed in is left alone: a redraw must not change it under the user's fingers.
+  const put = (id: string, text: string) => { const box = num(id); if (document.activeElement !== box) box.value = text; };
+  put('#cable-angle', String(+e.angle.toFixed(1)));
+  put('#cable-leadlen', fromMM(e.length));
+  put('#cable-radius', fromMM(e.radius));
   $('#cable-j-rows').hidden = !isJ(e);
-  num('#cable-jw').value = fromMM(jSize(e).width);
-  num('#cable-jl').value = fromMM(jSize(e).length);
+  jShown = jSize(e);
+  put('#cable-jw', fromMM(jShown.width));
+  put('#cable-jl', fromMM(jShown.length));
   const el = $('#cable-conn') as HTMLSelectElement;
   const opt = (value: string, label: string) => { const o = document.createElement('option'); o.value = value; o.textContent = label; o.selected = value === e.conn; return o; };
   const items = [...(libraryItems ?? [])].sort((a, b) => (a.folder ?? '').localeCompare(b.folder ?? '') || a.name.localeCompare(b.name));
@@ -1410,15 +1444,18 @@ async function turnConnectors() {
     const e = cable[n];
     if (!e.conn) { turned[n] = null; continue; }
     const mesh = await connectorMesh(e.conn);
-    turned[n] = { o: orientConnector(mesh, e.axis ?? defaultConnectorAxis(mesh), e.roll), name: mesh.name };
+    const o = orientConnector(mesh, e.axis ?? defaultConnectorAxis(mesh), e.roll);
+    turned[n] = { o, name: mesh.name, outline: connectorOutline(o) };
   }
 }
 
 /** Read the number boxes into the settings (mm). Returns what is wrong, or null. */
 function readCable(): string | null {
   const v = (id: string) => toMM(parseFloat(num(id).value.replace(',', '.')));
-  const d = v('#cable-d'), len = v('#cable-len'), l = v('#cable-l'), w = v('#cable-w'), r = v('#cable-r');
+  const d = v('#cable-d'), len = v('#cable-len'), l = v('#cable-l'), w = v('#cable-w'), r = v('#cable-r'), connGap = v('#cable-gap');
   if (![d, len, l, w, r].every(Number.isFinite)) return 'Fill in the cable and coil sizes.';
+  if (!(connGap >= 0 && connGap <= 30)) return 'The gap between a connector and the cable must be between 0 and 30 mm.';
+  if (Math.abs(connGap - cable.connGap) > 1e-6) for (const n of ENDS) fitJ.add(n); // a new gap re-sizes the Js
   if (!(d >= 0.5 && d <= 40)) return 'Cable diameter must be between 0.5 and 40 mm.';
   if (!(len >= 10 && len <= 30000)) return 'Cable length must be between 10 mm and 30 m.';
   if (!(w >= 3 * d)) return `The coil must be at least ${fmtLen(3 * d, units)} ${units} wide (three cable diameters), so it has a hollow middle.`;
@@ -1428,10 +1465,10 @@ function readCable(): string | null {
   if (!(length >= 0)) return 'The length after the bend must be 0 or more.';
   if (!(radius > 0)) return 'Enter a bend radius.';
   const before = cable[cableEnd], wasJ = isJ(before) && !$('#cable-j-rows').hidden;
-  cable = { ...cable, d, len, l, w, r, [cableEnd]: { ...before, angle, length, radius } };
+  cable = { ...cable, d, len, l, w, r, connGap, [cableEnd]: { ...before, angle, length, radius } };
   // The J boxes are another way of giving the same end; a change typed there wins.
   if (wasJ && isJ(cable[cableEnd])) {
-    const jw = v('#cable-jw'), jl = v('#cable-jl'), shown = jSize(before);
+    const jw = v('#cable-jw'), jl = v('#cable-jl'), shown = jShown;
     if (!(jw > 0) || !(jl > 0)) return 'Enter the J width and length.';
     if (Math.abs(jw - shown.width) > 0.005 || Math.abs(jl - shown.length) > 0.005) {
       if (jw < 2 * d + DEFAULT_CABLE.gap) return `A J must be at least ${fmtLen(2 * d + DEFAULT_CABLE.gap, units)} ${units} wide, so its two legs do not touch.`;
@@ -1464,12 +1501,12 @@ function previewCable(): SolvedCable | null {
 
 function drawCable(c: SolvedCable) {
   const svg = $('#cable-edit') as unknown as SVGSVGElement;
-  // Corners of each connector, seen from above.
+  // Each connector's own outline, seen from above (not just a box round it: a part can be lopsided).
   const box = (n: Which): [number, number][] | null => {
     const t = cable[n].conn ? turned[n] : null;
     if (!t) return null;
-    const { at, dir } = c.ends[n], [dx, dy] = dir, hw = t.o.width / 2;
-    return [[at[0] - dy * hw, at[1] + dx * hw], [at[0] + dx * t.o.length - dy * hw, at[1] + dy * t.o.length + dx * hw], [at[0] + dx * t.o.length + dy * hw, at[1] + dy * t.o.length - dx * hw], [at[0] + dy * hw, at[1] - dx * hw]];
+    const { at, dir } = c.ends[n], [dx, dy] = dir;
+    return t.outline.map(([u, v]) => [at[0] + dx * u - dy * v, at[1] + dy * u + dx * v] as [number, number]);
   };
   const boxes = { top: box('top'), bottom: box('bottom') };
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
@@ -1564,10 +1601,10 @@ async function buildCableOnce() {
   try {
     showProgress(0.05, 'Working out the coil');
     await turnConnectors();
-    const widened = ENDS.filter(widenJ);
     fillCableEnd();
+    previewCable();
+    fitPendingJs();
     const c = cable, solved = previewCable();
-    if (widened.length) toast(`The J was widened to ${fmtLen(jSize(cable[widened[0]]).width, units)} ${units} so its connector clears the coil.`);
     // Whatever stops it or is wrong with it is said where it cannot be missed, not only under the button.
     if (!solved) { hideProgress(); toast(status.textContent || 'This cable cannot be made.'); return; }
     if (solved.warnings.length) toast(`Cable added, but check it: ${solved.warnings.map((w) => w.text).join(' ')}`);
@@ -1600,10 +1637,9 @@ async function cableChanged() {
   if (wrong) { $('#cable-status').textContent = wrong; return; }
   saveCable();
   try { await turnConnectors(); } catch (e) { $('#cable-status').textContent = e instanceof Error ? e.message : String(e); return; }
-  const widened = ENDS.filter(widenJ);
   fillCableEnd();
   previewCable();
-  if (widened.length) toast(`The J was widened to ${fmtLen(jSize(cable[widened[0]]).width, units)} ${units} so its connector clears the coil.`);
+  fitPendingJs();
 }
 $('#cable-build').addEventListener('click', buildCable);
 ($('#cable') as HTMLDetailsElement).addEventListener('toggle', () => { if (($('#cable') as HTMLDetailsElement).open) cableChanged(); });
@@ -1624,6 +1660,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-cpre]').forEach((b) => b.add
   const end = (cableShown?.leads[cableEnd].junction[0] ?? -1) < 0 ? 'left' : 'right';
   const e = cable[cableEnd];
   cable[cableEnd] = { ...e, ...presetLead(b.dataset.cpre as LeadPreset, cableEnd === 'top', end, { wireD: cable.d, outerL: cable.l, outerW: cable.w, cornerR: cable.r, gap: DEFAULT_CABLE.gap }, b.dataset.cpre === 'middle' ? Math.min(e.length, 10) : e.length || 30) };
+  if (b.dataset.cpre === 'j') fitJ.add(cableEnd);
   fillCableEnd();
   cableChanged();
 }));
@@ -1631,6 +1668,8 @@ $('#cable-flip').addEventListener('click', () => { readCable(); cable[cableEnd].
 ($('#cable-conn') as HTMLSelectElement).addEventListener('change', (e) => {
   readCable();
   cable[cableEnd] = { ...cable[cableEnd], conn: (e.target as HTMLSelectElement).value, axis: null, roll: 0 };
+  fitJ.add(cableEnd);
+  besideReach[cableEnd] = null;
   cableChanged();
 });
 // Turn: point a different side of the model along the cable. Roll: a quarter turn about the cable.
@@ -1638,11 +1677,13 @@ $('#cable-turn').addEventListener('click', async () => {
   const ch = cable[cableEnd];
   if (!ch.conn) return;
   try { ch.axis = ((ch.axis ?? defaultConnectorAxis(await connectorMesh(ch.conn))) + 1) % CONNECTOR_TURNS; } catch (e) { toast(e instanceof Error ? e.message : String(e)); return; }
+  fitJ.add(cableEnd);
   cableChanged();
 });
 $('#cable-roll').addEventListener('click', () => {
   if (!cable[cableEnd].conn) return;
   cable[cableEnd].roll = (cable[cableEnd].roll + 1) % CONNECTOR_ROLLS;
+  fitJ.add(cableEnd);
   cableChanged();
 });
 document.querySelectorAll<HTMLInputElement>('#cable input.num').forEach((i) => i.addEventListener('change', cableChanged));

@@ -522,6 +522,39 @@ export function orientConnector(mesh: TriMesh, axis: number, roll: number): Orie
   return { uvw, length: hi[0] - lo[0], width: hi[1] - lo[1], height: hi[2] - lo[2] };
 }
 
+/**
+ * How far a turned connector reaches to one side of the cable's line (`side` +1 or −1 along v),
+ * counting only the stretch of it between `from` and `to` along the cable. This is the widest
+ * part that actually lies beside something, which can be less than half its overall width.
+ */
+export function connectorReach(o: OrientedConnector, from: number, to: number, side: number): number {
+  let reach = -Infinity;
+  for (let i = 0; i < o.uvw.length; i += 3) if (o.uvw[i] >= from - 0.5 && o.uvw[i] <= to + 0.5) reach = Math.max(reach, side * o.uvw[i + 1]);
+  return Number.isFinite(reach) ? Math.max(0, reach) : 0;
+}
+
+/**
+ * A turned connector's outline seen from above, as (u, v) points: how far it reaches to each
+ * side in every `step` mm of its length. Good for drawing; hollows in the middle are not shown.
+ */
+export function connectorOutline(o: OrientedConnector, step = 2): [number, number][] {
+  const n = Math.max(1, Math.ceil(o.length / step)), lo = new Array<number>(n).fill(Infinity), hi = new Array<number>(n).fill(-Infinity);
+  const p = o.uvw;
+  for (let i = 0; i + 8 < p.length; i += 9) {
+    const us = [p[i], p[i + 3], p[i + 6]], vs = [p[i + 1], p[i + 4], p[i + 7]];
+    const b0 = Math.max(0, Math.floor(Math.min(...us) / step)), b1 = Math.min(n - 1, Math.floor(Math.max(...us) / step));
+    for (let b = b0; b <= b1; b++) { lo[b] = Math.min(lo[b], ...vs); hi[b] = Math.max(hi[b], ...vs); }
+  }
+  const top: [number, number][] = [], bottom: [number, number][] = [];
+  for (let b = 0; b < n; b++) {
+    if (!Number.isFinite(lo[b])) continue;
+    const u0 = b * step, u1 = Math.min(o.length, (b + 1) * step);
+    top.push([u0, hi[b]], [u1, hi[b]]);
+    bottom.push([u0, lo[b]], [u1, lo[b]]);
+  }
+  return [...top, ...bottom.reverse()];
+}
+
 /** Put an oriented connector on a cable end. `overlap` pushes it back onto the cable so the two join. */
 export function placeConnector(o: OrientedConnector, end: { at: P3; dir: P3 }, name: string, overlap = 0.5): TriMesh {
   const [dx, dy] = end.dir; // level unit vector

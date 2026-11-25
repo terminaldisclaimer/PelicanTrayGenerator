@@ -315,8 +315,16 @@ It follows the owner's Fusion 360 "SnakedWire" script.
   in the hollow or wholly outside the coil, not across the cable.
 - **J size.** When an end is a J (a half-turn bend away from the coil), two
   more boxes give its width across the U and its length from the U to the
-  tip. If a connector on a J would sit on the coil, the J is widened just
-  enough to clear it, and a message says so.
+  tip.
+- **A J sizes itself to its connector.** When a connector is picked, turned
+  or rolled on a J (or the J button is pressed, or the gap changed), the J's
+  width is set so that the widest part of the connector that lies beside
+  the coil clears the cable by "Gap between a connector and the cable"
+  (default 2 mm). Only the stretch of the connector alongside the coil and
+  only its side facing the coil count, so a part whose wide end sits past
+  the end of the coil does not force a wide J. A width typed afterwards is
+  kept until the connector changes again.
+- The drawing shows each connector's real outline from above, not a box.
 - **Clashes are warnings, not refusals.** A connector lying across the cable
   (it must be wholly in the hollow or wholly outside) or a cable crossing
   itself still draws and can still be added: the status line and a message
