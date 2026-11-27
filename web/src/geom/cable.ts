@@ -392,7 +392,8 @@ export function solveCable(s: CableSpec): SolvedCable {
       // Room for one more of the wanted things beats any amount of extra area.
       return fits.filter(Boolean).length * 1e7 + best;
     };
-    const spots = auto ? [0, 4, 2, 6].flatMap((k) => { const n = k % 4 === 0 ? 12 : 4; return Array.from({ length: n }, (_, i) => k + (i + 0.5) / n); }) : [s.top.at];
+    // Every 5 mm or so along each straight: where both ends fit can be a window only a few millimetres wide.
+    const spots = auto ? [0, 4, 2, 6].flatMap((k) => { const n = Math.max(1, Math.ceil(g.len[k] / 5)); return g.len[k] > 1e-6 ? Array.from({ length: n }, (_, i) => k + (i + 0.5) / n) : []; }) : [s.top.at];
     // Each end as given, then with its other shape if it has one; each of those with its other lengths.
     const shapes = (l: LeadSpec): { lead: LeadSpec; alt: boolean }[] => {
       const forms = [{ lead: l, alt: false }];
@@ -414,7 +415,8 @@ export function solveCable(s: CableSpec): SolvedCable {
       done.usedAlt = { top: top.alt, bottom: bottom.alt };
       if (!auto) return done;
       best = done; bestRoom = room;
-      if (wanted > 0 && room >= wanted) break search; // everything wanted fits: good enough
+      // Good enough: everything wanted fits; or nothing else is wanted in the middle, and this placement is sound.
+      if (room >= wanted) break search;
     }
     if (best) return best;
     if (!fallback) throw new CableError('The cable is too short to go round a coil this size with these ends.');
