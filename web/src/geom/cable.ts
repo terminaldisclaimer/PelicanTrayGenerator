@@ -389,6 +389,8 @@ export function solveCable(s: CableSpec): SolvedCable {
           }
         }
       }
+      // Ends that sprawl along the walls leave nowhere for another cable's ends: ground they take counts against them.
+      const sprawl = taken.reduce((n, t) => n + (t[2] - t[0]) * (t[3] - t[1]), 0);
       // Ground other cables' ends have already taken in the same hollow is not free either.
       for (const t of s.avoid ?? []) taken.push([t[0] - rp, t[1] - rp, t[2] + rp, t[3] + rp]);
       const needs = [...(s.roomFor ?? [])].sort((p, q) => q[0] * q[1] - p[0] * p[1]);
@@ -423,7 +425,7 @@ export function solveCable(s: CableSpec): SolvedCable {
         fitted++;
       }
       // Room for one more of the wanted things beats any amount of extra area.
-      return fitted * 1e7 + clear(null).area;
+      return fitted * 1e7 + Math.max(0, 1e5 + clear(null).area - sprawl);
     };
     // Every 5 mm or so along each straight: where both ends fit can be a window only a few millimetres wide.
     const spots = auto ? [0, 4, 2, 6].flatMap((k) => { const n = Math.max(1, Math.ceil(g.len[k] / 5)); return g.len[k] > 1e-6 ? Array.from({ length: n }, (_, i) => k + (i + 0.5) / n) : []; }) : [s.top.at];
@@ -437,11 +439,9 @@ export function solveCable(s: CableSpec): SolvedCable {
     // what else has to go in the middle, and then the most room, is kept.
     const wanted = (s.roomFor?.length ?? 0) * 1e7;
     let fallback: SolvedCable | null = null, least = Infinity, best: SolvedCable | null = null, bestRoom = -1;
-    const t0 = Date.now();
     search: for (const top of shapes(s.top)) for (const bottom of shapes(s.bottom)) for (const at of spots) {
       const f = fixedAt(top.lead, bottom.lead, at);
       if (!f) continue;
-      if ((globalThis as any).__cd) { const key = `${top.alt ? 'T-alt' : 'T-jog'}${top.lead.length.toFixed(0)} ${bottom.alt ? 'B-alt' : 'B-jog'}${bottom.lead.length.toFixed(0)} :: ${f.probs.map((q) => q.text.slice(0, 46)).join(' + ') || 'ok'}`; const m = ((globalThis as any).__cdm ??= new Map()); m.set(key, (m.get(key) ?? 0) + 1); }
       if (f.probs.length) { if (f.probs.length < least && !best) { const d = finish(s, f.bt); d.warnings.push(...f.probs); least = f.probs.length; fallback = d; } continue; }
       const room = auto ? roomLeft(f.bt, top.lead, bottom.lead) : 0;
       if (room <= bestRoom) continue; // cannot beat what we have: skip the costly self-crossing check
@@ -471,7 +471,6 @@ export function solveCable(s: CableSpec): SolvedCable {
       // Good enough: everything wanted fits; or nothing else is wanted in the middle, and this placement is sound.
       if (room >= wanted && !s.thorough) break search;
     }
-    if ((globalThis as any).__cd) (globalThis as any).__cdt = Date.now() - t0;
     if (best) return best;
     if (!fallback) throw new CableError('The cable is too short to go round a coil this size with these ends.');
     return fallback;

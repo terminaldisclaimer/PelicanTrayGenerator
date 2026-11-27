@@ -1427,7 +1427,7 @@ $('#library-delete-folder').addEventListener('click', async () => {
 // ---------- coiled cable (a generated part: stacked coil, a lead at each end, connector models on the ends) ----------
 type Which = 'top' | 'bottom';
 interface LeadSettings { at: number; stem: number; angle: number; radius: number; length: number; conn: string; /** Which way the model points along the cable (0..5), or null = its longest side. */ axis: number | null; roll: number }
-interface CableSettings { /** Round the tray edge: how far above the floor its coil starts (it lies on another cable), and where its coil ends. */ wrapBase?: number; coilTop?: number; d: number; len: number; l: number; w: number; r: number; /** Room kept between a connector on a J and the coil beside it. */ connGap: number; mirror: boolean; /** Round the tray edge: the ground its ends and connectors took when it was last built, for cables nested inside it to keep off. */ endBoxes?: [number, number, number, number][]; /** Sized to the tray and pinned round its edge, with its ends inside. */ wrap: boolean; wallOff: number; wireOff: number; /** The tray size and inset it was last built for. */ wrapKey?: string; top: LeadSettings; bottom: LeadSettings }
+interface CableSettings { /** Round the tray edge: lying on top of the cable before it left no sound place for its ends, so it nests inside instead. */ noStack?: boolean; /** Round the tray edge: how far above the floor its coil starts (it lies on another cable), and where its coil ends. */ wrapBase?: number; coilTop?: number; d: number; len: number; l: number; w: number; r: number; /** Room kept between a connector on a J and the coil beside it. */ connGap: number; mirror: boolean; /** Round the tray edge: the ground its ends and connectors took when it was last built, for cables nested inside it to keep off. */ endBoxes?: [number, number, number, number][]; /** Sized to the tray and pinned round its edge, with its ends inside. */ wrap: boolean; wallOff: number; wireOff: number; /** The tray size and inset it was last built for. */ wrapKey?: string; top: LeadSettings; bottom: LeadSettings }
 const noConn = { conn: '', axis: null, roll: 0 };
 let cable: CableSettings = {
   d: DEFAULT_CABLE.wireD, len: DEFAULT_CABLE.totalLen, l: DEFAULT_CABLE.outerL, w: DEFAULT_CABLE.outerW, r: DEFAULT_CABLE.cornerR, connGap: 2, mirror: false, wrap: false, wallOff: 2, wireOff: 3,
@@ -1480,7 +1480,7 @@ function wrapPlace(c: CableSettings, self: number | null): { inset: number; base
   }
   if (!any) return { inset, base: 0 };
   // Tallest thing on the cable itself: the coil may not need more depth than its own connectors already do... or the tray allows.
-  if (top + c.d <= coilHeightLimit() + 1e-6) return { inset, base: top };
+  if (!c.noStack && top + c.d <= coilHeightLimit() + 1e-6) return { inset, base: top };
   return { inset: inset + lastD + c.wireOff, base: 0 };
 }
 const wrapInset = (c: CableSettings, self: number | null): number => wrapPlace(c, self).inset;
@@ -1905,8 +1905,15 @@ async function buildCableOnce() {
     fillCableEnd();
     previewCable();
     if (cable.wrap) fitJ.clear(); else fitPendingJs();
+    delete cable.noStack;
+    let solved = previewCable();
+    // On top of another cable its ends found no sound place: inside that cable instead, where the hollow is its own.
+    if (cable.wrap && solved?.warnings.length && wrapPlace(cable, cablePartId).base > 0) {
+      cable.noStack = true;
+      const nested = previewCable();
+      if (nested && nested.warnings.length <= solved.warnings.length) solved = nested; else { delete cable.noStack; solved = previewCable(); }
+    }
     if (cable.wrap) cable.wrapKey = wrapKeyOf(cable, cablePartId); else delete cable.wrapKey;
-    const solved = previewCable();
     if (cable.wrap && solved?.endBoxes) cable.endBoxes = solved.endBoxes; else delete cable.endBoxes;
     if (cable.wrap && solved) { cable.wrapBase = wrapPlace(cable, cablePartId).base; cable.coilTop = cable.wrapBase + Math.max(1, Math.ceil(solved.turns - 1e-6)) * (cable.d + DEFAULT_CABLE.gap); } else { delete cable.wrapBase; delete cable.coilTop; }
     const c = cable;
