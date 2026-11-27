@@ -1460,7 +1460,9 @@ function trayInsideNow(): { x: number; y: number } {
 }
 /** How far in from the tray wall a wrapped cable's outside sits: its own offset, plus every wrapped cable before it in the parts list. */
 function wrapInset(c: CableSettings, self: number | null): number {
-  let inset = c.wallOff;
+  // The pocket is a clearance bigger than the cable, and the tray keeps its own least edge whatever is asked for.
+  const typed = readTrayInputs(), t = typeof typed === 'string' ? traySettings : typed;
+  let inset = Math.max(c.wallOff, t.edge) + t.clearance + 0.05;
   for (const p of parts) {
     if (p.partId === self) break;
     const other = p.pinned ? (p.cable as Partial<CableSettings> | undefined) : undefined;
