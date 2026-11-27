@@ -337,19 +337,21 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
       // Same bridging of narrow details as the pocket itself.
       return keep(keep(keep(outline.offset(o.pocket.clearance + closeR, 'Round', 2, 16)).offset(-closeR, 'Round', 2, 16)).add(plain));
     };
-    const grown = (shape: CS) => keep(keep(shape.offset(o.wall / 2 + RASTER_SLACK + POLYGON_SLACK, 'Round', 2, 12)).simplify(0.1)).toPolygons() as Pt[][];
+    // The long search works on a grid twice as fine, so parts can sit closer: for trays with only a millimetre or two to spare.
+    const cell = o.searchEffort === 'hard' ? 0.5 : 1, rasterSlack = RASTER_SLACK * cell;
+    const grown = (shape: CS) => keep(keep(shape.offset(o.wall / 2 + rasterSlack + POLYGON_SLACK, 'Round', 2, 12)).simplify(0.1)).toPolygons() as Pt[][];
 
     // Footprints already carry half a wall, so the usable region is the tray
     // shrunk by (edge − wall/2) on every side.
-    const inset = Math.max(0, o.edge - o.wall / 2 - RASTER_SLACK);
+    const inset = Math.max(0, o.edge - o.wall / 2 - rasterSlack);
     const region = { width: o.length - 2 * inset, height: o.width - 2 * inset };
     // Finger holes are not grown, so they keep the whole edge margin themselves:
     // no cut may come closer than `edge` to the outside of the tray.
-    const softMargin = Math.ceil(o.edge - inset - 1e-9);
+    const softMargin = Math.ceil((o.edge - inset) / cell - 1e-9);
     // The tray's lift-out holes are fixed: nothing may be placed on them. Their
     // outline is grown by half a wall (parts carry the other half) plus slack.
     const defaultLifts = liftHoles(o);
-    const liftGrow = o.wall / 2 + RASTER_SLACK + POLYGON_SLACK;
+    const liftGrow = o.wall / 2 + rasterSlack + POLYGON_SLACK;
     /**
      * Area a lift grip keeps clear, relative to its centre: the half-round scoop
      * grown by its clearance.
@@ -369,7 +371,7 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
     /** Ground taken by pinned parts (see below): nothing else may be put there. */
     const pinnedBlocked: Pt[][][] = [];
     const packWith = (items: PackItem[], quick: boolean, withLifts = true) =>
-      pack(items, { ...region, attempts: quick ? 16 : o.packAttempts ?? 96, timeBudgetMs: quick ? 400 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep, fixedDepth: o.depth !== null, softMargin, blocked: withLifts ? blocked : [], blockedFirst: pinnedBlocked });
+      pack(items, { ...region, cell, attempts: quick ? 16 : o.packAttempts ?? 96, timeBudgetMs: quick ? 400 : o.packTimeMs ?? 2500, trayOverhead: o.floor, angleStep: o.packAngleStep, fixedDepth: o.depth !== null, softMargin, blocked: withLifts ? blocked : [], blockedFirst: pinnedBlocked });
 
     // ---- 1. Allowed poses and the depth the deepest part sets ----
     onProgress?.(0.03, 'Measuring parts');
@@ -463,7 +465,7 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
       let found: ReturnType<typeof anneal> = null;
       for (let k2 = 0; k2 < seeds.length && !found; k2++) {
         found = anneal(annealItems, {
-          ...region, softMargin, maxDepth: D, allowSink: o.stacking, angleStep: o.packAngleStep, blocked: pinnedBlocked,
+          ...region, cell, softMargin, maxDepth: D, allowSink: o.stacking, angleStep: o.packAngleStep, blocked: pinnedBlocked,
           iterations: o.searchIterations ?? (hard ? 400000 : thorough ? 150000 : undefined), rounds: o.searchRounds ?? (hard ? 12 : thorough ? 8 : undefined), seed: seeds[k2],
           report: o.searchReport && ((v) => o.searchReport!(v, D)),
           progress: (round, rounds, v) => onProgress?.(
