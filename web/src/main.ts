@@ -1426,7 +1426,7 @@ $('#library-delete-folder').addEventListener('click', async () => {
 });
 // ---------- coiled cable (a generated part: stacked coil, a lead at each end, connector models on the ends) ----------
 type Which = 'top' | 'bottom';
-interface LeadSettings { at: number; stem: number; angle: number; radius: number; length: number; conn: string; /** Which way the model points along the cable (0..5), or null = its longest side. */ axis: number | null; roll: number }
+interface LeadSettings { at: number; stem: number; angle: number; radius: number; length: number; /** In line past the end of the coil, stepped this far sideways onto its centre line (set by the coil search). */ jog?: number; conn: string; /** Which way the model points along the cable (0..5), or null = its longest side. */ axis: number | null; roll: number }
 interface CableSettings { /** Round the tray edge: lying on top of the cable before it left no sound place for its ends, so it nests inside instead. */ noStack?: boolean; /** Round the tray edge: how far above the floor its coil starts (it lies on another cable), and where its coil ends. */ wrapBase?: number; coilTop?: number; d: number; len: number; l: number; w: number; r: number; /** Room kept between a connector on a J and the coil beside it. */ connGap: number; mirror: boolean; /** Round the tray edge: the ground its ends and connectors took when it was last built, for cables nested inside it to keep off. */ endBoxes?: [number, number, number, number][]; /** Sized to the tray and pinned round its edge, with its ends inside. */ wrap: boolean; wallOff: number; wireOff: number; /** The tray size and inset it was last built for. */ wrapKey?: string; top: LeadSettings; bottom: LeadSettings }
 const noConn = { conn: '', axis: null, roll: 0 };
 let cable: CableSettings = {
@@ -1534,7 +1534,7 @@ const cableSpec = (c: CableSettings): CableSpec => {
     // Beside the coil only the part of a J's connector that faces it matters for the overlap check.
     const r = t && isJ(c[n]) ? besideReach[n] : null;
     const connector = t ? { height: t.o.height, width: t.o.width, length: t.o.length, up: t.o.up, down: t.o.down, vMin: r !== null ? -r : t.o.vMin, vMax: r !== null ? r : t.o.vMax } : null;
-    return { at: c[n].at, stem: c[n].stem, angle: c[n].angle, radius: c[n].radius, length: c[n].length, connector };
+    return { at: c[n].at, stem: c[n].stem, angle: c[n].angle, radius: c[n].radius, length: c[n].length, jog: c[n].jog, connector };
   };
   return { wireD: c.d, totalLen: c.len, outerL: c.l, outerW: c.w, cornerR: c.r, gap: DEFAULT_CABLE.gap, fit: 'nearest', climbR: Math.max(8, 1.3 * c.d), mirror: c.mirror, top: lead('top'), bottom: lead('bottom') };
 };
@@ -1570,7 +1570,7 @@ const jSize = (e: LeadSettings) => ({ width: 2 * e.radius + cable.d, length: e.l
 /** Reshape an end as a J of this size, at the end of the coil it is at now. */
 function setJ(n: Which, width: number, length: number) {
   const end = (cableShown?.leads[n].junction[0] ?? -1) < 0 ? 'left' : 'right';
-  cable[n] = { ...cable[n], ...presetLead('j', n === 'top', end, { wireD: cable.d, outerL: cable.l, outerW: cable.w, cornerR: cable.r, gap: DEFAULT_CABLE.gap }, 0, { width, length }) };
+  cable[n] = { ...cable[n], jog: undefined, ...presetLead('j', n === 'top', end, { wireD: cable.d, outerL: cable.l, outerW: cable.w, cornerR: cable.r, gap: DEFAULT_CABLE.gap }, 0, { width, length }) };
 }
 /** Ends whose J should be sized to its connector at the next redraw (after a connector is picked, turned or rolled). */
 const fitJ = new Set<Which>();
@@ -2001,6 +2001,8 @@ async function findSmallestCoil() {
   if (wrong) { status.textContent = wrong; toast(wrong); return; }
   try { await turnConnectors(); } catch (e) { toast(e instanceof Error ? e.message : String(e)); return; }
   const c = cable, d = c.d, tray = trayInsideNow(), pitch = d + DEFAULT_CABLE.gap, hCase = coilHeightCap();
+  // Asked to fit a strip: nothing wider than this (its narrow side, connectors and all) is kept.
+  const maxW = toMM(parseFloat(num('#cable-maxw').value.replace(',', '.'))) || 0;
   // The corner radius set in the form is how tightly this cable may be bent: no coil is tried that needs it tighter.
   const base = (l: number, w: number) => ({ wireD: d, outerL: l, outerW: w, cornerR: c.r, gap: DEFAULT_CABLE.gap });
   // Each connector rolled to its narrowest across the tray (a plug on its side can be far slimmer), and that
@@ -2022,7 +2024,8 @@ async function findSmallestCoil() {
   // As tall as the tray already has to be; if no coil of this cable is that low, a turn taller at a time, up to what the case allows.
   const hFree = Math.min(hCase, Math.max(coilHeightLimit(), ...conns.top.slice(0, 1).map((k) => k.height), ...conns.bottom.slice(0, 1).map((k) => k.height)));
   let hMax = hFree;
-  const kinds: LeadPreset[] = ['middle', 'inline', 'j'];
+  // 'centre' is in line past the end of the coil but stepped onto its centre line: a fat connector then adds nothing to the width.
+  const kinds: (LeadPreset | 'centre')[] = ['middle', 'inline', 'j', 'centre'];
   type Found = { area: number; l: number; w: number; top: LeadSpec; bottom: LeadSpec; solved: SolvedCable; half: { top: number; bottom: number } };
   // (Typed this way round so the loop below does not narrow it to "never set".)
   let best = null as Found | null, tried = 0;
@@ -2047,10 +2050,11 @@ async function findSmallestCoil() {
       // Each end's ways of going: into the middle, in line, or a J (a J with either side of its connector to the coil).
       const ways = (n: Which) => kinds.flatMap((kind) => (kind === 'j' && conns[n].length ? [0, 1] : [0]).map((half) => ({ kind, half })));
       for (const wt of ways('top')) for (const wb of ways('bottom')) for (const [et, eb] of [['left', 'right'], ['left', 'left']] as const) {
-        const lead = (n: Which, way: { kind: LeadPreset; half: number }, end: 'left' | 'right'): LeadSpec => {
+        const lead = (n: Which, way: { kind: LeadPreset | 'centre'; half: number }, end: 'left' | 'right'): LeadSpec => {
           const k = conns[n][way.half] ?? null;
           // A J just wide enough for the slimmer side of its connector to clear the coil.
           const jw = Math.max(2 * d + DEFAULT_CABLE.gap, (k ? Math.min(-k.vMin, k.vMax) : 0) + 1.5 * d + c.connGap);
+          if (way.kind === 'centre') return { ...presetLead('inline', n === 'top', end, b, 2), jog: (w - d) / 2, connector: k };
           return { ...presetLead(way.kind, n === 'top', end, b, way.kind === 'middle' ? 5 : Math.max(6, d), { width: jw, length: jw / 2 + Math.max(6, d) }), connector: k };
         };
         const top = lead('top', wt, et), bottom = lead('bottom', wb, eb);
@@ -2069,6 +2073,7 @@ async function findSmallestCoil() {
           for (const [u, v] of [[0, k.vMin!], [0, k.vMax!], [k.length, k.vMin!], [k.length, k.vMax!]]) grow(at[0] + dir[0] * u - dir[1] * v, at[1] + dir[1] * u + dir[0] * v, 0);
         }
         if (x1 - x0 > tray.x - 2 * traySettings.edge - 4 || y1 - y0 > tray.y - 2 * traySettings.edge - 4) continue;
+        if (maxW > 0 && Math.min(x1 - x0, y1 - y0) > maxW + 1e-6) continue;
         // The floor it really covers: the coil (its hollow too, which nothing else can use), the ends, and each
         // connector's own outline, all with the pocket's clearance and half a wall round them. Counted on a
         // 2 mm grid. A thin stem beside the coil then costs little, where a box round it would cost a lot.
@@ -2109,7 +2114,7 @@ async function findSmallestCoil() {
   best = byLevel.find((x) => !!x) ?? null;
   const flat = byLevel[0];
   if (!best) { const msg = `No coil of this cable fits this tray, even ${fmtLen(hMax, units)} ${units} deep (the most the tray depth or case height allows). Deepen the tray, or use a shorter or thinner cable.`; status.textContent = msg; toast(msg); return; }
-  const keep = (n: Which, l: LeadSpec): LeadSettings => ({ ...c[n], at: l.at, stem: l.stem, angle: l.angle, radius: l.radius, length: l.length, roll: c[n].conn ? rollOf[n][best!.half[n]] : c[n].roll });
+  const keep = (n: Which, l: LeadSpec): LeadSettings => ({ ...c[n], at: l.at, stem: l.stem, angle: l.angle, radius: l.radius, length: l.length, jog: l.jog, roll: c[n].conn ? rollOf[n][best!.half[n]] : c[n].roll });
   cable = { ...c, wrap: false, mirror: false, l: best.l, w: best.w, top: keep('top', best.top), bottom: keep('bottom', best.bottom) };
   besideReach.top = besideReach.bottom = null;
   fitJ.clear();
@@ -2158,7 +2163,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-cpre]').forEach((b) => b.add
   // Stay at the end of the coil this lead is at now.
   const end = (cableShown?.leads[cableEnd].junction[0] ?? -1) < 0 ? 'left' : 'right';
   const e = cable[cableEnd];
-  cable[cableEnd] = { ...e, ...presetLead(b.dataset.cpre as LeadPreset, cableEnd === 'top', end, { wireD: cable.d, outerL: cable.l, outerW: cable.w, cornerR: cable.r, gap: DEFAULT_CABLE.gap }, b.dataset.cpre === 'middle' ? Math.min(e.length, 10) : e.length || 30) };
+  cable[cableEnd] = { ...e, jog: undefined, ...presetLead(b.dataset.cpre as LeadPreset, cableEnd === 'top', end, { wireD: cable.d, outerL: cable.l, outerW: cable.w, cornerR: cable.r, gap: DEFAULT_CABLE.gap }, b.dataset.cpre === 'middle' ? Math.min(e.length, 10) : e.length || 30) };
   if (b.dataset.cpre === 'j') fitJ.add(cableEnd);
   fillCableEnd();
   cableChanged();
