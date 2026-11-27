@@ -1506,7 +1506,7 @@ function wrapSpec(c: CableSettings, self: number | null): CableSpec {
     wireD: c.d, totalLen: c.len, outerL, outerW, cornerR: Math.max(c.d / 2 + 0.5, Math.min(c.r, (Math.min(outerL, outerW) - c.d) / 2)), gap: DEFAULT_CABLE.gap,
     fit: 'fixed', place: 'auto', keepInside: true, avoid: wrapAvoid(c, self),
     // What else has to go in the middle, each with its pocket's clearance and wall: the ends are laid to leave room for them.
-    roomFor: parts.filter((p) => !p.pinned && p.partId !== self).map((p) => [p.size[0] + 7, p.size[1] + 7] as [number, number]),
+    roomFor: parts.filter((p) => !p.pinned && p.partId !== self).map((p) => [p.size[0] + traySettings.wall + 2 * traySettings.clearance + 2, p.size[1] + traySettings.wall + 2 * traySettings.clearance + 2] as [number, number]),
     climbR: Math.max(8, 1.3 * c.d), mirror: false, top: lead('top'), bottom: lead('bottom'),
   };
 }
