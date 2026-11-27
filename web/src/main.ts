@@ -1427,7 +1427,7 @@ $('#library-delete-folder').addEventListener('click', async () => {
 // ---------- coiled cable (a generated part: stacked coil, a lead at each end, connector models on the ends) ----------
 type Which = 'top' | 'bottom';
 interface LeadSettings { at: number; stem: number; angle: number; radius: number; length: number; conn: string; /** Which way the model points along the cable (0..5), or null = its longest side. */ axis: number | null; roll: number }
-interface CableSettings { d: number; len: number; l: number; w: number; r: number; /** Room kept between a connector on a J and the coil beside it. */ connGap: number; mirror: boolean; /** Sized to the tray and pinned round its edge, with its ends inside. */ wrap: boolean; wallOff: number; wireOff: number; /** The tray size and inset it was last built for. */ wrapKey?: string; top: LeadSettings; bottom: LeadSettings }
+interface CableSettings { d: number; len: number; l: number; w: number; r: number; /** Room kept between a connector on a J and the coil beside it. */ connGap: number; mirror: boolean; /** Round the tray edge: the ground its ends and connectors took when it was last built, for cables nested inside it to keep off. */ endBoxes?: [number, number, number, number][]; /** Sized to the tray and pinned round its edge, with its ends inside. */ wrap: boolean; wallOff: number; wireOff: number; /** The tray size and inset it was last built for. */ wrapKey?: string; top: LeadSettings; bottom: LeadSettings }
 const noConn = { conn: '', axis: null, roll: 0 };
 let cable: CableSettings = {
   d: DEFAULT_CABLE.wireD, len: DEFAULT_CABLE.totalLen, l: DEFAULT_CABLE.outerL, w: DEFAULT_CABLE.outerW, r: DEFAULT_CABLE.cornerR, connGap: 2, mirror: false, wrap: false, wallOff: 3, wireOff: 3,
@@ -1468,7 +1468,17 @@ function wrapInset(c: CableSettings, self: number | null): number {
   }
   return inset;
 }
-const wrapKeyOf = (c: CableSettings, self: number | null) => { const t = trayInsideNow(); return `${t.x.toFixed(2)}|${t.y.toFixed(2)}|${wrapInset(c, self).toFixed(2)}`; };
+/** Ground taken by the ends of the wrapped cables before this one in the parts list, with the cable-to-cable gap round it. */
+function wrapAvoid(c: CableSettings, self: number | null): [number, number, number, number][] {
+  const out: [number, number, number, number][] = [];
+  for (const p of parts) {
+    if (p.partId === self) break;
+    const other = p.pinned ? (p.cable as Partial<CableSettings> | undefined) : undefined;
+    for (const b of other?.endBoxes ?? []) out.push([b[0] - c.wireOff, b[1] - c.wireOff, b[2] + c.wireOff, b[3] + c.wireOff]);
+  }
+  return out;
+}
+const wrapKeyOf = (c: CableSettings, self: number | null) => { const t = trayInsideNow(); return `${t.x.toFixed(2)}|${t.y.toFixed(2)}|${wrapInset(c, self).toFixed(2)}|${wrapAvoid(c, self).map((b) => b.map((v) => v.toFixed(0)).join(',')).join(';')}|${parts.filter((p) => !p.pinned && p.partId !== self).map((p) => `${p.size[0].toFixed(0)}x${p.size[1].toFixed(0)}`).join(',')}`; };
 /** A cable coiled round the edge of the tray: its size comes from the tray, and its ends step inside and run along the coil. */
 function wrapSpec(c: CableSettings, self: number | null): CableSpec {
   const t = trayInsideNow(), inset = wrapInset(c, self);
@@ -1492,7 +1502,7 @@ function wrapSpec(c: CableSettings, self: number | null): CableSpec {
   const outerL = t.x - 2 * inset, outerW = t.y - 2 * inset;
   return {
     wireD: c.d, totalLen: c.len, outerL, outerW, cornerR: Math.max(c.d / 2 + 0.5, Math.min(c.r, (Math.min(outerL, outerW) - c.d) / 2)), gap: DEFAULT_CABLE.gap,
-    fit: 'fixed', place: 'auto', keepInside: true,
+    fit: 'fixed', place: 'auto', keepInside: true, avoid: wrapAvoid(c, self),
     // What else has to go in the middle, each with its pocket's clearance and wall: the ends are laid to leave room for them.
     roomFor: parts.filter((p) => !p.pinned && p.partId !== self).map((p) => [p.size[0] + 7, p.size[1] + 7] as [number, number]),
     climbR: Math.max(8, 1.3 * c.d), mirror: false, top: lead('top'), bottom: lead('bottom'),
@@ -1841,7 +1851,7 @@ async function cableToLibrary(p: PartState) {
   const known = libraryItems?.find((x) => x.name === name);
   if (known && !confirm(`"${name}" is already in the library. Replace it?`)) return;
   try {
-    const file = write3MF([{ name: p.mesh.name, positions: p.mesh.positions }], p.mesh.name, { CutoutsCable: JSON.stringify(p.cable) }) as Uint8Array<ArrayBuffer>;
+    const file = write3MF([{ name: p.mesh.name, positions: p.mesh.positions }], p.mesh.name, { CutoutsCable: JSON.stringify({ ...(p.cable as object), pinnedAt: p.pinnedAt }) }) as Uint8Array<ArrayBuffer>;
     const folder = known ? known.folder : libraryFolder || undefined;
     const res = await fetch(`/api/parts/${encodeURIComponent(name)}`, { method: 'PUT', body: file, headers: { 'content-type': 'application/octet-stream', ...(!known && folder ? { 'X-Part-Folder': encodeURIComponent(folder) } : {}) } });
     if (!res.ok) throw new Error(res.headers.get('content-type')?.includes('json') ? (await res.json()).error ?? String(res.status) : String(res.status));
@@ -1880,7 +1890,9 @@ async function buildCableOnce() {
     previewCable();
     if (cable.wrap) fitJ.clear(); else fitPendingJs();
     if (cable.wrap) cable.wrapKey = wrapKeyOf(cable, cablePartId); else delete cable.wrapKey;
-    const c = cable, solved = previewCable();
+    const solved = previewCable();
+    if (cable.wrap && solved?.endBoxes) cable.endBoxes = solved.endBoxes; else delete cable.endBoxes;
+    const c = cable;
     // Whatever stops it or is wrong with it is said where it cannot be missed, not only under the button.
     if (!solved) { hideProgress(); toast(status.textContent || 'This cable cannot be made.'); return; }
     if (solved.warnings.length) toast(`Cable added, but check it: ${solved.warnings.map((w) => w.text).join(' ')}`);
@@ -1906,9 +1918,12 @@ async function buildCableOnce() {
   }
 }
 
-/** After a change: redraw the picture, and the 3D cable too once there is one. */
+/**
+ * After a change in the form: redraw the picture. The cable in the project is only changed by
+ * "Update cable" (or added by "Add cable"), never as a side effect of typing, so setting up a
+ * second cable cannot overwrite the first.
+ */
 async function cableChanged() {
-  if (cablePartId !== null && parts.some((p) => p.partId === cablePartId)) { await buildCable(); return; }
   const wrong = readCable();
   if (wrong) { $('#cable-status').textContent = wrong; return; }
   saveCable();
@@ -2056,9 +2071,10 @@ async function findSmallestCoil() {
   }
   }
   hideProgress();
-  // The least floor wins; a flatter coil is preferred when it costs no more than a tenth extra.
-  const found = byLevel.filter((x): x is Found => !!x), least = Math.min(...found.map((x) => x.area));
-  best = byLevel.find((x) => x && x.area <= least * 1.1) ?? null;
+  // The tray stays as shallow as it can: the flattest coil found wins, and the least floor among those.
+  // (What a deeper tray would save is said in the message, for whoever would rather have the floor.)
+  const found = byLevel.filter((x): x is Found => !!x), least = found.length ? found.reduce((m, x) => (x.area < m.area ? x : m)) : null;
+  best = byLevel.find((x) => !!x) ?? null;
   const flat = byLevel[0];
   if (!best) { const msg = `No coil of this cable fits this tray, even ${fmtLen(hMax, units)} ${units} deep (the most the tray depth or case height allows). Deepen the tray, or use a shorter or thinner cable.`; status.textContent = msg; toast(msg); return; }
   const keep = (n: Which, l: LeadSpec): LeadSettings => ({ ...c[n], at: l.at, stem: l.stem, angle: l.angle, radius: l.radius, length: l.length, roll: c[n].conn ? rollOf[n][best!.half[n]] : c[n].roll });
@@ -2068,7 +2084,8 @@ async function findSmallestCoil() {
   fillCable();
   await cableChanged();
   const f = best.solved.footprint;
-  toast(`Smallest found (of ${tried} tried): about ${(best.area / 110).toFixed(0)} cm² of floor with its walls, coil ${fmtDims([f.length, f.width, f.height], units)}, ${f.height > hFree + 0.05 ? `which makes the tray ${fmtLen(f.height - hFree, units)} ${units} deeper than it otherwise had to be${flat ? ` (kept to that depth it would take about ${(flat.area / 110).toFixed(0)} cm²)` : ' (this cable cannot be coiled lower in this tray)'}` : `no taller than the ${fmtLen(hFree, units)} ${units} the tray already needs`}.`);
+  const deeper = least && least !== best && least.area < best.area * 0.9 ? ` A coil ${fmtLen(least.solved.footprint.height - f.height, units)} ${units} taller would take about ${(least.area / 110).toFixed(0)} cm².` : '';
+  toast(`Smallest found (of ${tried} tried): about ${(best.area / 110).toFixed(0)} cm² of floor with its walls, coil ${fmtDims([f.length, f.width, f.height], units)}, ${f.height > hFree + 0.05 ? `which makes the tray ${fmtLen(f.height - hFree, units)} ${units} deeper than it otherwise had to be${flat ? ` (kept to that depth it would take about ${(flat.area / 110).toFixed(0)} cm²)` : ' (this cable cannot be coiled lower in this tray)'}` : `no taller than the ${fmtLen(hFree, units)} ${units} the tray already needs`}.${deeper}`);
 }
 $('#cable-best').addEventListener('click', findSmallestCoil);
 

@@ -82,6 +82,8 @@ export interface CableSpec {
   keepInside?: boolean;
   /** With `place: 'auto'`: sizes (either way round) of things that should still fit in the middle; a placement that leaves room for more of them wins. */
   roomFor?: [number, number][];
+  /** With `place: 'auto'`: areas (x0, y0, x1, y1 from the coil's middle) taken by other cables' ends and connectors, which this cable must keep out of. */
+  avoid?: [number, number, number, number][];
   /** Radius of the two bends in a climb. */
   climbR: number;
   /** Wind the other way round (mirrors the whole cable, swapping the near and far sides). */
@@ -227,6 +229,8 @@ export interface SolvedCable {
   warnings: CableWarning[];
   /** When the ends were placed automatically: whether each took its other shape (`alt`). */
   usedAlt?: { top: boolean; bottom: boolean };
+  /** The ground its two ends and their connectors take (x0, y0, x1, y1 from the coil's middle), for other cables to keep out of. */
+  endBoxes?: [number, number, number, number][];
   /** Centreline from the free end of the bottom-turn lead to the free end of the top-turn lead. */
   path: P3[];
   /** The two cable ends: where a connector attaches and the direction it points (unit, level). */
@@ -411,6 +415,23 @@ export function solveCable(s: CableSpec): SolvedCable {
       const room = auto ? roomLeft(f.bt, top.lead, bottom.lead) : 0;
       if (room <= bestRoom) continue; // cannot beat what we have: skip the costly self-crossing check
       const done = finish(s, f.bt);
+      // Its ends, as ground taken; and nothing of it may lie on ground another cable's ends have taken.
+      done.endBoxes = [];
+      for (const [lead, spec] of [[f.bt.b, top.lead], [f.bt.a, bottom.lead]] as const) {
+        const pad = s.wireD / 2, xs = lead.pts.map((p) => p[0]), ys = lead.pts.map((p) => p[1]);
+        if (xs.length) done.endBoxes.push([Math.min(...xs) - pad, Math.min(...ys) - pad, Math.max(...xs) + pad, Math.max(...ys) + pad]);
+        const c = spec.connector;
+        if (c) {
+          const tip = tipOf(lead), [dx, dy] = lead.dir, cs = [[0, c.vMin ?? -c.width / 2], [0, c.vMax ?? c.width / 2], [c.length, c.vMin ?? -c.width / 2], [c.length, c.vMax ?? c.width / 2]].map(([u, v]) => [tip[0] + dx * u - dy * v, tip[1] + dy * u + dx * v]);
+          done.endBoxes.push([Math.min(...cs.map((q) => q[0])), Math.min(...cs.map((q) => q[1])), Math.max(...cs.map((q) => q[0])), Math.max(...cs.map((q) => q[1]))]);
+        }
+      }
+      if (s.avoid?.length) {
+        const pad = s.wireD / 2;
+        const onTaken = done.path.some((p) => s.avoid!.some((b) => p[0] > b[0] - pad && p[0] < b[2] + pad && p[1] > b[1] - pad && p[1] < b[3] + pad))
+          || done.endBoxes.some((e) => s.avoid!.some((b) => e[0] < b[2] && e[2] > b[0] && e[1] < b[3] && e[3] > b[1]));
+        if (onTaken) done.warnings.push({ end: null, text: 'It runs across the ends of another cable round the tray edge. Add the longer cable first, or make one of them a compact coil.' });
+      }
       if (done.warnings.length) { if (!best && !fallback) fallback = done; continue; }
       done.usedAlt = { top: top.alt, bottom: bottom.alt };
       if (!auto) return done;

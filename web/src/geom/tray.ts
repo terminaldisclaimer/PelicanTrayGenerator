@@ -163,6 +163,8 @@ export interface TrayPart {
    * coiled round the edge of the tray.
    */
   pinned?: boolean;
+  /** For a pinned part: where its own middle (as posed) sits relative to the middle of the tray. A coil that is not a full turn is not centred on its outline. */
+  pinnedAt?: [number, number];
   /** Room (mm) to leave above/below this part when stacked; null/undefined = the tray's setting. */
   stackGap?: number | null;
 }
@@ -402,10 +404,12 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
       const pose = part.poses[0], depth = neededDepth(part, pose);
       if (depth > limit - o.floor + 1e-9) throw new TrayError(`${limit.toFixed(1)} mm is too shallow for: ${part.name}. Increase the tray depth or case height.`);
       const opening = openingOf(pose), box = opening.bounds();
-      if (Math.max(-box.min[0], box.max[0]) > o.length / 2 - o.edge + 0.05 || Math.max(-box.min[1], box.max[1]) > o.width / 2 - o.edge + 0.05)
+      const [ox, oy] = part.pinnedAt ?? [0, 0];
+      if (Math.max(-(box.min[0] + ox), box.max[0] + ox) > o.length / 2 - o.edge + 0.05 || Math.max(-(box.min[1] + oy), box.max[1] + oy) > o.width / 2 - o.edge + 0.05)
         throw new TrayError(`${part.name} is too big for a ${o.length.toFixed(1)} × ${o.width.toFixed(1)} mm tray: it has to sit at least ${o.edge.toFixed(1)} mm in from the edge.`);
-      pinnedBlocked.push(grown(opening).map((loop) => moved(loop, mid[0], mid[1])));
-      pinnedEntries.push({ tray: 0, part, pose, angle: 0, tx: mid[0], ty: mid[1], offset: 0, level: 0, stackSize: 1, under: [] });
+      const at: Pt = [mid[0] + (part.pinnedAt?.[0] ?? 0), mid[1] + (part.pinnedAt?.[1] ?? 0)];
+      pinnedBlocked.push(grown(opening).map((loop) => moved(loop, at[0], at[1])));
+      pinnedEntries.push({ tray: 0, part, pose, angle: 0, tx: at[0], ty: at[1], offset: 0, level: 0, stackSize: 1, under: [] });
       pinnedDepth = Math.max(pinnedDepth, depth);
     }
 

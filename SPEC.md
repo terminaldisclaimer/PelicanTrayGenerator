@@ -428,6 +428,25 @@ It follows the owner's Fusion 360 "SnakedWire" script.
   a quarter turn (only as set, or rolled half-way); comparing
   this against the cable round the tray edge automatically.
 
+### 3.9e Several cables
+- The cable form never changes a cable in the project by itself. Typing,
+  dragging, Turn and Roll only redraw the picture; "Update cable" applies
+  them to the cable loaded in the form and "Add as a new cable" (or "Add
+  cable") adds one. So a second cable can be set up without touching the
+  first.
+- "Find the smallest coil" keeps the tray as shallow as it can: the flattest
+  coil found wins, and the least floor among those. The message says what a
+  taller coil would save.
+- Two cables round the tray edge: the second is refused a path across the
+  first one's ends and connectors (they are remembered with the first
+  cable). A cable of less than one turn can sit in the gap; otherwise it is
+  drawn with a warning saying to make one of them compact.
+- A cable round the edge that is not a whole turn is placed by the middle of
+  its coil, not of its outline. Saved to the library and added back, it is
+  still pinned round the edge.
+- A cable round the edge is laid out again when the other parts change, so
+  its ends leave room for them.
+
 ### 3.10 Projects: owner, versions, rename
 - **Owner.** Cloud copies of projects belong to the signed-in user: the
   email Cloudflare Access passes to the Worker with each request. Each user

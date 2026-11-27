@@ -70,6 +70,8 @@ export interface ParsedPart {
   cable?: unknown;
   /** True for a cable coiled round the edge of the tray. */
   pinned?: boolean;
+  /** For a pinned part: where its outline is centred, measured from the middle of its coil. */
+  pinnedAt?: [number, number];
   suggestInches: boolean;
   large: boolean;
 }
@@ -97,6 +99,7 @@ export interface SavedPart {
   cable?: unknown;
   /** True for a cable coiled round the edge of the tray: it is not arranged, the rest goes inside it. */
   pinned?: boolean;
+  pinnedAt?: [number, number];
   /** Index into the automatic pose list, and whether the user chose it. */
   poseIndex: number;
   locked: boolean;
