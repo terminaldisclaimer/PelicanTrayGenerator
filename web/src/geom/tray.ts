@@ -418,7 +418,8 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
 
     // ---- 2. Side by side, quickly ----
     onProgress?.(0.1, 'Arranging parts');
-    const packed = packWith(units.map((u) => ({ id: u.id, options: options(u) })), false);
+    // With only pinned parts there is nothing to arrange (and the packer expects at least one thing).
+    const packed = units.length ? packWith(units.map((u) => ({ id: u.id, options: options(u) })), false) : { placements: [], trays: [], unplaced: [] } as ReturnType<typeof packWith>;
     // A part can be left over here only because the lift-out holes sit in the middle
     // of their sides for this quick pass; the search below is free to slide them.
     const leftOver = packed.unplaced.length > 0;

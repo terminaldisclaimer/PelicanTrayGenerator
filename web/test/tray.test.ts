@@ -609,6 +609,11 @@ describe('tray', () => {
     expect(t.lifts).toHaveLength(2);
     // Without the pinning the same ring cannot even be placed: the layout's safety margins need more room than 3 mm.
     expect(() => buildTrays(k, [{ ...ring, pinned: false }, ...others], o)).toThrow(TrayError);
+    // The cable on its own, with nothing to go inside it, is still a tray.
+    const alone = buildTrays(k, [ring], o);
+    expect(alone.trays).toHaveLength(1);
+    expect(alone.trays[0].placements.map((p) => p.partId)).toEqual([1]);
+    expect(alone.trays[0].depth).toBeGreaterThan(c.footprint.height);
     // A second tray, when needed, is not blocked by the cable in the first.
     const many = buildTrays(k, [ring, ...[1, 2, 3, 4].map((i) => trayPart(boxMesh(150, 60, 15, `big${i}`), 10 + i))], { ...o, stacking: false });
     expect(many.trays.length).toBeGreaterThan(1);

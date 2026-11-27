@@ -361,7 +361,9 @@ It follows the owner's Fusion 360 "SnakedWire" script.
 - A coiled cable keeps the settings it was made from, in the part and in the
   saved project. Its row has "Edit cable", which loads them back into the
   cable form; changes there update that cable. Any number of cables can be
-  in a project; "Add parts → Add a coiled cable" always starts a new one.
+  in a project: "Add parts → Add a coiled cable" always starts a new one,
+  and with a cable loaded in the form "Add as a new cable" adds another
+  from the same settings.
 - "Add to library" on a cable's row uploads it as a 3MF with its settings
   written inside the file. Added back from the library it is a cable again,
   with "Edit cable". (Its connectors are looked up in the library by name
@@ -401,10 +403,15 @@ It follows the owner's Fusion 360 "SnakedWire" script.
   It tries coil sizes from the smallest upward (width in 6 mm steps, length
   in 8 mm steps, up to the tray) and, for each, every pairing of end styles
   (into the middle, in line, J) at the same or opposite ends of the coil.
-- A candidate counts only if nothing clashes and the coil is no taller than
-  the tray already has to be: the tallest other part or connector, within
-  the tray depth or case height. So the coil is as tall and as small in plan
-  as the tray's depth allows.
+- A candidate counts only if nothing clashes, it fits the tray, and the coil
+  is no taller than the tray depth or case height allows (60 mm if neither
+  is set). Candidates are grouped by height: no taller than the tray already
+  needs (its tallest other part or connector), one more turn, two more, and
+  so on. The least floor overall wins, except that a flatter group is
+  preferred when it costs no more than a tenth extra floor. The message
+  says how much deeper the tray becomes, and what staying flat would cost.
+- Connectors are rolled to their narrowest across the tray (a plug on its
+  side), within the height allowed.
 - The winner is the one that covers the least floor: the coil (hollow
   included), the ends, and each connector's own outline, each with the
   pocket's clearance and half a wall round it, counted on a 2 mm grid, plus
