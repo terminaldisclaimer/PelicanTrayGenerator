@@ -542,7 +542,7 @@ const toMM = (v: number) => (units === 'mm' ? v : v * MM_PER_IN);
 const fromMM = (v: number, digits = units === 'mm' ? 2 : 3) => String(+(units === 'mm' ? v : v / MM_PER_IN).toFixed(digits));
 
 /** Case inside size and fit settings (mm). The tray is the case size minus the gap on every side. */
-interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; edge: number; floor: number; wall: number; clearance: number; minFeature: number; split: number; fingerDia: number; fingerExtra: number; fingerSwept: boolean; stacking: boolean; stackGap: number; lift: boolean; liftDia: number; liftSides: 'long' | 'short'; shell: boolean; shellWall: number; shellRim: number; shellPlug: number; shellGap: number; liner: boolean; linerThick: number }
+interface TraySettings { length: number; width: number; height: number | null; gap: number; depth: number | null; edge: number; floor: number; wall: number; clearance: number; minFeature: number; split: number; fingerDia: number; fingerExtra: number; fingerSwept: boolean; stacking: boolean; stackGap: number; lift: boolean; liftDia: number; liftSides: 'long' | 'short' | 'auto'; shell: boolean; shellWall: number; shellRim: number; shellPlug: number; shellGap: number; liner: boolean; linerThick: number }
 let traySettings: TraySettings = { length: 300, width: 200, height: null, gap: 1, depth: null, edge: 2, floor: 4, wall: DEFAULT_TRAY.wall, clearance: DEFAULT_TRAY.pocket.clearance, minFeature: 0, split: DEFAULT_TRAY.pocket.split, fingerDia: DEFAULT_TRAY.fingerDiameter, fingerExtra: 0, fingerSwept: true, stacking: true, stackGap: 0, lift: true, liftDia: DEFAULT_LIFT.diameter, liftSides: 'long', shell: true, shellWall: DEFAULT_SHELL.wall, shellRim: DEFAULT_SHELL.rim, shellPlug: DEFAULT_SHELL.plug, shellGap: DEFAULT_SHELL.gap, liner: false, linerThick: 6 };
 try { traySettings = { ...traySettings, ...JSON.parse(localStorage.getItem('tray') || '{}') }; } catch { /* ignore */ }
 let tray: TrayInfo | null = null;
@@ -572,7 +572,7 @@ function fillTrayInputs() {
   document.querySelectorAll<HTMLButtonElement>('[data-lift]').forEach((b) =>
   b.addEventListener('click', () => {
     traySettings.lift = b.dataset.lift !== 'off';
-    if (traySettings.lift) traySettings.liftSides = b.dataset.lift as 'long' | 'short';
+    if (traySettings.lift) traySettings.liftSides = b.dataset.lift as 'long' | 'short' | 'auto';
     document.querySelectorAll<HTMLButtonElement>('[data-lift]').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
     $('#lift-rows').hidden = !traySettings.lift;
     if (tray) generateTray();
@@ -819,6 +819,10 @@ async function generateTray(effort: Effort = lastEffort) {
     const result = await geo.tray(options, shell, showProgress);
     const n = showResult(result, shell, outer, s.height, '');
     rememberLayout(result, options, shell, outer, s.height);
+    if (s.lift && s.liftSides === 'auto') {
+      const none = result.trays.filter((t) => !t.lifts.length).length;
+      $('#tray-status').textContent += none ? ` No room was found for lift-out holes${result.trays.length > 1 ? ` on ${none} of the trays` : ''}: nothing usable on opposite sides, or far enough apart on sides that meet.` : ` Lift-out holes placed where there was room (${result.trays.map((t) => t.lifts.map((h) => (h.ny > 0 ? 'back' : h.ny < 0 ? 'front' : h.nx > 0 ? 'right' : 'left')).join(' + ')).join('; ')}).`;
+    }
     // More than one tray: a longer search may still find a one-tray layout.
     $('#tray-harder').hidden = n <= 1 || hard;
     $('#tray-suggest').hidden = n <= 1;

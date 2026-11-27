@@ -59,8 +59,12 @@ export interface TrayOptions {
 export interface LiftOptions {
   /** Diameter of the finger hole through the side (mm). The scoop above it is a little wider. */
   diameter: number;
-  /** Which pair of sides the two holes sit against: the long sides, or the short ends. */
-  sides: 'long' | 'short';
+  /**
+   * Which pair of sides the two holes sit against: the long sides, or the short ends. 'auto' puts them
+   * wherever there is room once the parts are placed: on opposite sides, or on two sides that meet if
+   * they are far enough apart to lift by.
+   */
+  sides: 'long' | 'short' | 'auto';
 }
 /** 20 mm takes a large man's index fingertip; smaller is tight. */
 export const DEFAULT_LIFT: LiftOptions = { diameter: 20, sides: 'long' };
@@ -80,7 +84,7 @@ export interface LiftHole { x: number; y: number; r: number; rb: number; nx: num
 /** Where the lift-out grips go by default (the middle of each side) for a tray of this size. */
 export function liftHoles(o: Pick<TrayOptions, 'length' | 'width' | 'edge' | 'lift'>): LiftHole[] {
   const l = o.lift;
-  if (!l) return [];
+  if (!l || l.sides === 'auto') return [];
   const rb = l.diameter / 2, r = rb + LIFT_FLARE;
   // "Long sides" are the two edges that run along the tray's longer dimension.
   const alongX = (o.length >= o.width) === (l.sides === 'long');
@@ -95,7 +99,9 @@ export function liftBore(k: ManifoldToplevel, h: LiftHole, z: number, keep: <T e
 }
 
 /** Saved positions along each side, applied to the grips as they are shaped now. */
-function liftsAt(o: TrayOptions, saved: { x: number; y: number }[] | undefined): LiftHole[] {
+function liftsAt(o: TrayOptions, saved: { x: number; y: number; nx?: number; ny?: number }[] | undefined): LiftHole[] {
+  // Found after the parts were placed: they are wherever the layout says, on whichever sides.
+  if (o.lift?.sides === 'auto') { const rb = o.lift.diameter / 2; return (saved ?? []).filter((h) => h.nx !== undefined && h.ny !== undefined).map((h) => ({ x: h.x, y: h.y, nx: h.nx!, ny: h.ny!, rb, r: rb + LIFT_FLARE })); }
   const now = liftHoles(o);
   if (!saved || saved.length !== now.length) return now;
   return now.map((h, i) => (h.ny !== 0 ? { ...h, x: saved[i].x } : { ...h, y: saved[i].y }));
@@ -496,6 +502,84 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
       if (!trayDepths.length) { trayDepths = [0]; lifts = [defaultLifts]; }
       entries.push(...pinnedEntries);
       trayDepths[0] = Math.max(trayDepths[0], pinnedDepth);
+    }
+
+    // Lift-out holes asked for "wherever they fit": looked for now that everything is placed.
+    if (o.lift?.sides === 'auto' && trayDepths.length) {
+      onProgress?.(0.93, 'Finding room for the lift-out holes');
+      const rb = o.lift.diameter / 2, r = rb + LIFT_FLARE, pad = o.wall / 2 + rasterSlack + POLYGON_SLACK;
+      const toRegion = (h: LiftHole): Pt[] => moved(liftLoop(h), h.x + o.length / 2 - inset, h.y + o.width / 2 - inset);
+      const far = 0.35 * Math.hypot(o.length, o.width); // two holes on sides that meet have to be this far apart to lift by
+      const sideHoles = (side: number, at: number): LiftHole => side < 2
+        ? { x: at, y: (side ? 1 : -1) * (o.width / 2), r, rb, nx: 0, ny: side ? 1 : -1 }
+        : { x: (side === 3 ? 1 : -1) * (o.length / 2), y: at, r, rb, nx: side === 3 ? 1 : -1, ny: 0 };
+      const span = (side: number) => (side < 2 ? o.length : o.width) / 2 - Math.max(0, o.cornerRadius) - r - 1;
+      /** Ground taken in one tray: every pocket and finger cutout, with the room each needs round it. */
+      const taken = (t: number): CS | null => {
+        let all: CS | null = null;
+        for (const e of entries) {
+          if (e.tray !== t) continue;
+          let c = keep(openingOf(e.pose).offset(pad, 'Round', 2, 12));
+          const holes = scoops(e.part, e.pose);
+          if (holes) c = keep(c.add(holes));
+          c = keep(keep(c.rotate(e.angle)).translate(e.tx, e.ty));
+          all = all ? keep(all.add(c)) : c;
+        }
+        return all;
+      };
+      /** How much of each possible hole lies on taken ground (0 = free), every 2 mm along each side. */
+      const scan = (occ: CS | null) => [0, 1, 2, 3].map((side) => {
+        const m = span(side), out: { at: number; over: number }[] = [];
+        for (let at = -m; at <= m + 1e-9; at += 2) out.push({ at, over: occ ? keep(occ.intersect(keep(k.CrossSection.ofPolygons([toRegion(sideHoles(side, at))], 'Positive')))).area() : 0 });
+        return out;
+      });
+      const usable = (a: LiftHole, b: LiftHole) => (a.nx === -b.nx && a.ny === -b.ny) || (a.nx * b.nx + a.ny * b.ny === 0 && Math.hypot(a.x - b.x, a.y - b.y) >= far);
+      /** The best pair of free holes: facing each other (as nearly opposite as can be), else far apart on sides that meet. */
+      const pick = (sc: ReturnType<typeof scan>): LiftHole[] => {
+        const free = sc.map((list) => list.filter((c) => c.over < 0.05));
+        let best: LiftHole[] = [], cost = Infinity;
+        // Along the longer dimension first, so a tie goes to the long sides.
+        for (const [p, q] of o.length >= o.width ? [[0, 1], [2, 3]] : [[2, 3], [0, 1]]) for (const u of free[p]) for (const v of free[q]) {
+          const c = Math.abs(u.at - v.at) + 0.2 * (Math.abs(u.at) + Math.abs(v.at));
+          if (c < cost - 1e-9) { cost = c; best = [sideHoles(p, u.at), sideHoles(q, v.at)]; }
+        }
+        if (best.length) return best;
+        let most = far;
+        for (const p of [0, 1]) for (const q of [2, 3]) for (const u of free[p]) for (const v of free[q]) {
+          const a = sideHoles(p, u.at), b = sideHoles(q, v.at), dist = Math.hypot(a.x - b.x, a.y - b.y);
+          if (dist >= most) { most = dist; best = [a, b]; }
+        }
+        return best;
+      };
+      lifts = trayDepths.map((_, t) => {
+        const sc = scan(taken(t)), now = pick(sc);
+        if (now.length) return now;
+        // No two spots as things stand: let the parts shift a little to make room, a pair of sides at a time.
+        const mine = entries.filter((e) => e.tray === t && !e.part.pinned);
+        if (!mine.length || mine.some((e) => e.under.length || e.offset > 0) || mine.some((e) => !units.some((u) => u.id === e.part.partId))) return [];
+        const leastOver = (side: number) => sc[side].reduce((m, c) => (c.over < m.over ? c : m), sc[side][0]);
+        const long = o.length >= o.width ? [0, 1] : [2, 3], short = o.length >= o.width ? [2, 3] : [0, 1];
+        for (const [p, q] of [long, short, [0, 2], [0, 3], [1, 2], [1, 3]]) {
+          if (!sc[p].length || !sc[q].length) continue;
+          const pair = [sideHoles(p, leastOver(p).at), sideHoles(q, leastOver(q).at)];
+          const items: Parameters<typeof anneal>[0] = mine.map((e) => {
+            const u = units.find((x) => x.id === e.part.partId)!;
+            return { id: u.id, stackable: false, gap: 0, options: options(u), start: { key: e.pose.poseIndex, angle: e.angle, tx: e.tx, ty: e.ty } };
+          });
+          pair.forEach((h, i) => {
+            const cx = h.x + o.length / 2 - inset, cy = h.y + o.width / 2 - inset, loop = liftLoop(h);
+            items.push({ id: -1 - i, stackable: false, options: [{ key: 0, depth: 0, footprint: [loop] }], rail: h.ny !== 0 ? { axis: 'x', at: cy + Math.min(...loop.map((pt) => pt[1])) } : { axis: 'y', at: cx + Math.min(...loop.map((pt) => pt[0])) }, start: { key: 0, angle: 0, tx: cx, ty: cy } });
+          });
+          const got = anneal(items, { ...region, cell, softMargin, maxDepth: D, allowSink: false, angleStep: o.packAngleStep, blocked: t === 0 ? pinnedBlocked : [], iterations: 60000, rounds: 4, seed: 1 });
+          if (!got) continue;
+          const holes = pair.map((h, i) => { const f = got.find((x) => x.id === -1 - i)!; return h.ny !== 0 ? { ...h, x: f.tx - o.length / 2 + inset } : { ...h, y: f.ty - o.width / 2 + inset }; });
+          if (!usable(holes[0], holes[1])) continue;
+          const keepers = entries.filter((e) => e.tray !== t || e.part.pinned);
+          entries = [...keepers, ...got.filter((f) => f.id >= 0).map((f) => ({ tray: t, part: unitOf(f.id).part, pose: choiceOf(f.id, f.key).pose, angle: f.angle, tx: f.tx, ty: f.ty, offset: 0, level: 0, stackSize: 1, under: [] as number[] }))];
+          return holes;
+        }
+        return [];
+      });
     }
 
     if (leftOver && !solved) {
