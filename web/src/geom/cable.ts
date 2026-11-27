@@ -294,7 +294,8 @@ export function solveCable(s: CableSpec): SolvedCable {
     const spec = { top: tops, bottom: bottoms };
     const probs: CableWarning[] = [];
     for (const [which, lead] of [['top', bt.b], ['bottom', bt.a]] as const) {
-      if (s.keepInside && lead.pts.some((p) => outside(bt.g, p))) { probs.push({ end: which, text: `The ${NAME[which]} end would run outside the coil, into the tray wall.` }); continue; }
+      // (Kept inside, not even a bend may bulge past the coil's own outline: the tray wall is right there.)
+      if (s.keepInside && lead.pts.some((p) => outside(bt.g, p) || Math.abs(p[0]) > bt.g.lc / 2 + 1e-3 || Math.abs(p[1]) > bt.g.wc / 2 + 1e-3)) { probs.push({ end: which, text: `The ${NAME[which]} end would run outside the coil, into the tray wall.` }); continue; }
       const c = spec[which].connector;
       if (!c) continue;
       const tip = tipOf(lead), [dx, dy] = lead.dir;
@@ -568,13 +569,15 @@ function finish(s: CableSpec, bt: Built): SolvedCable {
     const key = (p: P3) => p.map((v) => Math.floor(v / cell)) as P3;
     path.forEach((p, i) => { const kk = key(p).join(','); (grid.get(kk) ?? grid.set(kk, []).get(kk)!).push(i); });
     const need = (s.wireD - 1e-3) ** 2;
+    // One turn lying on another is drawn a hair into it where an end peels away: resting on it, not crossing it.
+    const resting = (s.wireD * 0.95) ** 2;
     for (let i = 0; i < path.length; i++) {
       const [kx, ky, kz] = key(path[i]);
       for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dzz = -1; dzz <= 1; dzz++)
         for (const k of grid.get(`${kx + dx},${ky + dy},${kz + dzz}`) ?? []) {
           if (k <= i || along[k] - along[i] < 40) continue;
           const d2 = (path[i][0] - path[k][0]) ** 2 + (path[i][1] - path[k][1]) ** 2 + (path[i][2] - path[k][2]) ** 2;
-          if (d2 < need) {
+          if (d2 < need && !(d2 >= resting && Math.abs(path[i][2] - path[k][2]) >= 0.9 * s.wireD)) {
             warnings.push({ end: null, text: `The cable crosses itself (${Math.sqrt(d2).toFixed(1)} mm between centres where it needs ${s.wireD.toFixed(1)}). Move or turn an end, shorten it, or use a wider coil.` });
             break crossing;
           }
