@@ -438,6 +438,7 @@ export function solveCable(s: CableSpec): SolvedCable {
     search: for (const top of shapes(s.top)) for (const bottom of shapes(s.bottom)) for (const at of spots) {
       const f = fixedAt(top.lead, bottom.lead, at);
       if (!f) continue;
+      if ((globalThis as any).__cd) { const key = `${top.alt ? 'T-alt' : 'T-jog'}${top.lead.length.toFixed(0)} ${bottom.alt ? 'B-alt' : 'B-jog'}${bottom.lead.length.toFixed(0)} :: ${f.probs.map((q) => q.text.slice(0, 46)).join(' + ') || 'ok'}`; const m = ((globalThis as any).__cdm ??= new Map()); m.set(key, (m.get(key) ?? 0) + 1); }
       if (f.probs.length) { if (f.probs.length < least && !best) { const d = finish(s, f.bt); d.warnings.push(...f.probs); least = f.probs.length; fallback = d; } continue; }
       const room = auto ? roomLeft(f.bt, top.lead, bottom.lead) : 0;
       if (room <= bestRoom) continue; // cannot beat what we have: skip the costly self-crossing check
