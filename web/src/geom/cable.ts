@@ -86,6 +86,8 @@ export interface CableSpec {
   roomPad?: number;
   /** The coil lies on top of another cable in the same pocket, this far above the floor; its connectors still go down to the floor. */
   baseZ?: number;
+  /** Under one turn, lying on something flat: the coil does not climb as it goes round. */
+  flat?: boolean;
   /** With `place: 'auto'`: areas (x0, y0, x1, y1 from the coil's middle) taken by other cables' ends and connectors, which this cable must keep out of. */
   avoid?: [number, number, number, number][];
   /** Radius of the two bends in a climb. */
@@ -108,7 +110,7 @@ const RAD = Math.PI / 180;
 
 interface Layout { outerL: number; lc: number; wc: number; a: number; b: number; r: number; perim: number; rise: number; stretch: number; start: number[]; len: number[]; xy: (u: number) => P2; heading: (u: number) => number }
 
-function layout(s: Pick<CableSpec, 'wireD' | 'outerW' | 'cornerR' | 'gap'>, outerL: number): Layout {
+function layout(s: Pick<CableSpec, 'wireD' | 'outerW' | 'cornerR' | 'gap' | 'flat'>, outerL: number): Layout {
   const r = s.cornerR;
   const lc = outerL - s.wireD, wc = s.outerW - s.wireD;
   if (!(s.wireD / 2 < r && r <= Math.min(lc, wc) / 2 + 1e-9))
@@ -137,7 +139,7 @@ function layout(s: Pick<CableSpec, 'wireD' | 'outerW' | 'cornerR' | 'gap'>, oute
     }
     return pieces[0][pick](0) as T;
   };
-  const rise = (s.wireD + s.gap) / perim;
+  const rise = s.flat ? 0 : (s.wireD + s.gap) / perim;
   return { outerL, lc, wc, a, b, r, perim, rise, stretch: Math.sqrt(1 + rise * rise), start, len, xy: (u) => on<P2>(u, 1), heading: (u) => on<number>(u, 2) };
 }
 
@@ -453,7 +455,8 @@ export function solveCable(s: CableSpec): SolvedCable {
       }
       if (s.avoid?.length) {
         const pad = s.wireD / 2;
-        const onTaken = done.path.some((p) => s.avoid!.some((b) => p[0] > b[0] - pad && p[0] < b[2] + pad && p[1] > b[1] - pad && p[1] < b[3] + pad))
+        // On top of the other cable it shares the groove, so only its ends can be in the way of the other's ends.
+        const onTaken = (!s.baseZ && done.path.some((p) => s.avoid!.some((b) => p[0] > b[0] - pad && p[0] < b[2] + pad && p[1] > b[1] - pad && p[1] < b[3] + pad)))
           || done.endBoxes.some((e) => s.avoid!.some((b) => e[0] < b[2] && e[2] > b[0] && e[1] < b[3] && e[3] > b[1]));
         if (onTaken) done.warnings.push({ end: null, text: 'It runs across the ends of another cable round the tray edge. Add the longer cable first, or make one of them a compact coil.' });
       }

@@ -1518,7 +1518,7 @@ function wrapSpec(c: CableSettings, self: number | null): CableSpec {
   const outerL = t.x - 2 * inset, outerW = t.y - 2 * inset;
   return {
     wireD: c.d, totalLen: c.len, outerL, outerW, cornerR: Math.max(c.d / 2 + 0.5, Math.min(c.r, (Math.min(outerL, outerW) - c.d) / 2)), gap: DEFAULT_CABLE.gap,
-    fit: 'fixed', place: 'auto', keepInside: true, avoid: wrapAvoid(c, self), baseZ: place.base || undefined, roomPad: traySettings.wall / 2 + 1,
+    fit: 'fixed', place: 'auto', keepInside: true, avoid: wrapAvoid(c, self), baseZ: place.base || undefined, flat: place.base > 0 && c.len < 2 * (outerL + outerW) - 4 * c.d - 4 * c.r, roomPad: traySettings.wall / 2 + 1,
     // What else has to go in the middle, each with its pocket's clearance and wall: the ends are laid to leave room for them.
     roomFor: parts.filter((p) => !p.pinned && p.partId !== self).map((p) => [p.size[0] + traySettings.wall + 2 * traySettings.clearance + 2, p.size[1] + traySettings.wall + 2 * traySettings.clearance + 2] as [number, number]),
     climbR: Math.max(8, 1.3 * c.d), mirror: false, top: lead('top'), bottom: lead('bottom'),
@@ -1908,7 +1908,7 @@ async function buildCableOnce() {
     if (cable.wrap) cable.wrapKey = wrapKeyOf(cable, cablePartId); else delete cable.wrapKey;
     const solved = previewCable();
     if (cable.wrap && solved?.endBoxes) cable.endBoxes = solved.endBoxes; else delete cable.endBoxes;
-    if (cable.wrap && solved) { cable.wrapBase = wrapPlace(cable, cablePartId).base; cable.coilTop = cable.wrapBase + solved.footprint.height; } else { delete cable.wrapBase; delete cable.coilTop; }
+    if (cable.wrap && solved) { cable.wrapBase = wrapPlace(cable, cablePartId).base; cable.coilTop = cable.wrapBase + Math.max(1, Math.ceil(solved.turns - 1e-6)) * (cable.d + DEFAULT_CABLE.gap); } else { delete cable.wrapBase; delete cable.coilTop; }
     const c = cable;
     // Whatever stops it or is wrong with it is said where it cannot be missed, not only under the button.
     if (!solved) { hideProgress(); toast(status.textContent || 'This cable cannot be made.'); return; }
