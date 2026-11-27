@@ -738,7 +738,8 @@ const faceSlab = (length: number) => Math.max(0.5, Math.min(2, length * 0.02));
 export function defaultConnectorAxis(mesh: TriMesh): number {
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < mesh.positions.length; i++) { const a = i % 3, v = mesh.positions[i]; if (v < lo[a]) lo[a] = v; if (v > hi[a]) hi[a] = v; }
-  const d = [0, 1, 2].map((a) => hi[a] - lo[a]), a = d.indexOf(Math.max(...d)), slab = faceSlab(d[a]);
+  // Judged over the last seventh of each end, not just its tip: the tips of a plug's pins are tiny, but the plug's pin end is not.
+  const d = [0, 1, 2].map((a) => hi[a] - lo[a]), a = d.indexOf(Math.max(...d)), slab = Math.max(faceSlab(d[a]), d[a] * 0.15);
   // Pointing +a puts the model's low end on the cable; pointing −a puts its high end there.
   return endFace(mesh.positions, a, false, slab).area <= endFace(mesh.positions, a, true, slab).area ? 2 * a : 2 * a + 1;
 }

@@ -243,6 +243,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
             s.cable = note;
           } catch { /* an unreadable note: it is still a part */ }
           s.rotation = IDENTITY; s.poseIndex = -1; s.locked = true; s.inchesChecked = true;
+          s.fingers = ['top']; // one finger cutout, as when it was first built
         }
         out.push(await describe(id));
       } else {
