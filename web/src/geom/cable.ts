@@ -82,6 +82,10 @@ export interface CableSpec {
   keepInside?: boolean;
   /** With `place: 'auto'`: sizes (either way round) of things that should still fit in the middle; a placement that leaves room for more of them wins. */
   roomFor?: [number, number][];
+  /** Half the wall a pocket needs round it: kept clear along the hollow's edge and round the ends when judging that room. */
+  roomPad?: number;
+  /** The coil lies on top of another cable in the same pocket, this far above the floor; its connectors still go down to the floor. */
+  baseZ?: number;
   /** With `place: 'auto'`: areas (x0, y0, x1, y1 from the coil's middle) taken by other cables' ends and connectors, which this cable must keep out of. */
   avoid?: [number, number, number, number][];
   /** Radius of the two bends in a climb. */
@@ -348,6 +352,8 @@ export function solveCable(s: CableSpec): SolvedCable {
         const target = (l: LeadSpec, flat: Lead, top: boolean) => {
           if (!l.connector) return top ? zEnd : 0;
           const flushTop = zEnd + s.wireD / 2 - (l.connector.up ?? l.connector.height / 2), flushBottom = -s.wireD / 2 + (l.connector.down ?? l.connector.height / 2);
+          // On top of another cable: the floor is further down, and both connectors rest on it.
+          if (s.baseZ) return flushBottom - s.baseZ;
           return top || inHollow(g, tipOf(flat)) ? flushTop : flushBottom;
         };
         const b = makeLead(s, g, topLead, true, zEnd, target(topLead, b0, true) - zEnd), a = makeLead(s, g, bottom, false, 0, target(bottom, a0, false), uA);
@@ -364,7 +370,7 @@ export function solveCable(s: CableSpec): SolvedCable {
      */
     const roomLeft = (bt: Built, tops: LeadSpec, bottoms: LeadSpec): number => {
       const spec = { top: tops, bottom: bottoms };
-      const hx = g.lc / 2 - s.wireD / 2, hy = g.wc / 2 - s.wireD / 2, pad = s.wireD / 2 + 1;
+      const rp = s.roomPad ?? 0, hx = g.lc / 2 - s.wireD / 2 - rp, hy = g.wc / 2 - s.wireD / 2 - rp, pad = s.wireD / 2 + 1 + rp;
       const taken: [number, number, number, number][] = []; // x0, y0, x1, y1
       for (const [which, lead] of [['top', bt.b], ['bottom', bt.a]] as const) {
         const c = spec[which].connector;
@@ -375,12 +381,12 @@ export function solveCable(s: CableSpec): SolvedCable {
           const tip = tipOf(lead), [dx, dy] = lead.dir;
           for (const [u0, u1, v0, v1] of c.profile ?? [[0, c.length, c.vMin ?? -c.width / 2, c.vMax ?? c.width / 2]]) {
             const cs = [[u0, v0], [u0, v1], [u1, v0], [u1, v1]].map(([u, v]) => [tip[0] + dx * u - dy * v, tip[1] + dy * u + dx * v]);
-            taken.push([Math.min(...cs.map((q) => q[0])) - 1, Math.min(...cs.map((q) => q[1])) - 1, Math.max(...cs.map((q) => q[0])) + 1, Math.max(...cs.map((q) => q[1])) + 1]);
+            taken.push([Math.min(...cs.map((q) => q[0])) - 1 - rp, Math.min(...cs.map((q) => q[1])) - 1 - rp, Math.max(...cs.map((q) => q[0])) + 1 + rp, Math.max(...cs.map((q) => q[1])) + 1 + rp]);
           }
         }
       }
       // Ground other cables' ends have already taken in the same hollow is not free either.
-      for (const t of s.avoid ?? []) taken.push([t[0], t[1], t[2], t[3]]);
+      for (const t of s.avoid ?? []) taken.push([t[0] - rp, t[1] - rp, t[2] + rp, t[3] + rp]);
       const needs = [...(s.roomFor ?? [])].sort((p, q) => q[0] * q[1] - p[0] * p[1]);
       if (!taken.length && !needs.length) return 4 * hx * hy;
       // The best rectangle has every side on the hollow's edge or on the side of something in the way.

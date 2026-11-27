@@ -1427,7 +1427,7 @@ $('#library-delete-folder').addEventListener('click', async () => {
 // ---------- coiled cable (a generated part: stacked coil, a lead at each end, connector models on the ends) ----------
 type Which = 'top' | 'bottom';
 interface LeadSettings { at: number; stem: number; angle: number; radius: number; length: number; conn: string; /** Which way the model points along the cable (0..5), or null = its longest side. */ axis: number | null; roll: number }
-interface CableSettings { d: number; len: number; l: number; w: number; r: number; /** Room kept between a connector on a J and the coil beside it. */ connGap: number; mirror: boolean; /** Round the tray edge: the ground its ends and connectors took when it was last built, for cables nested inside it to keep off. */ endBoxes?: [number, number, number, number][]; /** Sized to the tray and pinned round its edge, with its ends inside. */ wrap: boolean; wallOff: number; wireOff: number; /** The tray size and inset it was last built for. */ wrapKey?: string; top: LeadSettings; bottom: LeadSettings }
+interface CableSettings { /** Round the tray edge: how far above the floor its coil starts (it lies on another cable), and where its coil ends. */ wrapBase?: number; coilTop?: number; d: number; len: number; l: number; w: number; r: number; /** Room kept between a connector on a J and the coil beside it. */ connGap: number; mirror: boolean; /** Round the tray edge: the ground its ends and connectors took when it was last built, for cables nested inside it to keep off. */ endBoxes?: [number, number, number, number][]; /** Sized to the tray and pinned round its edge, with its ends inside. */ wrap: boolean; wallOff: number; wireOff: number; /** The tray size and inset it was last built for. */ wrapKey?: string; top: LeadSettings; bottom: LeadSettings }
 const noConn = { conn: '', axis: null, roll: 0 };
 let cable: CableSettings = {
   d: DEFAULT_CABLE.wireD, len: DEFAULT_CABLE.totalLen, l: DEFAULT_CABLE.outerL, w: DEFAULT_CABLE.outerW, r: DEFAULT_CABLE.cornerR, connGap: 2, mirror: false, wrap: false, wallOff: 2, wireOff: 3,
@@ -1459,17 +1459,31 @@ function trayInsideNow(): { x: number; y: number } {
   return { x: inside.length, y: inside.width };
 }
 /** How far in from the tray wall a wrapped cable's outside sits: its own offset, plus every wrapped cable before it in the parts list. */
-function wrapInset(c: CableSettings, self: number | null): number {
+/**
+ * Where a wrapped cable's coil goes: how far in from the tray wall its outside sits, and how far above
+ * the floor it starts. A later cable lies on top of the one before it, in the same groove, when the tray
+ * is deep enough for both; otherwise it nests inside it.
+ */
+function wrapPlace(c: CableSettings, self: number | null): { inset: number; base: number } {
   // The pocket is a clearance bigger than the cable, and the tray keeps its own least edge whatever is asked for.
   const typed = readTrayInputs(), t = typeof typed === 'string' ? traySettings : typed;
-  let inset = Math.max(c.wallOff, t.edge) + t.clearance + 0.05;
+  let inset = Math.max(c.wallOff, t.edge) + t.clearance + 0.05, top = 0, lastD = 0, any = false;
   for (const p of parts) {
     if (p.partId === self) break;
     const other = p.pinned ? (p.cable as Partial<CableSettings> | undefined) : undefined;
-    if (other?.d) inset += other.d + c.wireOff;
+    if (!other?.d || !other.wrap) continue;
+    if (any && !(other.wrapBase! > 0)) inset += lastD + c.wireOff;
+    if (!any || !(other.wrapBase! > 0)) lastD = other.d;
+    else lastD = Math.max(lastD, other.d);
+    top = other.coilTop ?? other.d;
+    any = true;
   }
-  return inset;
+  if (!any) return { inset, base: 0 };
+  // Tallest thing on the cable itself: the coil may not need more depth than its own connectors already do... or the tray allows.
+  if (top + c.d <= coilHeightLimit() + 1e-6) return { inset, base: top };
+  return { inset: inset + lastD + c.wireOff, base: 0 };
 }
+const wrapInset = (c: CableSettings, self: number | null): number => wrapPlace(c, self).inset;
 /** Ground taken by the ends of the wrapped cables before this one in the parts list, with the cable-to-cable gap round it. */
 function wrapAvoid(c: CableSettings, self: number | null): [number, number, number, number][] {
   const out: [number, number, number, number][] = [];
@@ -1480,10 +1494,10 @@ function wrapAvoid(c: CableSettings, self: number | null): [number, number, numb
   }
   return out;
 }
-const wrapKeyOf = (c: CableSettings, self: number | null) => { const t = trayInsideNow(); return `${t.x.toFixed(2)}|${t.y.toFixed(2)}|${wrapInset(c, self).toFixed(2)}|${wrapAvoid(c, self).map((b) => b.map((v) => v.toFixed(0)).join(',')).join(';')}|${parts.filter((p) => !p.pinned && p.partId !== self).map((p) => `${p.size[0].toFixed(0)}x${p.size[1].toFixed(0)}`).join(',')}`; };
+const wrapKeyOf = (c: CableSettings, self: number | null) => { const t = trayInsideNow(); return `${t.x.toFixed(2)}|${t.y.toFixed(2)}|${wrapInset(c, self).toFixed(2)}|${wrapPlace(c, self).base.toFixed(1)}|${wrapAvoid(c, self).map((b) => b.map((v) => v.toFixed(0)).join(',')).join(';')}|${parts.filter((p) => !p.pinned && p.partId !== self).map((p) => `${p.size[0].toFixed(0)}x${p.size[1].toFixed(0)}`).join(',')}`; };
 /** A cable coiled round the edge of the tray: its size comes from the tray, and its ends step inside and run along the coil. */
 function wrapSpec(c: CableSettings, self: number | null): CableSpec {
-  const t = trayInsideNow(), inset = wrapInset(c, self);
+  const t = trayInsideNow(), place = wrapPlace(c, self), inset = place.inset;
   const lead = (n: Which): LeadSpec => {
     const tn = c[n].conn ? turned[n] : null, o = tn?.o, ob = tn?.back ?? o;
     const conn = (x: OrientedConnector) => ({ height: x.height, width: x.width, length: x.length, up: x.up, down: x.down, vMin: x.vMin, vMax: x.vMax, profile: connectorProfile(x) });
@@ -1504,7 +1518,7 @@ function wrapSpec(c: CableSettings, self: number | null): CableSpec {
   const outerL = t.x - 2 * inset, outerW = t.y - 2 * inset;
   return {
     wireD: c.d, totalLen: c.len, outerL, outerW, cornerR: Math.max(c.d / 2 + 0.5, Math.min(c.r, (Math.min(outerL, outerW) - c.d) / 2)), gap: DEFAULT_CABLE.gap,
-    fit: 'fixed', place: 'auto', keepInside: true, avoid: wrapAvoid(c, self),
+    fit: 'fixed', place: 'auto', keepInside: true, avoid: wrapAvoid(c, self), baseZ: place.base || undefined, roomPad: traySettings.wall / 2 + 1,
     // What else has to go in the middle, each with its pocket's clearance and wall: the ends are laid to leave room for them.
     roomFor: parts.filter((p) => !p.pinned && p.partId !== self).map((p) => [p.size[0] + traySettings.wall + 2 * traySettings.clearance + 2, p.size[1] + traySettings.wall + 2 * traySettings.clearance + 2] as [number, number]),
     climbR: Math.max(8, 1.3 * c.d), mirror: false, top: lead('top'), bottom: lead('bottom'),
@@ -1894,6 +1908,7 @@ async function buildCableOnce() {
     if (cable.wrap) cable.wrapKey = wrapKeyOf(cable, cablePartId); else delete cable.wrapKey;
     const solved = previewCable();
     if (cable.wrap && solved?.endBoxes) cable.endBoxes = solved.endBoxes; else delete cable.endBoxes;
+    if (cable.wrap && solved) { cable.wrapBase = wrapPlace(cable, cablePartId).base; cable.coilTop = cable.wrapBase + solved.footprint.height; } else { delete cable.wrapBase; delete cable.coilTop; }
     const c = cable;
     // Whatever stops it or is wrong with it is said where it cannot be missed, not only under the button.
     if (!solved) { hideProgress(); toast(status.textContent || 'This cable cannot be made.'); return; }
