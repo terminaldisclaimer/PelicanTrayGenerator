@@ -1459,6 +1459,8 @@ function trayInsideNow(): { x: number; y: number } {
   return { x: inside.length, y: inside.width };
 }
 /** How far in from the tray wall a wrapped cable's outside sits: its own offset, plus every wrapped cable before it in the parts list. */
+/** Set while a cable is being built (not for the live preview, which has to keep up with typing): try every way of laying a wrapped cable's ends. */
+let wrapThorough = false;
 /**
  * Where a wrapped cable's coil goes: how far in from the tray wall its outside sits, and how far above
  * the floor it starts. A later cable lies on top of the one before it, in the same groove, when the tray
@@ -1518,7 +1520,7 @@ function wrapSpec(c: CableSettings, self: number | null): CableSpec {
   const outerL = t.x - 2 * inset, outerW = t.y - 2 * inset;
   return {
     wireD: c.d, totalLen: c.len, outerL, outerW, cornerR: Math.max(c.d / 2 + 0.5, Math.min(c.r, (Math.min(outerL, outerW) - c.d) / 2)), gap: DEFAULT_CABLE.gap,
-    fit: 'fixed', place: 'auto', keepInside: true, avoid: wrapAvoid(c, self), thorough: true, baseZ: place.base || undefined, flat: place.base > 0 && c.len < 2 * (outerL + outerW) - 4 * c.d - 4 * c.r, roomPad: traySettings.wall / 2 + 1,
+    fit: 'fixed', place: 'auto', keepInside: true, avoid: wrapAvoid(c, self), thorough: wrapThorough, baseZ: place.base || undefined, flat: place.base > 0 && c.len < 2 * (outerL + outerW) - 4 * c.d - 4 * c.r, roomPad: traySettings.wall / 2 + 1,
     // What else has to go in the middle, each with its pocket's clearance and wall: the ends are laid to leave room for them.
     roomFor: parts.filter((p) => !p.pinned && p.partId !== self).map((p) => [p.size[0] + traySettings.wall + 2 * traySettings.clearance + 2, p.size[1] + traySettings.wall + 2 * traySettings.clearance + 2] as [number, number]),
     climbR: Math.max(8, 1.3 * c.d), mirror: false, top: lead('top'), bottom: lead('bottom'),
@@ -1906,13 +1908,17 @@ async function buildCableOnce() {
     previewCable();
     if (cable.wrap) fitJ.clear(); else fitPendingJs();
     delete cable.noStack;
-    let solved = previewCable();
-    // On top of another cable its ends found no sound place: inside that cable instead, where the hollow is its own.
-    if (cable.wrap && solved?.warnings.length && wrapPlace(cable, cablePartId).base > 0) {
-      cable.noStack = true;
-      const nested = previewCable();
-      if (nested && nested.warnings.length <= solved.warnings.length) solved = nested; else { delete cable.noStack; solved = previewCable(); }
-    }
+    let solved: ReturnType<typeof previewCable>;
+    wrapThorough = true;
+    try {
+      solved = previewCable();
+      // On top of another cable its ends found no sound place: inside that cable instead, where the hollow is its own.
+      if (cable.wrap && solved?.warnings.length && wrapPlace(cable, cablePartId).base > 0) {
+        cable.noStack = true;
+        const nested = previewCable();
+        if (nested && nested.warnings.length <= solved.warnings.length) solved = nested; else { delete cable.noStack; solved = previewCable(); }
+      }
+    } finally { wrapThorough = false; }
     if (cable.wrap) cable.wrapKey = wrapKeyOf(cable, cablePartId); else delete cable.wrapKey;
     if (cable.wrap && solved?.endBoxes) cable.endBoxes = solved.endBoxes; else delete cable.endBoxes;
     if (cable.wrap && solved) { cable.wrapBase = wrapPlace(cable, cablePartId).base; cable.coilTop = cable.wrapBase + Math.max(1, Math.ceil(solved.turns - 1e-6)) * (cable.d + DEFAULT_CABLE.gap); } else { delete cable.wrapBase; delete cable.coilTop; }

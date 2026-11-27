@@ -222,7 +222,8 @@ function makeLead(s: CableSpec, g: Layout, lead: LeadSpec, top: boolean, z: numb
   else {
     // A lead that carries more or less straight on is still over (or under) the corner of the
     // other turns for a little way: it must be past them before it changes height.
-    const clear = Math.abs(lead.angle) < 60 ? g.r + s.wireD / 2 + 1 : 0;
+    // (One that has stepped sideways into the middle is already clear of them.)
+    const clear = !(lead.jog && lead.jog > 1e-6) && Math.abs(lead.angle) < 60 ? g.r + s.wireD / 2 + 1 : 0;
     straight(clear);
     climb();
     straight(Math.max(0, lead.length - clear - climbRun));
