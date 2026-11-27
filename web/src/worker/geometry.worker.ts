@@ -305,6 +305,8 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       // A coil only makes sense lying flat, the way it was built.
       s.rotation = IDENTITY; s.poseIndex = -1; s.locked = true; s.inchesChecked = true;
       s.cable = req.settings;
+      // A cable is light and has plenty to get hold of: one finger cutout is enough (more can be chosen on its row).
+      if (!old) s.fingers = ['top'];
       s.pinned = req.pinned || undefined;
       if (s.pinned) {
         // The bodies are built round the coil's middle; the part is shown centred on its outline. Remember the difference.

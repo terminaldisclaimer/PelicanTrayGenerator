@@ -1430,7 +1430,7 @@ interface LeadSettings { at: number; stem: number; angle: number; radius: number
 interface CableSettings { d: number; len: number; l: number; w: number; r: number; /** Room kept between a connector on a J and the coil beside it. */ connGap: number; mirror: boolean; /** Round the tray edge: the ground its ends and connectors took when it was last built, for cables nested inside it to keep off. */ endBoxes?: [number, number, number, number][]; /** Sized to the tray and pinned round its edge, with its ends inside. */ wrap: boolean; wallOff: number; wireOff: number; /** The tray size and inset it was last built for. */ wrapKey?: string; top: LeadSettings; bottom: LeadSettings }
 const noConn = { conn: '', axis: null, roll: 0 };
 let cable: CableSettings = {
-  d: DEFAULT_CABLE.wireD, len: DEFAULT_CABLE.totalLen, l: DEFAULT_CABLE.outerL, w: DEFAULT_CABLE.outerW, r: DEFAULT_CABLE.cornerR, connGap: 2, mirror: false, wrap: false, wallOff: 3, wireOff: 3,
+  d: DEFAULT_CABLE.wireD, len: DEFAULT_CABLE.totalLen, l: DEFAULT_CABLE.outerL, w: DEFAULT_CABLE.outerW, r: DEFAULT_CABLE.cornerR, connGap: 2, mirror: false, wrap: false, wallOff: 2, wireOff: 3,
   top: { ...DEFAULT_CABLE.top, ...noConn }, bottom: { ...DEFAULT_CABLE.bottom, ...noConn },
 };
 try {
@@ -1947,12 +1947,14 @@ document.querySelectorAll<HTMLButtonElement>('[data-cwrap]').forEach((b) => b.ad
 /** The tallest a coil can ever be here: what the tray depth or the case height leaves above the floor (60 mm if neither is set). */
 function coilHeightCap(): number {
   const typed = readTrayInputs(), t = typeof typed === 'string' ? traySettings : typed;
-  const limit = Math.min(t.depth ?? Infinity, t.height === null ? Infinity : t.height - (t.shell ? shellExtraHeight(shellOptions(t)) : 0)) - t.floor;
+  const limit = Math.min(t.depth ?? Infinity, t.height === null ? Infinity : t.height - (t.shell ? shellExtraHeight(shellOptions(t)) : 0)) - t.floor - 0.5; // the pocket is a hair deeper than the part
   return Number.isFinite(limit) ? limit : 60;
 }
 function coilHeightLimit(): number {
   const typed = readTrayInputs(), t = typeof typed === 'string' ? traySettings : typed;
-  const limit = Math.min(t.depth ?? Infinity, t.height === null ? Infinity : t.height - (t.shell ? shellExtraHeight(shellOptions(t)) : 0)) - t.floor;
+  const limit = Math.min(t.depth ?? Infinity, t.height === null ? Infinity : t.height - (t.shell ? shellExtraHeight(shellOptions(t)) : 0)) - t.floor - 0.5; // the pocket is a hair deeper than the part
+  // A tray depth set by hand is how deep the tray will be whatever goes in it, so a coil may use all of it.
+  if (t.depth !== null && Number.isFinite(limit)) return limit;
   const tallest = Math.max(0, ...parts.filter((p) => p.partId !== cablePartId).map((p) => p.height), ...ENDS.map((n) => (cable[n].conn && turned[n] ? turned[n]!.o.height : 0)));
   // With nothing else to go by, a few turns' worth.
   return Math.min(limit, tallest > 0 ? tallest : 4 * (cable.d + DEFAULT_CABLE.gap) + cable.d);
@@ -1997,8 +1999,8 @@ async function findSmallestCoil() {
   // The best found at each height: [0] no taller than the tray already needs, [1] one more turn of cable, and so on.
   const byLevel: (Found | undefined)[] = [];
   const widths: number[] = [], lengths: number[] = [];
-  for (let w = Math.ceil(Math.max(3 * d, 2 * c.r + d) / 2) * 2; w <= Math.min(tray.y - 2 * traySettings.edge, 140); w += 6) widths.push(w);
-  for (let l = widths[0] ?? 3 * d; l <= tray.x - 2 * traySettings.edge; l += 8) lengths.push(l);
+  for (let w = Math.ceil(Math.max(3 * d, 2 * c.r + d) / 2) * 2; w <= Math.min(tray.y - 2 * traySettings.edge - 4, 140); w += 6) widths.push(w);
+  for (let l = widths[0] ?? 3 * d; l <= tray.x - 2 * traySettings.edge - 4; l += 8) lengths.push(l);
   showProgress(0.02, 'Looking for the smallest coil');
   let step = 0;
   hMax = hCase; // every height the case allows is looked at in one pass
@@ -2036,7 +2038,7 @@ async function findSmallestCoil() {
           const { at, dir } = solved.ends[n];
           for (const [u, v] of [[0, k.vMin!], [0, k.vMax!], [k.length, k.vMin!], [k.length, k.vMax!]]) grow(at[0] + dir[0] * u - dir[1] * v, at[1] + dir[1] * u + dir[0] * v, 0);
         }
-        if (x1 - x0 > tray.x - 2 * traySettings.edge || y1 - y0 > tray.y - 2 * traySettings.edge) continue;
+        if (x1 - x0 > tray.x - 2 * traySettings.edge - 4 || y1 - y0 > tray.y - 2 * traySettings.edge - 4) continue;
         // The floor it really covers: the coil (its hollow too, which nothing else can use), the ends, and each
         // connector's own outline, all with the pocket's clearance and half a wall round them. Counted on a
         // 2 mm grid. A thin stem beside the coil then costs little, where a box round it would cost a lot.
