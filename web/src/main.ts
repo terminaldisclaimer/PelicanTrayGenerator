@@ -1518,7 +1518,7 @@ function wrapSpec(c: CableSettings, self: number | null): CableSpec {
   const outerL = t.x - 2 * inset, outerW = t.y - 2 * inset;
   return {
     wireD: c.d, totalLen: c.len, outerL, outerW, cornerR: Math.max(c.d / 2 + 0.5, Math.min(c.r, (Math.min(outerL, outerW) - c.d) / 2)), gap: DEFAULT_CABLE.gap,
-    fit: 'fixed', place: 'auto', keepInside: true, avoid: wrapAvoid(c, self), baseZ: place.base || undefined, flat: place.base > 0 && c.len < 2 * (outerL + outerW) - 4 * c.d - 4 * c.r, roomPad: traySettings.wall / 2 + 1,
+    fit: 'fixed', place: 'auto', keepInside: true, avoid: wrapAvoid(c, self), thorough: true, baseZ: place.base || undefined, flat: place.base > 0 && c.len < 2 * (outerL + outerW) - 4 * c.d - 4 * c.r, roomPad: traySettings.wall / 2 + 1,
     // What else has to go in the middle, each with its pocket's clearance and wall: the ends are laid to leave room for them.
     roomFor: parts.filter((p) => !p.pinned && p.partId !== self).map((p) => [p.size[0] + traySettings.wall + 2 * traySettings.clearance + 2, p.size[1] + traySettings.wall + 2 * traySettings.clearance + 2] as [number, number]),
     climbR: Math.max(8, 1.3 * c.d), mirror: false, top: lead('top'), bottom: lead('bottom'),

@@ -83,6 +83,8 @@ export interface CableSpec {
   /** With `place: 'auto'`: sizes (either way round) of things that should still fit in the middle; a placement that leaves room for more of them wins. */
   roomFor?: [number, number][];
   /** Half the wall a pocket needs round it: kept clear along the hollow's edge and round the ends when judging that room. */
+  /** Try every way of laying the ends and keep the one that leaves the most room, rather than stopping at the first that leaves enough. Slower. */
+  thorough?: boolean;
   roomPad?: number;
   /** The coil lies on top of another cable in the same pocket, this far above the floor; its connectors still go down to the floor. */
   baseZ?: number;
@@ -435,6 +437,7 @@ export function solveCable(s: CableSpec): SolvedCable {
     // what else has to go in the middle, and then the most room, is kept.
     const wanted = (s.roomFor?.length ?? 0) * 1e7;
     let fallback: SolvedCable | null = null, least = Infinity, best: SolvedCable | null = null, bestRoom = -1;
+    const t0 = Date.now();
     search: for (const top of shapes(s.top)) for (const bottom of shapes(s.bottom)) for (const at of spots) {
       const f = fixedAt(top.lead, bottom.lead, at);
       if (!f) continue;
@@ -466,8 +469,9 @@ export function solveCable(s: CableSpec): SolvedCable {
       if (!auto) return done;
       best = done; bestRoom = room;
       // Good enough: everything wanted fits; or nothing else is wanted in the middle, and this placement is sound.
-      if (room >= wanted) break search;
+      if (room >= wanted && !s.thorough) break search;
     }
+    if ((globalThis as any).__cd) (globalThis as any).__cdt = Date.now() - t0;
     if (best) return best;
     if (!fallback) throw new CableError('The cable is too short to go round a coil this size with these ends.');
     return fallback;
