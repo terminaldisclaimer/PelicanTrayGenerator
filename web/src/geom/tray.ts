@@ -382,7 +382,7 @@ function buildOnce(k: ManifoldToplevel, parts: TrayPart[], o: TrayOptions, depth
     for (const part of parts) {
       if (part.pinned) { pinned.push(part); continue; }
       const within = part.poses.filter((pose) => neededDepth(part, pose) <= limit - o.floor + 1e-9);
-      if (!within.length) { tooDeep.push(part.name); continue; }
+      if (!within.length) { tooDeep.push(`${part.name} (needs ${(Math.min(...part.poses.map((pose) => neededDepth(part, pose))) + o.floor).toFixed(1)} mm${part.pinned ? '' : ', loose'}; ${part.poses.length} pose)`); continue; }
       const choices = within
         .map((pose) => { const holes = scoops(part, pose); return { pose, depth: neededDepth(part, pose), footprint: grown(openingOf(pose)), soft: holes ? (holes.toPolygons() as Pt[][]) : undefined }; })
         // ...that can go in an empty tray at all, at some angle.
