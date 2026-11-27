@@ -379,22 +379,41 @@ export function solveCable(s: CableSpec): SolvedCable {
           }
         }
       }
-      const needs = s.roomFor ?? [];
-      if (!taken.length) return needs.length * 1e7 + 4 * hx * hy;
+      // Ground other cables' ends have already taken in the same hollow is not free either.
+      for (const t of s.avoid ?? []) taken.push([t[0], t[1], t[2], t[3]]);
+      const needs = [...(s.roomFor ?? [])].sort((p, q) => q[0] * q[1] - p[0] * p[1]);
+      if (!taken.length && !needs.length) return 4 * hx * hy;
       // The best rectangle has every side on the hollow's edge or on the side of something in the way.
       const cut = (lo: number, hi: number, vals: number[]) => [...new Set([lo, hi, ...vals.filter((v) => v > lo && v < hi)])].sort((p, q) => p - q);
-      const xs = cut(-hx, hx, taken.flatMap((t) => [t[0], t[2]])), ys = cut(-hy, hy, taken.flatMap((t) => [t[1], t[3]]));
-      let best = 0;
-      const fits = needs.map(() => false);
-      for (let i = 0; i < xs.length; i++) for (let j = i + 1; j < xs.length; j++) for (let k = 0; k < ys.length; k++) for (let m = k + 1; m < ys.length; m++) {
-        const w = xs[j] - xs[i], h = ys[m] - ys[k];
-        if (w * h <= best && fits.every(Boolean)) continue;
-        if (taken.some((t) => t[0] < xs[j] - 1e-9 && t[2] > xs[i] + 1e-9 && t[1] < ys[m] - 1e-9 && t[3] > ys[k] + 1e-9)) continue;
-        best = Math.max(best, w * h);
-        needs.forEach(([a2, b2], n2) => { if ((w >= a2 && h >= b2) || (w >= b2 && h >= a2)) fits[n2] = true; });
+      /** The clear rectangle of least area that holds a w × h thing (either way round), or with nothing asked for, the area of the biggest. */
+      const clear = (need: [number, number] | null): { area: number; at: [number, number, number, number] | null } => {
+        const xs = cut(-hx, hx, taken.flatMap((t) => [t[0], t[2]])), ys = cut(-hy, hy, taken.flatMap((t) => [t[1], t[3]]));
+        let big = 0, small = Infinity, at: [number, number, number, number] | null = null;
+        for (let i = 0; i < xs.length; i++) for (let j = i + 1; j < xs.length; j++) for (let k = 0; k < ys.length; k++) for (let m = k + 1; m < ys.length; m++) {
+          const w = xs[j] - xs[i], h = ys[m] - ys[k], area = w * h;
+          if (need ? area >= small : area <= big) continue;
+          const way = !need ? 0 : w >= need[0] && h >= need[1] ? 1 : w >= need[1] && h >= need[0] ? 2 : -1;
+          if (way < 0) continue;
+          if (taken.some((t) => t[0] < xs[j] - 1e-9 && t[2] > xs[i] + 1e-9 && t[1] < ys[m] - 1e-9 && t[3] > ys[k] + 1e-9)) continue;
+          if (!need) { big = area; continue; }
+          small = area;
+          const [a2, b2] = way === 1 ? need : [need[1], need[0]];
+          // Into the corner of that rectangle nearest the hollow's own corner, so the rest stays in one piece.
+          const x0 = Math.abs(xs[i]) >= Math.abs(xs[j]) ? xs[i] : xs[j] - a2, y0 = Math.abs(ys[k]) >= Math.abs(ys[m]) ? ys[k] : ys[m] - b2;
+          at = [x0, y0, x0 + a2, y0 + b2];
+        }
+        return { area: big, at };
+      };
+      // The wanted things have to fit together, not each on its own: put them down one at a time, biggest first.
+      let fitted = 0;
+      for (const need of needs) {
+        const spot = clear(need).at;
+        if (!spot) continue;
+        taken.push(spot);
+        fitted++;
       }
       // Room for one more of the wanted things beats any amount of extra area.
-      return fits.filter(Boolean).length * 1e7 + best;
+      return fitted * 1e7 + clear(null).area;
     };
     // Every 5 mm or so along each straight: where both ends fit can be a window only a few millimetres wide.
     const spots = auto ? [0, 4, 2, 6].flatMap((k) => { const n = Math.max(1, Math.ceil(g.len[k] / 5)); return g.len[k] > 1e-6 ? Array.from({ length: n }, (_, i) => k + (i + 0.5) / n) : []; }) : [s.top.at];
